@@ -1,0 +1,52 @@
+"""Game rules — a 1:1 port of the iOS GameKitCore constants (docs/02, docs/04).
+The Swift fixture tests in Packages/GemRunCore/Tests double as test vectors.
+"""
+
+# Collection / validity (Swift: CollectionRules)
+COLLECTION_RADIUS_M = 25.0
+HYSTERESIS_EXIT_RADIUS_M = 40.0
+HYSTERESIS_ADVANCE_M = 50.0
+
+MAX_CROSS_TRACK_M = 40.0
+MIN_ON_ROUTE_SAMPLE_RATIO = 0.90
+MIN_ROUTE_COVERAGE_RATIO = 0.95
+
+TELEPORT_SPEED = 8.0                # m/s sustained
+TELEPORT_SUSTAIN_S = 5.0
+MIN_RUN_PACE_S_PER_KM = 150         # 2:30 — faster is a vehicle
+MAX_VALID_PACE_S_PER_KM = 1200      # 20:00 — slower is invalid
+WALK_PACE_THRESHOLD_S_PER_KM = 600  # 10:00 — slower is a walk (0.5x XP)
+
+# XP (Swift: XPRules)
+XP_BY_RARITY = {"common": 10, "uncommon": 25, "rare": 75, "epic": 200, "legendary": 500}
+SET_COMPLETION_BONUS = 500
+WALK_MULTIPLIER = 0.5
+
+
+def xp_to_advance(level: int) -> int:
+    return 100 * level
+
+
+# Streaks (Swift: StreakRules)
+MIN_VALID_RUN_DISTANCE_M = 1000
+MAX_SHIELDS = 2
+SHIELD_EARNED_EVERY_DAYS = 7
+
+
+def streak_multiplier(days: int) -> float:
+    return min(1.5, 1.0 + 0.1 * (max(0, days) // 7))
+
+
+# Creator placement budget (Swift: PlacementBudget)
+METERS_PER_SLOT = 250
+MIN_GEM_SPACING_M = 100
+RARE_MIN_ROUTE_FRACTION = 0.4
+PLACEMENT_COST = {"common": 1, "uncommon": 3, "rare": 10, "epic": 25}  # legendary: not placeable
+
+
+def budget_slots(distance_m: int) -> int:
+    return distance_m // METERS_PER_SLOT
+
+
+def budget_points(distance_m: int) -> int:
+    return distance_m // 100

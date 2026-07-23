@@ -26,7 +26,7 @@ Pick a route on the map, drop gems along it, and share it. Anyone who runs that 
 | Design | "Daybreak Pulse" — Airbnb-style light card UI, exactly 3 colors (snow / ink / race-orange pulse), rarity as accent-ramp + glyphs (docs/03) |
 | Maps | MapKit today behind the `CoreMap` seam; Mapbox v11 + custom style is the planned swap (docs 07/09) |
 | Persistence | SwiftData, local-first |
-| Backend | Python/**Django** later — UI runs on an in-app **dummy API** today (`MockGemRunAPI`); swap = set `AppConfig.apiBaseURL` ([doc 11](docs/11-dummy-api.md)) |
+| Backend | **Django, implemented** in [`backend/`](backend/README.md) — all 14 `/v1` endpoints, 12/12 tests green; app uses the in-app mock until `AppConfig.apiBaseURL` is set ([doc 11](docs/11-dummy-api.md)) |
 | Status | **Local-first MVP implemented (Phases A–E, F partial)** — see [doc 09](docs/09-build-plan.md) |
 
 ## Building the app

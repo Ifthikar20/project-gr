@@ -9,7 +9,9 @@ import Foundation
 // UI code only ever sees `API.shared`, so the Django swap is one URL change.
 
 public enum AppConfig {
-    /// Set to the deployed Django backend URL to switch off the mock.
+    /// Set to the Django backend URL to switch off the mock — e.g.
+    /// `URL(string: "http://127.0.0.1:8000")` with `backend/` running locally
+    /// (see backend/README.md). nil = in-app MockGemRunAPI.
     public static let apiBaseURL: URL? = nil
     /// Simulated latency for the mock, in milliseconds. Keep small — the UI
     /// renders cached data instantly and refreshes when calls land.

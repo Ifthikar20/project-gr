@@ -13,5 +13,10 @@ playground.xcworkspace
 # Secrets (copy Configs/Secrets.example.xcconfig → Configs/Secrets.xcconfig)
 Configs/Secrets.xcconfig
 
+# Backend (Django)
+backend/db.sqlite3
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store

@@ -51,6 +51,9 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: com.gemrun.app
             CFBundleURLSchemes: [gemrun]
+        # Dev only: allows plain-HTTP calls to the local Django backend.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     dependencies:
       - package: GemRunCore
         products: [CoreModels, DesignSystem, CoreMap, CorePersistence, CoreLocationKit]

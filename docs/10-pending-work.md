@@ -50,16 +50,21 @@ failures and guests included, no token verification. To go strict later:
   the four `CoreMap` views, author the "Night Expedition" Studio style
 - [ ] Signing/team setup; TestFlight; battery gate measured on device
 
-## ⏳ Needs the Django backend
+## Django backend — ✅ IMPLEMENTED (backend/, verified: 12/12 tests green)
 
-- [ ] Implement the 14 `/v1` endpoints (doc 11 table + implementation notes);
-  port the validation pipeline from GameKitCore (fixture tests = test vectors)
-- [ ] Set `AppConfig.apiBaseURL` in `GemRunAPI.swift` to go live
-- [ ] Sign in with Apple (replace the mock handle auth), App Attest, offline
-  sync queue with retry, server-owned streak state
-- [ ] Real seeded launch-city routes (OSM-derived, curated) + ODbL attribution
-- [ ] Moderation: report triage, blocklist zones, name checks; server-side
-  account deletion; push notifications
+All 14 `/v1` endpoints live in `backend/` with the GameKitCore validation
+pipeline ported 1:1 (`rules.py`, `geometry.py`, `validation.py`): track
+replay, respawn dedupe, idempotent completion, server-owned streaks,
+server-side gem fuzzing, placement-budget re-validation, seeded demo city
+(`manage.py seed`). `ALLOW_ALL_ACCOUNTS` mirrors the iOS auth dev flag.
+To connect: run the server (backend/README.md) and set `AppConfig.apiBaseURL`.
+
+Still open on the backend track:
+- [ ] Real Apple/Google identity-token verification (flip both accept-all flags)
+- [ ] App Attest verification; iOS offline sync-queue retry
+- [ ] Production hardening (secrets, DEBUG off, hosts, rate limits) + deploy
+- [ ] Real launch-city routes (OSM-derived, curated) + ODbL attribution
+- [ ] Moderation: report triage, blocklist zones, name checks; push notifications
 
 ## Deliberately later (Phases 2–3, docs/08)
 
