@@ -15,8 +15,14 @@ Configs/Secrets.xcconfig
 
 # Backend (Django)
 backend/db.sqlite3
+backend/.venv/
+backend/.server.log
+backend/.server.pid
 __pycache__/
 *.pyc
+
+# run.sh build output
+build/
 
 # OS
 .DS_Store

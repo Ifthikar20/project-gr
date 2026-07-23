@@ -29,7 +29,19 @@ Pick a route on the map, drop gems along it, and share it. Anyone who runs that 
 | Backend | **Django, implemented** in [`backend/`](backend/README.md) — all 14 `/v1` endpoints, 12/12 tests green; app uses the in-app mock until `AppConfig.apiBaseURL` is set ([doc 11](docs/11-dummy-api.md)) |
 | Status | **Local-first MVP implemented (Phases A–E, F partial)** — see [doc 09](docs/09-build-plan.md) |
 
-## Building the app
+## Running everything
+
+One command on a Mac — starts the Django API, generates the Xcode project,
+builds the app, and launches it in the Simulator:
+
+```sh
+./run.sh            # backend + app
+./run.sh backend    # just the API (works on any OS)
+./run.sh app        # just the iOS app
+./run.sh stop       # stop the background API
+```
+
+## Building the app manually
 
 The Xcode project is generated, not committed. On a Mac:
 
