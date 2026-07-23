@@ -28,7 +28,6 @@ public struct RouteCreationFlow: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
     }
 }
 

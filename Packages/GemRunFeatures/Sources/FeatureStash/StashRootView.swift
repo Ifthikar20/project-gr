@@ -4,8 +4,8 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// The collection (docs/03 §9): grid grouped by set, silhouettes for missing
-/// gems, provenance detail sheet.
+/// The collection (docs/03 §9), Airbnb wishlist-grid style: white tiles on
+/// snow, rarity as pulse ramp + glyph, ink-tint silhouettes for the missing.
 public struct StashRootView: View {
     @Query(sort: \StoredStashItem.collectedAt, order: .reverse) private var items: [StoredStashItem]
     @State private var detail: StoredStashItem?
@@ -33,7 +33,7 @@ public struct StashRootView: View {
                 }
                 .padding(16)
             }
-            .background(DS.Colors.ink)
+            .background(DS.Colors.snow)
             .navigationTitle("Stash")
             .sheet(item: $detail) { item in
                 GemDetailSheet(item: item)
@@ -47,20 +47,22 @@ public struct StashRootView: View {
             VStack(alignment: .leading) {
                 Text("\(items.count)")
                     .font(DS.Typography.statMedium)
-                    .foregroundStyle(DS.Colors.textPrimary)
+                    .foregroundStyle(DS.Colors.ink)
                 Text("gems collected")
                     .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
             VStack(alignment: .leading) {
                 Text("\(Set(items.map(\.gemID)).count)/\(GemCatalog.entries.count)")
                     .font(DS.Typography.statMedium)
-                    .foregroundStyle(DS.Colors.textPrimary)
+                    .foregroundStyle(DS.Colors.ink)
                 Text("unique found")
                     .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
+            Spacer()
         }
+        .airbnbCard()
     }
 
     private func setSection(_ name: String, _ entries: [GemCatalog.Entry]) -> some View {
@@ -69,30 +71,32 @@ public struct StashRootView: View {
             HStack {
                 Text(name)
                     .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.textPrimary)
+                    .foregroundStyle(DS.Colors.ink)
                 Spacer()
                 Text("\(found)/\(entries.count)")
-                    .font(.caption)
-                    .foregroundStyle(found == entries.count ? DS.Colors.gold : DS.Colors.textSecondary)
+                    .font(.caption.bold())
+                    .foregroundStyle(found == entries.count
+                        ? DS.Colors.pulse : DS.Colors.inkSecondary)
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4),
                       spacing: 12) {
                 ForEach(entries, id: \.gem.id) { entry in
                     let item = collected(for: entry.gem.id)
                     VStack(spacing: 4) {
-                        Image(systemName: "diamond.fill")
-                            .font(.system(size: 34))
+                        Image(systemName: DS.rarityGlyph(entry.gem.rarity))
+                            .font(.system(size: 32))
                             .foregroundStyle(item != nil
                                 ? DS.Colors.rarity(entry.gem.rarity)
-                                : Color.white.opacity(0.1))   // silhouette: the pull
+                                : DS.Colors.hairline)   // silhouette: the pull
                         Text(item != nil ? entry.gem.name : "???")
                             .font(.caption2)
-                            .foregroundStyle(DS.Colors.textSecondary)
+                            .foregroundStyle(DS.Colors.inkSecondary)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.vertical, 12)
+                    .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: DS.Colors.ink.opacity(0.06), radius: 8, y: 2)
                     .onTapGesture {
                         if let item { detail = item }
                     }
@@ -107,32 +111,33 @@ struct GemDetailSheet: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: "diamond.fill")
+            Image(systemName: DS.rarityGlyph(item.rarity))
                 .font(.system(size: 72))
                 .foregroundStyle(DS.Colors.rarity(item.rarity))
                 .padding(.top, 24)
             Text(item.gemName)
                 .font(DS.Typography.display(24))
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             Text("\(item.rarity.rawValue.capitalized) · \(item.setName) set")
                 .font(.subheadline)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
             if item.isFirstFind {
                 Label("First find", systemImage: "crown.fill")
                     .font(.subheadline.bold())
-                    .foregroundStyle(DS.Colors.gold)
+                    .foregroundStyle(DS.Colors.pulse)
             }
-            Divider().overlay(DS.Colors.textSecondary.opacity(0.3))
+            Rectangle().fill(DS.Colors.hairline).frame(height: 1)
+                .padding(.horizontal, 32)
             VStack(spacing: 4) {
                 Text("Collected on \(item.routeName)")
-                    .foregroundStyle(DS.Colors.textPrimary)
+                    .foregroundStyle(DS.Colors.ink)
                 Text(item.collectedAt, style: .date)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
             .font(.subheadline)
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .background(DS.Colors.ink)
+        .background(DS.Colors.snowCard)
     }
 }

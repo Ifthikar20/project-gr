@@ -23,13 +23,26 @@ Push navigation within tabs:
 - **Deep links:** `gemrun://route/{id}` — used by share cards now, notifications in Phase 2.
 - Route Detail is reachable from Explore (map/card), Stash (gem provenance), Compete (board row), and Profile (My Routes).
 
-## Design language — "Night Expedition"
+## Design language — "Daybreak Pulse" (Airbnb-style, 3 colors)
 
-- **Map:** custom Mapbox Studio style. Deep ink-navy terrain, muted desaturated streets, subtle topo contour lines, water nearly black. Route polylines glow **gold**. Parks a dark moss green. Rationale: the treasure-map feel is the brand, and a dark map wins for dawn/dusk running visibility.
-- **Color:** the UI is dark and neutral; **rarity colors are the only saturated hues** (white/green/blue/purple/gold per doc 02). When a Rare's blue appears, it means something.
-- **Surfaces:** cards with a faint parchment texture on dark slate; gold hairline borders on interactive elements.
-- **Type:** SF Pro Rounded for display numbers and headings (friendly, athletic); SF Pro Text for body.
-- **Gem iconography:** faceted, flat-shaded SVG gems — one silhouette shape per set theme, tinted by rarity. Silhouette (10% white) = uncollected.
+> Supersedes the original "Night Expedition" dark theme. Modeled on Airbnb's
+> system: one brand color reserved for what matters, neutrals everywhere else,
+> cards carrying the visual weight — soft 16pt corners, one diffuse shadow,
+> hairline dividers, pill CTAs, generous whitespace.
+
+- **Exactly three colors, nothing else** (opacity/tint steps of a hue count as the same color):
+
+| Token | Value | Role |
+|---|---|---|
+| Snow | #FAFAF8 bg / #FFFFFF cards | Surfaces |
+| Ink | #16181D (+0.55 secondary text, +0.12 hairlines) | Text, icons |
+| Pulse | #FC4C02 race orange (+ tint ramp) | THE accent: CTAs, gems, streaks, live pace, own rows |
+
+- **Rarity = pulse ramp + glyph + label** (double-encoded, grayscale/color-blind safe): Common `diamond` 0.30 → Uncommon `diamond.fill` 0.50 → Rare `rhombus.fill` 0.70 → Epic `seal.fill` 0.88 → Legendary `crown.fill` 1.0.
+- **Map:** light standard style, POIs suppressed; pulse polylines and glyph gem markers. *Constraint:* MapKit tiles keep Apple's own palette — the 3-color rule governs app chrome and overlays; a fully on-palette map is a benefit of the pending Mapbox custom style.
+- **Cards:** Airbnb listing-card anatomy — mini map preview as the "photo" header on route cards; Route Detail is a listing page (map hero → hairline-separated sections → sticky bottom bar with facts left, pulse pill right).
+- **Type:** SF Pro Rounded, display 26/semibold, heading 20/semibold — medium weights; the cards, not the type, carry the weight. Stats stay bold.
+- **Gem iconography:** SF Symbol glyph per rarity tier (table above), tinted by pulse step. Silhouette (ink 12%) = uncollected.
 - **Motion:** gems idle-shimmer on the map (subtle specular sweep, 4 s loop); collection is a radial burst; Stash reveals use a flip-from-silhouette.
 - **Haptics are a first-class design element** (the phone is in a pocket mid-run):
   - Gem placement in editor: light tick.

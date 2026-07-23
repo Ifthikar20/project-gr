@@ -25,7 +25,7 @@ struct GemRunApp: App {
                 .environment(session)
                 .environment(runEngine)
                 .modelContainer(container)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)   // "Daybreak Pulse" is a light system
                 .task {
                     session.attach(context: container.mainContext)
                 }

@@ -5,10 +5,10 @@ import CorePersistence
 import DesignSystem
 import SwiftUI
 
-/// Value prop → location priming → identity, under 60 seconds (docs/03 §1).
-/// Identity offers Sign in with Apple, Google, or guest. While
-/// `AuthFlags.allowAllAccounts` is on (TEMPORARY), every path succeeds —
-/// including provider failures — so any account works during development.
+/// Value prop → location priming → identity, under 60 seconds (docs/03 §1),
+/// Daybreak Pulse: snow background, ink display type, pulse CTAs.
+/// While `AuthFlags.allowAllAccounts` is on (TEMPORARY), every sign-in path
+/// succeeds — including provider failures — so any account works in dev.
 public struct OnboardingView: View {
     @Environment(SessionStore.self) private var session
     @State private var page = 0
@@ -28,7 +28,7 @@ public struct OnboardingView: View {
 
     public var body: some View {
         ZStack {
-            DS.Colors.ink.ignoresSafeArea()
+            DS.Colors.snow.ignoresSafeArea()
             VStack(spacing: 24) {
                 TabView(selection: $page) {
                     ForEach(0..<Self.pages.count, id: \.self) { i in
@@ -38,27 +38,27 @@ public struct OnboardingView: View {
                     identity.tag(Self.pages.count + 1)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .always))
+                .indexViewStyle(.page(backgroundDisplayMode: .always))
             }
         }
-        .preferredColorScheme(.dark)
     }
 
     private func pageView(_ p: (icon: String, title: String, text: String)) -> some View {
         VStack(spacing: 20) {
             Image(systemName: p.icon)
                 .font(.system(size: 64))
-                .foregroundStyle(DS.Colors.gold)
+                .foregroundStyle(DS.Colors.pulse)
             Text(p.title)
                 .font(DS.Typography.display(28))
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             Text(p.text)
                 .font(.body)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 36)
             Button("Next") { withAnimation { page += 1 } }
                 .font(DS.Typography.heading)
-                .foregroundStyle(DS.Colors.gold)
+                .foregroundStyle(DS.Colors.pulse)
         }
     }
 
@@ -67,13 +67,13 @@ public struct OnboardingView: View {
         VStack(spacing: 20) {
             Image(systemName: "location.fill")
                 .font(.system(size: 64))
-                .foregroundStyle(DS.Colors.gold)
+                .foregroundStyle(DS.Colors.pulse)
             Text("One thing first")
                 .font(DS.Typography.display(28))
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             Text("GemRun uses your location during runs to confirm you passed each gem. While-using only — we never track you outside a run.")
                 .font(.body)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 36)
             Button {
@@ -82,14 +82,14 @@ public struct OnboardingView: View {
             } label: {
                 Text("Enable location")
                     .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.ink)
+                    .foregroundStyle(DS.Colors.snowCard)
                     .padding(.horizontal, 32)
-                    .padding(.vertical, 12)
-                    .background(DS.Colors.gold, in: Capsule())
+                    .frame(height: 50)
+                    .background(DS.Colors.pulse, in: Capsule())
             }
             Button("Not now") { withAnimation { page += 1 } }
                 .font(.footnote)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
     }
 
@@ -97,10 +97,10 @@ public struct OnboardingView: View {
         VStack(spacing: 16) {
             Image(systemName: "person.crop.circle.badge.plus")
                 .font(.system(size: 56))
-                .foregroundStyle(DS.Colors.gold)
+                .foregroundStyle(DS.Colors.pulse)
             Text("Who's hunting?")
                 .font(DS.Typography.display(28))
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             TextField("handle (optional)", text: $handle)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
@@ -112,7 +112,7 @@ public struct OnboardingView: View {
             } onCompletion: { result in
                 handleAppleResult(result)
             }
-            .signInWithAppleButtonStyle(.white)
+            .signInWithAppleButtonStyle(.black)
             .frame(width: 260, height: 46)
             .clipShape(Capsule())
 
@@ -123,26 +123,27 @@ public struct OnboardingView: View {
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                     .frame(width: 260, height: 46)
-                    .background(.white, in: Capsule())
+                    .background(DS.Colors.snowCard, in: Capsule())
+                    .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
             }
 
             Button("Continue as guest") {
                 session.signIn(provider: .guest, handle: handle, externalID: nil)
             }
             .font(.footnote)
-            .foregroundStyle(DS.Colors.textSecondary)
+            .foregroundStyle(DS.Colors.inkSecondary)
 
             if let authError {
                 Text(authError)
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Colors.pulse)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
             if AuthFlags.allowAllAccounts {
                 Text("Dev mode: all accounts are temporarily accepted.")
                     .font(.caption2)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
         }
     }

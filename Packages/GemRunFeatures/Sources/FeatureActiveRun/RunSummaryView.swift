@@ -3,8 +3,8 @@ import CorePersistence
 import DesignSystem
 import SwiftUI
 
-/// The reward ceremony (docs/03 §8): gems reveal rarest-last, XP breakdown,
-/// leaderboard delta, honest validation state.
+/// The reward ceremony (docs/03 §8), Daybreak Pulse: white cards on snow,
+/// gems reveal rarest-last in the pulse ramp, honest validation states.
 struct RunSummaryView: View {
     let summary: RunCompletionSummary
     let onDone: () -> Void
@@ -20,10 +20,10 @@ struct RunSummaryView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: 18) {
                 Text(summary.isWalk ? "Walk complete" : "Run complete")
                     .font(DS.Typography.display(28))
-                    .foregroundStyle(DS.Colors.textPrimary)
+                    .foregroundStyle(DS.Colors.ink)
                     .padding(.top, 32)
 
                 gemReveal
@@ -31,22 +31,20 @@ struct RunSummaryView: View {
                 if summary.status == .flagged || summary.status == .pending {
                     Text("We're confirming your run — gems will settle into your stash shortly.")
                         .font(.footnote)
-                        .foregroundStyle(DS.Colors.textSecondary)
+                        .foregroundStyle(DS.Colors.inkSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 }
                 if summary.status == .invalid {
                     Text("This run couldn't be validated, so no gems or XP were awarded.")
                         .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Colors.pulse)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 } else if summary.revokedCount > 0 {
-                    // Server verdict revoked some optimistic collections (docs/06)
-                    // — e.g. a daily gem already collected today.
                     Text("\(summary.revokedCount) gem\(summary.revokedCount == 1 ? "" : "s") already collected today didn't count again.")
                         .font(.footnote)
-                        .foregroundStyle(DS.Colors.textSecondary)
+                        .foregroundStyle(DS.Colors.inkSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
                 }
@@ -61,30 +59,21 @@ struct RunSummaryView: View {
                                                     image: shareImage)) {
                         Label("Share run card", systemImage: "square.and.arrow.up")
                             .font(DS.Typography.heading)
-                            .foregroundStyle(DS.Colors.gold)
+                            .foregroundStyle(DS.Colors.ink)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(DS.Colors.inkRaised,
-                                        in: RoundedRectangle(cornerRadius: 14))
+                            .frame(height: 50)
+                            .background(DS.Colors.snowCard, in: Capsule())
+                            .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
                     }
                     .padding(.horizontal, 20)
                 }
 
-                Button {
-                    onDone()
-                } label: {
-                    Text("Done")
-                        .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.ink)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(DS.Colors.gold, in: RoundedRectangle(cornerRadius: 14))
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 32)
+                PillButton("Done") { onDone() }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 32)
             }
         }
-        .background(DS.Colors.ink.ignoresSafeArea())
+        .background(DS.Colors.snow.ignoresSafeArea())
         .onAppear {
             revealNext()
             renderShareCard()
@@ -106,25 +95,26 @@ struct RunSummaryView: View {
             if summary.gems.isEmpty {
                 Text("No gems this time — the route remembers you anyway.")
                     .font(.subheadline)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             } else {
-                HStack(spacing: 16) {
+                HStack(spacing: 18) {
                     ForEach(Array(orderedGems.enumerated()), id: \.element.id) { i, gem in
                         VStack(spacing: 6) {
-                            Image(systemName: "diamond.fill")
+                            Image(systemName: DS.rarityGlyph(gem.rarity))
                                 .font(.system(size: 40))
                                 .foregroundStyle(i < revealed
                                     ? DS.Colors.rarity(gem.rarity)
-                                    : Color.white.opacity(0.1))
+                                    : DS.Colors.hairline)
                                 .scaleEffect(i < revealed ? 1 : 0.7)
                                 .animation(.spring(duration: 0.5), value: revealed)
                             Text(i < revealed ? gem.name : "?")
                                 .font(.caption2)
-                                .foregroundStyle(DS.Colors.textSecondary)
+                                .foregroundStyle(DS.Colors.inkSecondary)
                                 .lineLimit(1)
                         }
                     }
                 }
+                .airbnbCard()
                 .padding(.horizontal, 20)
             }
         }
@@ -134,32 +124,31 @@ struct RunSummaryView: View {
         VStack(spacing: 8) {
             Text("+\(summary.xpEarned) XP")
                 .font(DS.Typography.statLarge)
-                .foregroundStyle(DS.Colors.gold)
+                .foregroundStyle(DS.Colors.pulse)
             if summary.multiplier > 1 {
                 Text(String(format: "includes %.1f× streak bonus", summary.multiplier))
                     .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
             if summary.isWalk {
                 Text("Walk pace — half XP, no leaderboard time")
                     .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
             if summary.setBonusXP > 0, let setName = summary.completedSetName {
                 Label("\(setName) set complete! +\(summary.setBonusXP) XP",
                       systemImage: "rosette")
                     .font(.subheadline.bold())
-                    .foregroundStyle(DS.Colors.gold)
+                    .foregroundStyle(DS.Colors.pulse)
             }
             if summary.streakExtended {
                 Label("\(summary.streakCount)-day streak", systemImage: "flame.fill")
                     .font(.subheadline.bold())
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Colors.pulse)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 16))
+        .airbnbCard()
         .padding(.horizontal, 20)
     }
 
@@ -173,8 +162,7 @@ struct RunSummaryView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 16))
+        .airbnbCard()
         .padding(.horizontal, 20)
     }
 
@@ -184,22 +172,22 @@ struct RunSummaryView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Splits")
                         .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.textPrimary)
+                        .foregroundStyle(DS.Colors.ink)
                     let fastest = summary.splitsS.min() ?? 0
                     ForEach(Array(summary.splitsS.enumerated()), id: \.offset) { i, split in
                         HStack {
                             Text("km \(i + 1)")
-                                .foregroundStyle(DS.Colors.textSecondary)
+                                .foregroundStyle(DS.Colors.inkSecondary)
                                 .frame(width: 52, alignment: .leading)
                             Text(formatDuration(split))
                                 .monospacedDigit()
                                 .foregroundStyle(split == fastest
-                                    ? DS.Colors.gold : DS.Colors.textPrimary)
+                                    ? DS.Colors.pulse : DS.Colors.ink)
                             Spacer()
                             GeometryReader { geo in
                                 Capsule()
                                     .fill(split == fastest
-                                        ? DS.Colors.gold : DS.Colors.gold.opacity(0.35))
+                                        ? DS.Colors.pulse : DS.Colors.pulse.opacity(0.35))
                                     .frame(width: geo.size.width
                                         * CGFloat(fastest) / CGFloat(max(split, 1)))
                             }
@@ -208,8 +196,8 @@ struct RunSummaryView: View {
                         .font(.subheadline)
                     }
                 }
-                .padding(16)
-                .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 16))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .airbnbCard()
                 .padding(.horizontal, 20)
             }
         }
@@ -219,10 +207,10 @@ struct RunSummaryView: View {
         VStack(spacing: 2) {
             Text(value)
                 .font(DS.Typography.statMedium)
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
     }
 

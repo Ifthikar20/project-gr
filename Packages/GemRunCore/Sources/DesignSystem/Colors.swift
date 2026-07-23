@@ -1,27 +1,49 @@
 import CoreModels
 import SwiftUI
 
-/// "Night Expedition" palette (docs/03). Rarity colors are the ONLY saturated
-/// hues in the app — everything else stays dark and neutral.
+/// "Daybreak Pulse" (docs/03): the entire app uses EXACTLY three colors —
+/// snow surfaces, ink text, and one race-orange accent — Airbnb-style
+/// (one brand color reserved for what matters, neutrals everywhere else).
+/// Opacity/tint steps of a hue count as the same color. Nothing else.
 public enum DS {
     public enum Colors {
-        // Surfaces
-        public static let ink = Color(red: 0.06, green: 0.08, blue: 0.13)          // deep navy background
-        public static let inkRaised = Color(red: 0.10, green: 0.12, blue: 0.18)    // cards
-        public static let parchment = Color(red: 0.91, green: 0.86, blue: 0.74)    // accent texture tint
-        public static let gold = Color(red: 0.95, green: 0.76, blue: 0.29)         // routes, CTAs, tab tint
-        public static let textPrimary = Color.white.opacity(0.92)
-        public static let textSecondary = Color.white.opacity(0.55)
+        // 1 — Snow: surfaces
+        public static let snow = Color(red: 0.980, green: 0.980, blue: 0.973)   // #FAFAF8 bg
+        public static let snowCard = Color.white                                 // cards
 
-        // Rarity (docs/02)
+        // 2 — Ink: text, icons, dark elements
+        public static let ink = Color(red: 0.086, green: 0.094, blue: 0.114)    // #16181D
+        public static let inkSecondary = ink.opacity(0.55)
+        public static let hairline = ink.opacity(0.12)
+
+        // 3 — Pulse: THE accent (CTAs, gems, streaks, live stats, own rows)
+        public static let pulse = Color(red: 0.988, green: 0.298, blue: 0.008)  // #FC4C02
+
+        /// Rarity is a pulse ramp — never a new hue (docs/03 restyle).
         public static func rarity(_ rarity: Rarity) -> Color {
+            pulse.opacity(rarityStep(rarity))
+        }
+
+        public static func rarityStep(_ rarity: Rarity) -> Double {
             switch rarity {
-            case .common: Color(white: 0.92)                                 // Quartz
-            case .uncommon: Color(red: 0.22, green: 0.78, blue: 0.45)        // Emerald
-            case .rare: Color(red: 0.25, green: 0.53, blue: 0.96)            // Sapphire
-            case .epic: Color(red: 0.64, green: 0.36, blue: 0.94)            // Amethyst
-            case .legendary: Color(red: 0.98, green: 0.62, blue: 0.18)       // Ember
+            case .common: 0.30
+            case .uncommon: 0.50
+            case .rare: 0.70
+            case .epic: 0.88
+            case .legendary: 1.0
             }
+        }
+    }
+
+    /// Rarity is double-encoded (docs/03): pulse step + a distinct glyph, so
+    /// tiers stay scannable in grayscale and for color-blind runners.
+    public static func rarityGlyph(_ rarity: Rarity) -> String {
+        switch rarity {
+        case .common: "diamond"
+        case .uncommon: "diamond.fill"
+        case .rare: "rhombus.fill"
+        case .epic: "seal.fill"
+        case .legendary: "crown.fill"
         }
     }
 }

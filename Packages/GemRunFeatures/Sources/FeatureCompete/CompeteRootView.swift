@@ -5,8 +5,8 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// Leaderboards (docs/03 §10), loaded from the API — the mock includes fake
-/// competitors so the multi-user UI is visible before the Django backend.
+/// Leaderboards (docs/03 §10), Daybreak Pulse: chip pickers, white rows on
+/// snow, own row in pulse. Loaded from the API (mock fakes competitors).
 public struct CompeteRootView: View {
     @Query private var runs: [StoredRun]
     @Query(sort: \StoredRoute.createdAt) private var storedRoutes: [StoredRoute]
@@ -33,18 +33,21 @@ public struct CompeteRootView: View {
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("Board", selection: $board) {
-                    ForEach(Board.allCases, id: \.self) { Text($0.rawValue) }
+                HStack(spacing: 8) {
+                    ForEach(Board.allCases, id: \.self) { b in
+                        Chip(b.rawValue, selected: board == b) { board = b }
+                    }
+                    Spacer()
                 }
-                .pickerStyle(.segmented)
-                .padding()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
 
                 switch board {
                 case .routes: routeBoard
                 case .local: localBoard
                 }
             }
-            .background(DS.Colors.ink)
+            .background(DS.Colors.snow)
             .navigationTitle("Compete")
             .task(id: board) { await load() }
             .task(id: selectedRouteID) { await load() }
@@ -62,15 +65,9 @@ public struct CompeteRootView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
                             ForEach(boardRoutes) { route in
-                                Button(route.name) { selectedRouteID = route.id }
-                                    .font(.footnote.bold())
-                                    .foregroundStyle(route.id == currentRouteID
-                                        ? DS.Colors.ink : DS.Colors.textPrimary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(route.id == currentRouteID
-                                        ? DS.Colors.gold : DS.Colors.inkRaised,
-                                        in: Capsule())
+                                Chip(route.name, selected: route.id == currentRouteID) {
+                                    selectedRouteID = route.id
+                                }
                             }
                         }
                         .padding(.horizontal, 16)
@@ -98,27 +95,42 @@ public struct CompeteRootView: View {
             } else if entries.isEmpty {
                 emptyState("No results yet — get out there.")
             } else {
-                List(entries, id: \.rank) { entry in
-                    HStack {
-                        Text("#\(entry.rank)")
-                            .foregroundStyle(entry.isMe ? DS.Colors.ink : DS.Colors.gold)
-                            .frame(width: 40, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(entry.isMe ? "You" : "@\(entry.handle)")
-                                .foregroundStyle(entry.isMe ? DS.Colors.ink : DS.Colors.textPrimary)
-                            Text("Level \(entry.level)")
-                                .font(.caption2)
-                                .foregroundStyle(entry.isMe
-                                    ? DS.Colors.ink.opacity(0.7) : DS.Colors.textSecondary)
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(entries, id: \.rank) { entry in
+                            HStack {
+                                Text("#\(entry.rank)")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(entry.isMe
+                                        ? DS.Colors.snowCard : DS.Colors.pulse)
+                                    .frame(width: 40, alignment: .leading)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(entry.isMe ? "You" : "@\(entry.handle)")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(entry.isMe
+                                            ? DS.Colors.snowCard : DS.Colors.ink)
+                                    Text("Level \(entry.level)")
+                                        .font(.caption2)
+                                        .foregroundStyle(entry.isMe
+                                            ? DS.Colors.snowCard.opacity(0.75)
+                                            : DS.Colors.inkSecondary)
+                                }
+                                Spacer()
+                                Text(valueLabel(entry.bestTimeS))
+                                    .font(.subheadline)
+                                    .monospacedDigit()
+                                    .foregroundStyle(entry.isMe
+                                        ? DS.Colors.snowCard : DS.Colors.ink)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(entry.isMe ? DS.Colors.pulse : DS.Colors.snowCard,
+                                        in: RoundedRectangle(cornerRadius: 14))
+                            .shadow(color: DS.Colors.ink.opacity(0.06), radius: 8, y: 2)
                         }
-                        Spacer()
-                        Text(valueLabel(entry.bestTimeS))
-                            .monospacedDigit()
-                            .foregroundStyle(entry.isMe ? DS.Colors.ink : DS.Colors.textPrimary)
                     }
-                    .listRowBackground(entry.isMe ? DS.Colors.gold : DS.Colors.inkRaised)
+                    .padding(16)
                 }
-                .scrollContentBackground(.hidden)
             }
         }
     }
@@ -127,10 +139,10 @@ public struct CompeteRootView: View {
         VStack(spacing: 10) {
             Image(systemName: "trophy")
                 .font(.system(size: 40))
-                .foregroundStyle(DS.Colors.gold)
+                .foregroundStyle(DS.Colors.pulse)
             Text(message)
                 .font(.subheadline)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

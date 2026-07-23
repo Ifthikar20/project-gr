@@ -3,7 +3,8 @@ import CorePersistence
 import DesignSystem
 import SwiftUI
 
-/// The exportable run card (docs/03 §8), rendered offscreen by ImageRenderer.
+/// The exportable run card (docs/03 §8), Daybreak Pulse: snow surface, ink
+/// type, pulse gems. Rendered offscreen by ImageRenderer.
 struct ShareCardView: View {
     let summary: RunCompletionSummary
 
@@ -11,25 +12,25 @@ struct ShareCardView: View {
         VStack(spacing: 14) {
             HStack(spacing: 6) {
                 Image(systemName: "diamond.fill")
-                    .foregroundStyle(DS.Colors.gold)
+                    .foregroundStyle(DS.Colors.pulse)
                 Text("GemRun")
                     .font(DS.Typography.display(20))
-                    .foregroundStyle(DS.Colors.gold)
+                    .foregroundStyle(DS.Colors.pulse)
             }
             Text(summary.routeName)
                 .font(DS.Typography.display(26))
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
                 .lineLimit(1)
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ForEach(summary.gems) { gem in
-                    Image(systemName: "diamond.fill")
+                    Image(systemName: DS.rarityGlyph(gem.rarity))
                         .font(.system(size: 30))
                         .foregroundStyle(DS.Colors.rarity(gem.rarity))
                 }
                 if summary.gems.isEmpty {
                     Text("Route completed")
                         .font(.subheadline)
-                        .foregroundStyle(DS.Colors.textSecondary)
+                        .foregroundStyle(DS.Colors.inkSecondary)
                 }
             }
             HStack(spacing: 22) {
@@ -42,24 +43,23 @@ struct ShareCardView: View {
             }
             Text("Drop gems. Run routes. Collect what others left behind.")
                 .font(.caption2)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
         .padding(28)
         .frame(width: 420)
-        .background(DS.Colors.ink)
-        .overlay(RoundedRectangle(cornerRadius: 0)
-            .stroke(DS.Colors.gold.opacity(0.4), lineWidth: 2))
+        .background(DS.Colors.snowCard)
+        .overlay(Rectangle().stroke(DS.Colors.hairline, lineWidth: 2))
     }
 
     private func cardStat(_ value: String, _ label: String) -> some View {
         VStack(spacing: 2) {
             Text(value)
                 .font(DS.Typography.statMedium)
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
                 .monospacedDigit()
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
     }
 

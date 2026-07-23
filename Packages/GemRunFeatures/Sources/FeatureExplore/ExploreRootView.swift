@@ -7,7 +7,8 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// Map home (docs/03 §2): full-bleed map, route card carousel, "+" FAB.
+/// Map home (docs/03 §2), Airbnb search-results style: light map, image-top
+/// route cards (mini map preview as the "photo"), pulse FAB.
 public struct ExploreRootView: View {
     @Environment(\.modelContext) private var context
     @Environment(SessionStore.self) private var session
@@ -37,10 +38,10 @@ public struct ExploreRootView: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.title2.bold())
-                            .foregroundStyle(DS.Colors.ink)
+                            .foregroundStyle(DS.Colors.snowCard)
                             .frame(width: 56, height: 56)
-                            .background(DS.Colors.gold, in: Circle())
-                            .shadow(radius: 6)
+                            .background(DS.Colors.pulse, in: Circle())
+                            .shadow(color: DS.Colors.ink.opacity(0.2), radius: 8, y: 3)
                     }
                     .padding(.trailing, 20)
 
@@ -72,7 +73,7 @@ public struct ExploreRootView: View {
 
     private var routeCards: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 ForEach(routes) { route in
                     RouteCard(route: route)
                         .onTapGesture {
@@ -82,21 +83,20 @@ public struct ExploreRootView: View {
                 }
             }
             .padding(.horizontal, 16)
+            .padding(.bottom, 6)
         }
     }
 
     private var emptyBanner: some View {
         Text("No routes here yet — be the first to create one")
             .font(.footnote)
-            .foregroundStyle(DS.Colors.textSecondary)
-            .padding(12)
-            .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(DS.Colors.inkSecondary)
+            .airbnbCard(padding: 12)
             .padding(.horizontal, 16)
     }
 
-    /// GET /v1/routes near the user (mock API today, Django later), upserted
-    /// into the SwiftData cache — the map renders cached routes instantly and
-    /// refreshes when the call lands, so the network is never a bottleneck.
+    /// GET /v1/routes near the user, upserted into the SwiftData cache — the
+    /// map renders cached routes instantly and refreshes when the call lands.
     private func loadNearbyRoutes() async {
         let manager = CLLocationManager()
         if manager.authorizationStatus == .notDetermined {
@@ -116,30 +116,35 @@ public struct ExploreRootView: View {
     }
 }
 
+/// Airbnb listing-card anatomy: image on top (map preview), then title,
+/// meta line, and the rarity row.
 struct RouteCard: View {
     let route: Route
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(route.name)
-                .font(DS.Typography.heading)
-                .foregroundStyle(DS.Colors.textPrimary)
-                .lineLimit(1)
-            HStack(spacing: 10) {
-                Label(String(format: "%.1f km", Double(route.distanceM) / 1_000),
-                      systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                Label("\(route.elevationGainM) m", systemImage: "arrow.up.right")
-                Text(route.difficulty.rawValue.capitalized)
+        VStack(alignment: .leading, spacing: 0) {
+            RoutePreviewMap(route: route)
+                .frame(height: 110)
+                .allowsHitTesting(false)
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16,
+                                                  topTrailingRadius: 16))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(route.name)
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                    .lineLimit(1)
+                Text(String(format: "%.1f km · %d m climb · %@",
+                            Double(route.distanceM) / 1_000, route.elevationGainM,
+                            route.difficulty.rawValue.capitalized))
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                RarityDots(counts: rarityCounts)
             }
-            .font(.caption)
-            .foregroundStyle(DS.Colors.textSecondary)
-            RarityDots(counts: rarityCounts)
+            .padding(12)
         }
-        .padding(14)
-        .frame(width: 240, alignment: .leading)
-        .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16)
-            .stroke(DS.Colors.gold.opacity(0.25), lineWidth: 1))
+        .frame(width: 250, alignment: .leading)
+        .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: DS.Colors.ink.opacity(0.1), radius: 12, y: 3)
     }
 
     private var rarityCounts: [Rarity: Int] {

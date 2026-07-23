@@ -5,8 +5,8 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// Everything needed to decide to run (docs/03 §3). Start Run hands off to the
-/// App-level full-screen cover via SessionStore.
+/// Airbnb listing-page anatomy (docs/03 §3): full-width map hero, white sheet
+/// with hairline-separated sections, sticky bottom bar with the pulse CTA.
 struct RouteDetailView: View {
     let route: Route
     @Environment(\.modelContext) private var context
@@ -16,8 +16,6 @@ struct RouteDetailView: View {
     @Query private var runs: [StoredRun]
 
     private var collectedDropIDs: Set<UUID> {
-        // Local proxy for "has this user collected this drop": collected gem IDs
-        // on this route. Server-accurate per-drop state arrives in Phase F.
         let routeID = route.id
         let gemIDs = Set(stash.filter { $0.routeID == routeID }.map(\.gemID))
         return Set(route.gemDrops.filter { gemIDs.contains($0.gemID) }.map(\.id))
@@ -36,67 +34,56 @@ struct RouteDetailView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 0) {
                     RoutePreviewMap(route: route, collectedDropIDs: collectedDropIDs)
                         .frame(height: 300)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
 
-                    statsRow
-
-                    if let profile = route.elevationProfile, profile.count > 2 {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Elevation")
-                                .font(DS.Typography.heading)
-                                .foregroundStyle(DS.Colors.textPrimary)
-                            ElevationStrip(
-                                profile: profile,
-                                markers: route.gemDrops.map {
-                                    (Double($0.positionAlongRouteM)
-                                        / Double(max(route.distanceM, 1)), $0.rarity)
-                                })
+                    VStack(alignment: .leading, spacing: 18) {
+                        header
+                        divider
+                        statsRow
+                        if let profile = route.elevationProfile, profile.count > 2 {
+                            divider
+                            elevationSection(profile)
                         }
-                        .padding(14)
-                        .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 14))
-                    }
-
-                    gemManifest
-                    leaderboardSnippet
-
-                    if let creator = route.creatorHandle {
-                        Text("Created by @\(creator)")
+                        divider
+                        gemManifest
+                        divider
+                        leaderboardSnippet
+                        divider
+                        Text(route.creatorHandle.map { "Created by @\($0)" }
+                             ?? "A GemRun original")
                             .font(.caption)
-                            .foregroundStyle(DS.Colors.textSecondary)
-                    } else {
-                        Text("A GemRun original")
-                            .font(.caption)
-                            .foregroundStyle(DS.Colors.textSecondary)
+                            .foregroundStyle(DS.Colors.inkSecondary)
                     }
+                    .padding(20)
                 }
-                .padding(16)
             }
-            .background(DS.Colors.ink)
-            .navigationTitle(route.name)
+            .background(DS.Colors.snowCard)
             .navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .bottom) {
-                Button {
-                    dismiss()
-                    session.activeRoute = route
-                } label: {
-                    Text("Start Run")
-                        .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.ink)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(DS.Colors.gold, in: RoundedRectangle(cornerRadius: 14))
-                }
-                .padding(16)
-                .background(.ultraThinMaterial)
+            .safeAreaInset(edge: .bottom) { bottomBar }
+        }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(DS.Colors.hairline).frame(height: 1)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(route.name)
+                .font(DS.Typography.display(26))
+                .foregroundStyle(DS.Colors.ink)
+            if let description = route.description {
+                Text(description)
+                    .font(.subheadline)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
         }
     }
 
     private var statsRow: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 0) {
             stat(String(format: "%.1f km", Double(route.distanceM) / 1_000), "Distance")
             stat("\(route.elevationGainM) m", "Climb")
             stat(route.difficulty.rawValue.capitalized, "Difficulty")
@@ -108,70 +95,112 @@ struct RouteDetailView: View {
         VStack(spacing: 2) {
             Text(value)
                 .font(DS.Typography.statMedium)
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
         .frame(maxWidth: .infinity)
     }
 
+    private func elevationSection(_ profile: [Int]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Elevation")
+                .font(DS.Typography.heading)
+                .foregroundStyle(DS.Colors.ink)
+            ElevationStrip(
+                profile: profile,
+                markers: route.gemDrops.map {
+                    (Double($0.positionAlongRouteM) / Double(max(route.distanceM, 1)),
+                     $0.rarity)
+                })
+        }
+    }
+
     private var gemManifest: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Gems on this route")
                 .font(DS.Typography.heading)
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             ForEach(route.gemDrops) { drop in
-                HStack {
-                    Circle()
-                        .fill(DS.Colors.rarity(drop.rarity))
-                        .frame(width: 10, height: 10)
+                HStack(spacing: 10) {
+                    RarityBadge(drop.rarity, size: 15)
                     Text(drop.rarity.rawValue.capitalized)
                         .font(.subheadline)
-                        .foregroundStyle(DS.Colors.textPrimary)
+                        .foregroundStyle(DS.Colors.ink)
                     Spacer()
                     if collectedDropIDs.contains(drop.id) {
                         Image(systemName: "checkmark")
-                            .foregroundStyle(DS.Colors.textSecondary)
+                            .font(.caption)
+                            .foregroundStyle(DS.Colors.inkSecondary)
                     } else if drop.rarity != .common, drop.rarity != .uncommon {
                         Text("hidden — find it")
                             .font(.caption)
-                            .foregroundStyle(DS.Colors.textSecondary)
+                            .foregroundStyle(DS.Colors.inkSecondary)
                     }
                 }
             }
         }
-        .padding(14)
-        .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var leaderboardSnippet: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Best times")
                 .font(DS.Typography.heading)
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             if bestTimes.isEmpty {
                 Text("No valid runs yet — set the first time.")
                     .font(.subheadline)
-                    .foregroundStyle(DS.Colors.textSecondary)
+                    .foregroundStyle(DS.Colors.inkSecondary)
             } else {
                 ForEach(Array(bestTimes.enumerated()), id: \.element.id) { i, run in
                     HStack {
                         Text("#\(i + 1)")
-                            .foregroundStyle(DS.Colors.gold)
+                            .foregroundStyle(DS.Colors.pulse)
                         Text(format(seconds: run.durationS))
-                            .foregroundStyle(DS.Colors.textPrimary)
+                            .foregroundStyle(DS.Colors.ink)
+                            .monospacedDigit()
                         Spacer()
                         Text(run.startedAt, style: .date)
                             .font(.caption)
-                            .foregroundStyle(DS.Colors.textSecondary)
+                            .foregroundStyle(DS.Colors.inkSecondary)
                     }
                     .font(.subheadline)
                 }
             }
         }
-        .padding(14)
-        .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// Airbnb's sticky reserve bar: facts left, one pulse pill right.
+    private var bottomBar: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(String(format: "%.1f km", Double(route.distanceM) / 1_000))
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                Text(route.difficulty.rawValue.capitalized)
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            }
+            Spacer()
+            Button {
+                dismiss()
+                session.activeRoute = route
+            } label: {
+                Text("Start Run")
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.snowCard)
+                    .padding(.horizontal, 36)
+                    .frame(height: 50)
+                    .background(DS.Colors.pulse, in: Capsule())
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(DS.Colors.snowCard)
+        .overlay(alignment: .top) {
+            Rectangle().fill(DS.Colors.hairline).frame(height: 1)
+        }
     }
 }
 

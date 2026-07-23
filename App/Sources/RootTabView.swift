@@ -63,7 +63,7 @@ struct RootView: View {
             ProfileRootView()
                 .tabItem { Label("Profile", systemImage: "person.fill") }
         }
-        .tint(DS.Colors.gold)
+        .tint(DS.Colors.pulse)
     }
 
     // MARK: - Crash recovery (docs/04)

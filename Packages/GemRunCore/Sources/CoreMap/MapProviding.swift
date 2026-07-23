@@ -12,15 +12,30 @@ public extension Coordinate {
     var cl: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: lat, longitude: lng) }
 }
 
+// Mirrors DesignSystem's 3-color "Daybreak Pulse" tokens (CoreMap stays
+// independent of DesignSystem by design — docs/07 dependency rule).
 public enum MapPalette {
-    public static let gold = Color(red: 0.95, green: 0.76, blue: 0.29)
+    public static let pulse = Color(red: 0.988, green: 0.298, blue: 0.008)   // #FC4C02
+    public static let ink = Color(red: 0.086, green: 0.094, blue: 0.114)     // #16181D
+
     public static func rarity(_ r: Rarity) -> Color {
+        let step: Double = switch r {
+        case .common: 0.30
+        case .uncommon: 0.50
+        case .rare: 0.70
+        case .epic: 0.88
+        case .legendary: 1.0
+        }
+        return pulse.opacity(step)
+    }
+
+    public static func glyph(_ r: Rarity) -> String {
         switch r {
-        case .common: Color(white: 0.92)
-        case .uncommon: Color(red: 0.22, green: 0.78, blue: 0.45)
-        case .rare: Color(red: 0.25, green: 0.53, blue: 0.96)
-        case .epic: Color(red: 0.64, green: 0.36, blue: 0.94)
-        case .legendary: Color(red: 0.98, green: 0.62, blue: 0.18)
+        case .common: "diamond"
+        case .uncommon: "diamond.fill"
+        case .rare: "rhombus.fill"
+        case .epic: "seal.fill"
+        case .legendary: "crown.fill"
         }
     }
 }
@@ -43,16 +58,17 @@ public struct ExploreMapView: View {
             ForEach(routes) { route in
                 let coords = PolylineCodec.decode(route.polyline).map(\.cl)
                 MapPolyline(coordinates: coords)
-                    .stroke(MapPalette.gold.opacity(route.id == selectedID ? 1 : 0.65),
+                    .stroke(MapPalette.pulse.opacity(route.id == selectedID ? 1 : 0.65),
                             lineWidth: route.id == selectedID ? 5 : 3)
                 if let start = coords.first {
                     Annotation(route.name, coordinate: start) {
                         Button { onSelect(route) } label: {
                             Image(systemName: "diamond.fill")
                                 .font(.caption)
-                                .foregroundStyle(.black)
+                                .foregroundStyle(.white)
                                 .padding(6)
-                                .background(MapPalette.gold, in: Circle())
+                                .background(MapPalette.pulse, in: Circle())
+                                .shadow(color: MapPalette.ink.opacity(0.2), radius: 4, y: 1)
                         }
                     }
                 }
@@ -76,23 +92,25 @@ public struct RoutePreviewMap: View {
         let coords = PolylineCodec.decode(route.polyline)
         Map(initialPosition: .region(region(for: coords))) {
             MapPolyline(coordinates: coords.map(\.cl))
-                .stroke(MapPalette.gold, lineWidth: 4)
+                .stroke(MapPalette.pulse, lineWidth: 4)
             ForEach(route.gemDrops) { drop in
                 let isFuzzed = drop.rarity != .common && drop.rarity != .uncommon
                     && !collectedDropIDs.contains(drop.id)
                 if isFuzzed {
                     // The hunt: a hint zone, not the exact spot (docs/03).
                     MapCircle(center: drop.coordinate.cl, radius: 150)
-                        .foregroundStyle(MapPalette.rarity(drop.rarity).opacity(0.18))
-                        .stroke(MapPalette.rarity(drop.rarity).opacity(0.6),
+                        .foregroundStyle(MapPalette.rarity(drop.rarity).opacity(0.15))
+                        .stroke(MapPalette.rarity(drop.rarity),
                                 style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                 } else {
                     Annotation("", coordinate: drop.coordinate.cl) {
                         Image(systemName: collectedDropIDs.contains(drop.id)
-                              ? "checkmark.circle.fill" : "diamond.fill")
+                              ? "checkmark.circle.fill" : MapPalette.glyph(drop.rarity))
                             .font(.footnote)
-                            .foregroundStyle(MapPalette.rarity(drop.rarity))
-                            .shadow(radius: 2)
+                            .foregroundStyle(collectedDropIDs.contains(drop.id)
+                                ? MapPalette.ink.opacity(0.35)
+                                : MapPalette.rarity(drop.rarity))
+                            .shadow(color: MapPalette.ink.opacity(0.15), radius: 2)
                     }
                 }
             }
@@ -120,15 +138,16 @@ public struct DrawingMapView: View {
                 UserAnnotation()
                 if pathCoords.count > 1 {
                     MapPolyline(coordinates: pathCoords.map(\.cl))
-                        .stroke(MapPalette.gold, lineWidth: 4)
+                        .stroke(MapPalette.pulse, lineWidth: 4)
                 }
                 ForEach(Array(waypoints.enumerated()), id: \.offset) { i, wp in
                     Annotation("", coordinate: wp.cl) {
                         Text("\(i + 1)")
                             .font(.caption2.bold())
-                            .foregroundStyle(.black)
+                            .foregroundStyle(.white)
                             .frame(width: 20, height: 20)
-                            .background(MapPalette.gold, in: Circle())
+                            .background(MapPalette.pulse, in: Circle())
+                            .shadow(color: MapPalette.ink.opacity(0.2), radius: 3, y: 1)
                     }
                 }
             }
@@ -157,20 +176,23 @@ public struct ActiveRunMapView: View {
     public var body: some View {
         Map(position: .constant(camera)) {
             MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
-                .stroke(MapPalette.gold, lineWidth: 4)
+                .stroke(MapPalette.pulse, lineWidth: 4)
             ForEach(route.gemDrops) { drop in
                 Annotation("", coordinate: drop.coordinate.cl) {
                     Image(systemName: collectedDropIDs.contains(drop.id)
-                          ? "checkmark.circle.fill" : "diamond.fill")
+                          ? "checkmark.circle.fill" : MapPalette.glyph(drop.rarity))
                         .font(.footnote)
-                        .foregroundStyle(MapPalette.rarity(drop.rarity))
+                        .foregroundStyle(collectedDropIDs.contains(drop.id)
+                            ? MapPalette.ink.opacity(0.35)
+                            : MapPalette.rarity(drop.rarity))
                 }
             }
             if let runner = runnerPosition {
                 Annotation("", coordinate: runner.cl) {
-                    Circle().fill(.blue)
+                    Circle().fill(MapPalette.pulse)
                         .frame(width: 16, height: 16)
                         .overlay(Circle().stroke(.white, lineWidth: 3))
+                        .shadow(color: MapPalette.ink.opacity(0.25), radius: 3)
                 }
             }
         }

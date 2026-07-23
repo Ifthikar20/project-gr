@@ -22,6 +22,7 @@ struct DrawStepView: View {
                         model.undoWaypoint()
                     } label: {
                         Label("Undo", systemImage: "arrow.uturn.backward")
+                            .foregroundStyle(DS.Colors.ink)
                     }
                     .disabled(model.waypoints.isEmpty)
                     Spacer()
@@ -32,29 +33,23 @@ struct DrawStepView: View {
                             Label("Close loop", systemImage: "arrow.triangle.capsulepath")
                         }
                         .font(.footnote.bold())
-                        .foregroundStyle(DS.Colors.gold)
+                        .foregroundStyle(DS.Colors.pulse)
                     }
                     Spacer()
                     Text(String(format: "%.2f km · %d points",
                                 Double(model.distanceM) / 1_000, model.waypoints.count))
                         .font(.footnote)
-                        .foregroundStyle(DS.Colors.textSecondary)
+                        .foregroundStyle(DS.Colors.inkSecondary)
                 }
-                Button {
-                    model.step = .gems
-                } label: {
-                    Text("Next: place gems")
-                        .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.ink)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(DS.Colors.gold, in: RoundedRectangle(cornerRadius: 12))
-                }
-                .disabled(model.distanceM < 1_000)
-                .opacity(model.distanceM < 1_000 ? 0.5 : 1)
+                PillButton("Next: place gems") { model.step = .gems }
+                    .disabled(model.distanceM < 1_000)
+                    .opacity(model.distanceM < 1_000 ? 0.5 : 1)
             }
             .padding(16)
-            .background(.ultraThinMaterial)
+            .background(DS.Colors.snow)
+            .overlay(alignment: .top) {
+                Rectangle().fill(DS.Colors.hairline).frame(height: 1)
+            }
         }
         .navigationTitle("Draw your route")
         .navigationBarTitleDisplayMode(.inline)
@@ -78,7 +73,7 @@ struct GemPlacementStepView: View {
                 if let error = model.placementError {
                     Text(error)
                         .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Colors.pulse)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 // Gem tray (docs/03 §5): pick a rarity, tap the route to place.
@@ -87,38 +82,35 @@ struct GemPlacementStepView: View {
                         Button {
                             model.selectedRarity = rarity
                         } label: {
-                            VStack(spacing: 2) {
-                                Image(systemName: "diamond.fill")
-                                    .foregroundStyle(DS.Colors.rarity(rarity))
-                                Text("\(PlacementCost.label(rarity))")
+                            VStack(spacing: 3) {
+                                RarityBadge(rarity, size: 16)
+                                Text(PlacementCost.label(rarity))
                                     .font(.caption2)
-                                    .foregroundStyle(DS.Colors.textSecondary)
+                                    .foregroundStyle(DS.Colors.inkSecondary)
                             }
-                            .padding(8)
+                            .padding(.vertical, 8)
                             .frame(maxWidth: .infinity)
-                            .background(
-                                model.selectedRarity == rarity
-                                    ? DS.Colors.gold.opacity(0.25) : DS.Colors.inkRaised,
-                                in: RoundedRectangle(cornerRadius: 10))
+                            .background(DS.Colors.snowCard,
+                                        in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12)
+                                .stroke(model.selectedRarity == rarity
+                                    ? DS.Colors.pulse : DS.Colors.hairline,
+                                    lineWidth: model.selectedRarity == rarity ? 2 : 1))
                         }
                     }
                 }
                 Text("Budget \(model.pointsUsed)/\(model.pointsTotal) · Slots \(model.slotsUsed)/\(model.slotsTotal) · tap the route to place")
                     .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
-                Button {
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                PillButton(model.placedDrops.isEmpty ? "Continue without gems" : "Next: publish") {
                     model.step = .publish
-                } label: {
-                    Text(model.placedDrops.isEmpty ? "Continue without gems" : "Next: publish")
-                        .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.ink)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(DS.Colors.gold, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
             .padding(16)
-            .background(.ultraThinMaterial)
+            .background(DS.Colors.snow)
+            .overlay(alignment: .top) {
+                Rectangle().fill(DS.Colors.hairline).frame(height: 1)
+            }
         }
         .navigationTitle("Place gems")
         .navigationBarTitleDisplayMode(.inline)
@@ -192,15 +184,20 @@ struct PublishStepView: View {
                         Text("Publish")
                             .frame(maxWidth: .infinity)
                             .font(DS.Typography.heading)
+                            .foregroundStyle(DS.Colors.pulse)
                     }
                 }
                 .disabled(isPublishing
                     || model.name.trimmingCharacters(in: .whitespaces).isEmpty)
                 if let publishError {
-                    Text(publishError).foregroundStyle(.orange).font(.footnote)
+                    Text(publishError)
+                        .foregroundStyle(DS.Colors.pulse)
+                        .font(.footnote)
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(DS.Colors.snow)
         .navigationTitle("Publish")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

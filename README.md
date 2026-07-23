@@ -23,6 +23,7 @@ Pick a route on the map, drop gems along it, and share it. Anyone who runs that 
 |---|---|
 | Platform | Native iOS (iPhone), SwiftUI, iOS 17+ |
 | Architecture | MVVM with `@Observable`, local SPM packages |
+| Design | "Daybreak Pulse" — Airbnb-style light card UI, exactly 3 colors (snow / ink / race-orange pulse), rarity as accent-ramp + glyphs (docs/03) |
 | Maps | MapKit today behind the `CoreMap` seam; Mapbox v11 + custom style is the planned swap (docs 07/09) |
 | Persistence | SwiftData, local-first |
 | Backend | Python/**Django** later — UI runs on an in-app **dummy API** today (`MockGemRunAPI`); swap = set `AppConfig.apiBaseURL` ([doc 11](docs/11-dummy-api.md)) |

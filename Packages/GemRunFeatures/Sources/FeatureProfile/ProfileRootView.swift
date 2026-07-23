@@ -5,7 +5,8 @@ import GameKitCore
 import SwiftData
 import SwiftUI
 
-/// Identity, streak, creations, settings (docs/03 §11).
+/// Identity, streak, creations, settings (docs/03 §11), Daybreak Pulse:
+/// grouped white cards on snow, pulse for streak/level accents.
 public struct ProfileRootView: View {
     @Environment(SessionStore.self) private var session
     @Environment(\.modelContext) private var context
@@ -28,11 +29,11 @@ public struct ProfileRootView: View {
                 streakSection
                 statsSection
                 myRoutesSection
-                settingsSection
+                accountSection
                 dataSection
             }
             .scrollContentBackground(.hidden)
-            .background(DS.Colors.ink)
+            .background(DS.Colors.snow)
             .navigationTitle("Profile")
         }
     }
@@ -42,22 +43,22 @@ public struct ProfileRootView: View {
             HStack(spacing: 16) {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.system(size: 56))
-                    .foregroundStyle(DS.Colors.gold)
+                    .foregroundStyle(DS.Colors.pulse)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("@\(session.profile?.handle ?? "runner")")
                         .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.textPrimary)
+                        .foregroundStyle(DS.Colors.ink)
                     let level = session.profile?.level ?? 1
                     let xp = session.profile?.xp ?? 0
                     let needed = XPRules.xpToAdvance(from: level)
                     Text("Level \(level) · \(xp)/\(needed) XP")
                         .font(.caption)
-                        .foregroundStyle(DS.Colors.textSecondary)
+                        .foregroundStyle(DS.Colors.inkSecondary)
                     ProgressView(value: Double(xp), total: Double(needed))
-                        .tint(DS.Colors.gold)
+                        .tint(DS.Colors.pulse)
                 }
             }
-            .listRowBackground(DS.Colors.inkRaised)
+            .listRowBackground(DS.Colors.snowCard)
         }
     }
 
@@ -67,19 +68,19 @@ public struct ProfileRootView: View {
                 Label("\(session.profile?.streakCount ?? 0)-day streak",
                       systemImage: "flame.fill")
                     .font(.headline)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Colors.pulse)
                 Spacer()
                 let shields = session.profile?.streakShields ?? 0
                 Label("\(shields)", systemImage: "shield.fill")
                     .font(.subheadline)
-                    .foregroundStyle(shields > 0 ? DS.Colors.gold : DS.Colors.textSecondary)
+                    .foregroundStyle(shields > 0 ? DS.Colors.ink : DS.Colors.inkSecondary)
             }
-            .listRowBackground(DS.Colors.inkRaised)
+            .listRowBackground(DS.Colors.snowCard)
             Text(String(format: "XP multiplier %.1f× — any run of 1 km+ keeps the flame alive.",
                         session.streakMultiplier))
                 .font(.caption)
-                .foregroundStyle(DS.Colors.textSecondary)
-                .listRowBackground(DS.Colors.inkRaised)
+                .foregroundStyle(DS.Colors.inkSecondary)
+                .listRowBackground(DS.Colors.snowCard)
         }
     }
 
@@ -92,7 +93,7 @@ public struct ProfileRootView: View {
                 stat("\(stash.count)", "gems")
                 stat("\(myRoutes.count)", "routes made")
             }
-            .listRowBackground(DS.Colors.inkRaised)
+            .listRowBackground(DS.Colors.snowCard)
         }
     }
 
@@ -101,22 +102,22 @@ public struct ProfileRootView: View {
             if myRoutes.isEmpty {
                 Text("Routes you create appear here.")
                     .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
-                    .listRowBackground(DS.Colors.inkRaised)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                    .listRowBackground(DS.Colors.snowCard)
             }
             ForEach(myRoutes) { route in
                 HStack {
                     VStack(alignment: .leading) {
                         Text(route.name)
-                            .foregroundStyle(DS.Colors.textPrimary)
+                            .foregroundStyle(DS.Colors.ink)
                         Text(String(format: "%.1f km · %d runs",
                                     Double(route.distanceM) / 1_000, route.runCount))
                             .font(.caption)
-                            .foregroundStyle(DS.Colors.textSecondary)
+                            .foregroundStyle(DS.Colors.inkSecondary)
                     }
                     Spacer()
                 }
-                .listRowBackground(DS.Colors.inkRaised)
+                .listRowBackground(DS.Colors.snowCard)
             }
             .onDelete { offsets in
                 for offset in offsets {
@@ -127,7 +128,7 @@ public struct ProfileRootView: View {
         }
     }
 
-    private var settingsSection: some View {
+    private var accountSection: some View {
         Section("Account") {
             let provider = switch session.authProvider {
             case .apple: "Signed in with Apple"
@@ -136,21 +137,20 @@ public struct ProfileRootView: View {
             }
             Label(provider, systemImage: session.authProvider == .guest
                   ? "person.fill.questionmark" : "checkmark.seal.fill")
-                .foregroundStyle(DS.Colors.textPrimary)
-                .listRowBackground(DS.Colors.inkRaised)
+                .foregroundStyle(DS.Colors.ink)
+                .listRowBackground(DS.Colors.snowCard)
             if AuthFlags.allowAllAccounts {
                 Text("Dev mode: all accounts temporarily accepted (AuthFlags.allowAllAccounts).")
                     .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
-                    .listRowBackground(DS.Colors.inkRaised)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                    .listRowBackground(DS.Colors.snowCard)
             }
             Button("Sign out") {
                 session.signOut()
             }
-            .foregroundStyle(DS.Colors.gold)
-            .listRowBackground(DS.Colors.inkRaised)
+            .foregroundStyle(DS.Colors.pulse)
+            .listRowBackground(DS.Colors.snowCard)
         }
-        .headerProminence(.increased)
     }
 
     private var dataSection: some View {
@@ -158,15 +158,15 @@ public struct ProfileRootView: View {
             Button("Erase all local data", role: .destructive) {
                 confirmingReset = true
             }
-            .listRowBackground(DS.Colors.inkRaised)
+            .listRowBackground(DS.Colors.snowCard)
             .confirmationDialog("Erase everything? Runs, stash, and routes are gone for good.",
                                 isPresented: $confirmingReset, titleVisibility: .visible) {
                 Button("Erase", role: .destructive) { eraseAll() }
             }
-            Text("GemRun is local-first for now — an account system arrives with the backend.")
+            Text("GemRun is local-first for now — full accounts arrive with the backend.")
                 .font(.caption)
-                .foregroundStyle(DS.Colors.textSecondary)
-                .listRowBackground(DS.Colors.inkRaised)
+                .foregroundStyle(DS.Colors.inkSecondary)
+                .listRowBackground(DS.Colors.snowCard)
         }
     }
 
@@ -174,10 +174,10 @@ public struct ProfileRootView: View {
         VStack(spacing: 2) {
             Text(value)
                 .font(DS.Typography.statMedium)
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(DS.Colors.ink)
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
         .frame(maxWidth: .infinity)
     }

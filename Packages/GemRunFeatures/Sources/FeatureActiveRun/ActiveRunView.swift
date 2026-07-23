@@ -7,8 +7,8 @@ import GameKitCore
 import SwiftUI
 import UIKit
 
-/// The in-run screen (docs/03 §7): chase map, stats band, next-gem chip,
-/// collection bursts, slide-free deliberate stop. Presented as a full-screen
+/// The in-run screen (docs/03 §7), Daybreak Pulse: light map, snow stats
+/// band, ink numerals, pulse for the live accent. Presented as a full-screen
 /// cover at App root; the engine lives at App level so the run survives.
 public struct ActiveRunView: View {
     let route: Route
@@ -51,7 +51,6 @@ public struct ActiveRunView: View {
             // so the runner never celebrates a gem the server would revoke.
             engine.start(route: session.collectableRoute(from: route))
         }
-        .preferredColorScheme(.dark)
     }
 
     private var runningUI: some View {
@@ -66,8 +65,10 @@ public struct ActiveRunView: View {
                 if engine.phase == .paused {
                     Text("Paused — resume moving")
                         .font(.footnote.bold())
-                        .padding(8)
-                        .background(.orange.opacity(0.9), in: Capsule())
+                        .foregroundStyle(DS.Colors.snowCard)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(DS.Colors.ink.opacity(0.85), in: Capsule())
                         .frame(maxHeight: .infinity, alignment: .top)
                         .padding(.top, 8)
                 }
@@ -83,22 +84,22 @@ public struct ActiveRunView: View {
         VStack(spacing: 14) {
             if let next = engine.nextGem {
                 HStack(spacing: 8) {
-                    Image(systemName: "diamond.fill")
-                        .foregroundStyle(DS.Colors.rarity(next.drop.rarity))
+                    RarityBadge(next.drop.rarity, size: 13)
                     if let bearing = engine.nextGemRelativeBearingDeg {
                         Image(systemName: "arrow.up")
                             .font(.footnote.bold())
-                            .foregroundStyle(DS.Colors.gold)
+                            .foregroundStyle(DS.Colors.pulse)
                             .rotationEffect(.degrees(bearing))
                             .animation(.easeInOut(duration: 0.4), value: bearing)
                     }
                     Text("\(next.drop.rarity.rawValue.capitalized) · \(Int(next.distanceM)) m")
                         .font(.footnote.bold())
-                        .foregroundStyle(DS.Colors.textPrimary)
+                        .foregroundStyle(DS.Colors.ink)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(DS.Colors.inkRaised, in: Capsule())
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(DS.Colors.snowCard, in: Capsule())
+                .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
             }
 
             TimelineView(.periodic(from: .now, by: 1)) { _ in
@@ -106,7 +107,8 @@ public struct ActiveRunView: View {
                     stat(format(seconds: Int(engine.elapsed)), "Time")
                     stat(String(format: "%.2f", engine.distanceM / 1_000), "km")
                     stat(engine.currentPaceSPerKm > 0
-                         ? format(seconds: engine.currentPaceSPerKm) : "–:––", "min/km")
+                         ? format(seconds: engine.currentPaceSPerKm) : "–:––", "min/km",
+                         accent: true)
                 }
             }
 
@@ -117,32 +119,36 @@ public struct ActiveRunView: View {
                     Image(systemName: engine.phase == .paused ? "play.fill" : "pause.fill")
                         .font(.title2)
                         .frame(width: 64, height: 64)
-                        .background(DS.Colors.inkRaised, in: Circle())
-                        .foregroundStyle(DS.Colors.textPrimary)
+                        .background(DS.Colors.snowCard, in: Circle())
+                        .overlay(Circle().stroke(DS.Colors.hairline, lineWidth: 1))
+                        .foregroundStyle(DS.Colors.ink)
                 }
                 // Deliberate friction (docs/03): long-press to stop, tap ignored.
                 Text("Hold to stop")
                     .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.ink)
+                    .foregroundStyle(DS.Colors.snowCard)
                     .frame(maxWidth: .infinity)
                     .frame(height: 64)
-                    .background(DS.Colors.gold, in: RoundedRectangle(cornerRadius: 32))
+                    .background(DS.Colors.pulse, in: RoundedRectangle(cornerRadius: 32))
                     .onLongPressGesture(minimumDuration: 1) { finish() }
             }
         }
         .padding(20)
-        .background(DS.Colors.ink)
+        .background(DS.Colors.snow)
+        .overlay(alignment: .top) {
+            Rectangle().fill(DS.Colors.hairline).frame(height: 1)
+        }
     }
 
-    private func stat(_ value: String, _ label: String) -> some View {
+    private func stat(_ value: String, _ label: String, accent: Bool = false) -> some View {
         VStack(spacing: 2) {
             Text(value)
                 .font(DS.Typography.statLarge)
-                .foregroundStyle(DS.Colors.textPrimary)
+                .foregroundStyle(accent ? DS.Colors.pulse : DS.Colors.ink)
                 .monospacedDigit()
             Text(label)
                 .font(.caption)
-                .foregroundStyle(DS.Colors.textSecondary)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
     }
 
@@ -179,11 +185,12 @@ struct CollectionBurst: View {
                 .stroke(DS.Colors.rarity(rarity), lineWidth: 3)
                 .scaleEffect(scale * 2.2)
                 .opacity(opacity * 0.5)
-            Image(systemName: "diamond.fill")
+            Image(systemName: DS.rarityGlyph(rarity))
                 .font(.system(size: 72))
                 .foregroundStyle(DS.Colors.rarity(rarity))
                 .scaleEffect(scale)
                 .opacity(opacity)
+                .shadow(color: DS.Colors.snowCard, radius: 8)
         }
         .onAppear {
             withAnimation(.spring(duration: 0.4)) { scale = 1.0 }
