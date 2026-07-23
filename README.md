@@ -26,7 +26,23 @@ Pick a route on the map, drop gems along it, and share it. Anyone who runs that 
 | Maps | Mapbox Maps SDK v11, custom "Night Expedition" style |
 | Persistence | SwiftData + crash-safe run buffer |
 | Backend | Python (FastAPI assumed) — contract-only in these docs |
-| Status | **Planning phase — no code yet** |
+| Status | **Phase A — project skeleton scaffolded** (see [doc 09](docs/09-build-plan.md)) |
+
+## Building the app
+
+The Xcode project is generated, not committed. On a Mac:
+
+```sh
+brew install xcodegen        # once
+xcodegen                     # generates GemRun.xcodeproj from project.yml
+open GemRun.xcodeproj        # build & run the GemRun scheme (iOS 17+ simulator)
+```
+
+Logic tests (no simulator needed): `cd Packages/GemRunCore && swift test`
+
+Mapbox token (needed from Phase C): copy `Configs/Secrets.example.xcconfig` → `Configs/Secrets.xcconfig` and fill in your token — the file is gitignored.
+
+Layout: `App/` (entry + tab shell) · `Packages/GemRunCore` (CoreModels, DesignSystem, GameKitCore, CoreMap, CoreLocationKit, CoreNetworking, CorePersistence) · `Packages/GemRunFeatures` (one target per screen area).
 
 ## Documentation index
 
@@ -42,6 +58,7 @@ Read in order — each doc only depends on lower-numbered ones.
 | [06 — API Contract](docs/06-api-contract.md) | The endpoints the iOS client needs (lightweight) |
 | [07 — iOS Architecture](docs/07-ios-architecture.md) | Stack decisions, module breakdown, testing strategy |
 | [08 — Roadmap & Risks](docs/08-roadmap-and-risks.md) | Phases, exit criteria, risk register |
+| [09 — Build Plan](docs/09-build-plan.md) | Implementation phases A–F with per-phase checkpoints |
 
 ## The two hard problems (named up front)
 

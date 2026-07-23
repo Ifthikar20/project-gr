@@ -1,0 +1,5 @@
+// Shared build settings. Secrets (Mapbox token) live in Secrets.xcconfig — untracked.
+// Copy Configs/Secrets.example.xcconfig → Configs/Secrets.xcconfig and fill it in.
+#include? "Secrets.xcconfig"
+
+MAPBOX_ACCESS_TOKEN = $(MAPBOX_ACCESS_TOKEN)

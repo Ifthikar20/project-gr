@@ -1,0 +1,53 @@
+# XcodeGen manifest — run `xcodegen` to (re)generate GemRun.xcodeproj
+name: GemRun
+options:
+  bundleIdPrefix: com.gemrun
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  GemRunCore:
+    path: Packages/GemRunCore
+  GemRunFeatures:
+    path: Packages/GemRunFeatures
+
+targets:
+  GemRun:
+    type: application
+    platform: iOS
+    sources:
+      - App/Sources
+      - App/Resources
+    configFiles:
+      Debug: Configs/Debug.xcconfig
+      Release: Configs/Release.xcconfig
+    settings:
+      base:
+        SWIFT_STRICT_CONCURRENCY: complete
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        TARGETED_DEVICE_FAMILY: 1
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: GemRun
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+        NSLocationWhenInUseUsageDescription: >-
+          GemRun uses your location during runs to confirm you passed each gem.
+          While-using only — we never track you outside a run.
+        UIBackgroundModes: [location]
+    dependencies:
+      - package: GemRunCore
+        products: [CoreModels, DesignSystem, CoreMap]
+      - package: GemRunFeatures
+        products:
+          - FeatureOnboarding
+          - FeatureExplore
+          - FeatureRouteCreation
+          - FeatureActiveRun
+          - FeatureStash
+          - FeatureCompete
+          - FeatureProfile

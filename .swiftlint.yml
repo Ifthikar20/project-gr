@@ -1,0 +1,16 @@
+included:
+  - App
+  - Packages
+excluded:
+  - .build
+  - DerivedData
+line_length:
+  warning: 130
+  error: 180
+identifier_name:
+  min_length: 2
+  allowed_symbols: ["_"]
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - sorted_imports
