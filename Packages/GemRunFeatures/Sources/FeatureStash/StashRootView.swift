@@ -7,8 +7,10 @@ import SwiftUI
 /// The collection (docs/03 §9), Airbnb wishlist-grid style: white tiles on
 /// snow, rarity as pulse ramp + glyph, ink-tint silhouettes for the missing.
 public struct StashRootView: View {
+    @Environment(SessionStore.self) private var session
     @Query(sort: \StoredStashItem.collectedAt, order: .reverse) private var items: [StoredStashItem]
     @State private var detail: StoredStashItem?
+    @State private var isSyncing = false
 
     public init() {}
 
@@ -26,6 +28,7 @@ public struct StashRootView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    walletCard
                     header
                     ForEach(sets, id: \.name) { set in
                         setSection(set.name, set.entries)
@@ -35,11 +38,63 @@ public struct StashRootView: View {
             }
             .background(DS.Colors.snow)
             .navigationTitle("Stash")
+            .task { await session.refreshWallet() }
             .sheet(item: $detail) { item in
                 GemDetailSheet(item: item)
                     .presentationDetents([.medium])
             }
         }
+    }
+
+    /// The gem wallet: gems earned by running (Apple Health), ready to drop
+    /// anywhere from the Explore map. Everyone starts at zero.
+    private var walletCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Gem wallet")
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                Button {
+                    isSyncing = true
+                    Task {
+                        await session.refreshWallet()
+                        isSyncing = false
+                    }
+                } label: {
+                    if isSyncing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Sync Health", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.bold())
+                            .foregroundStyle(DS.Colors.pulse)
+                    }
+                }
+            }
+            if session.wallet.values.reduce(0, +) == 0 {
+                Text("Empty — every 2 km you run earns a gem to drop. Sync with Apple Health to collect what you've already earned.")
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            } else {
+                HStack(spacing: 14) {
+                    ForEach([Rarity.common, .uncommon, .rare, .epic], id: \.self) { rarity in
+                        if let count = session.wallet[rarity], count > 0 {
+                            HStack(spacing: 4) {
+                                RarityBadge(rarity, size: 14)
+                                Text("×\(count)")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(DS.Colors.ink)
+                            }
+                        }
+                    }
+                    Spacer()
+                    Text("drop them from the map")
+                        .font(.caption2)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+            }
+        }
+        .airbnbCard()
     }
 
     private var header: some View {

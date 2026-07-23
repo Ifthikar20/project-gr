@@ -40,21 +40,72 @@ public enum MapPalette {
     }
 }
 
-/// Explore home map: user location + route polylines (docs/03 §2).
-public struct ExploreMapView: View {
-    let routes: [Route]
-    let selectedID: UUID?
-    let onSelect: (Route) -> Void
+/// A gem pin that falls onto the map with a spring (the pin-drop animation).
+public struct DropPin: View {
+    let rarity: Rarity
+    @State private var dropped = false
 
-    public init(routes: [Route], selectedID: UUID?, onSelect: @escaping (Route) -> Void) {
-        self.routes = routes
-        self.selectedID = selectedID
-        self.onSelect = onSelect
+    public init(rarity: Rarity) {
+        self.rarity = rarity
     }
 
     public var body: some View {
+        Image(systemName: MapPalette.glyph(rarity))
+            .font(.subheadline)
+            .foregroundStyle(.white)
+            .padding(7)
+            .background(MapPalette.rarity(rarity), in: Circle())
+            .shadow(color: MapPalette.ink.opacity(0.25), radius: 4, y: 2)
+            .offset(y: dropped ? 0 : -30)
+            .scaleEffect(dropped ? 1 : 1.3, anchor: .bottom)
+            .opacity(dropped ? 1 : 0)
+            .onAppear {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
+                    dropped = true
+                }
+            }
+    }
+}
+
+/// Explore home map: user location, route polylines, and standalone gem
+/// drops other runners left behind (docs/03 §2). When `onTapCoordinate` is
+/// set (drop mode), map taps come back as coordinates.
+public struct ExploreMapView: View {
+    let routes: [Route]
+    let standaloneDrops: [GemDrop]
+    let selectedID: UUID?
+    let onSelect: (Route) -> Void
+    let onTapCoordinate: ((Coordinate) -> Void)?
+
+    public init(routes: [Route], standaloneDrops: [GemDrop] = [], selectedID: UUID?,
+                onSelect: @escaping (Route) -> Void,
+                onTapCoordinate: ((Coordinate) -> Void)? = nil) {
+        self.routes = routes
+        self.standaloneDrops = standaloneDrops
+        self.selectedID = selectedID
+        self.onSelect = onSelect
+        self.onTapCoordinate = onTapCoordinate
+    }
+
+    public var body: some View {
+        MapReader { proxy in
+            mapContent
+                .onTapGesture(coordinateSpace: .local) { screenPoint in
+                    guard let onTapCoordinate,
+                          let coord = proxy.convert(screenPoint, from: .local) else { return }
+                    onTapCoordinate(Coordinate(lat: coord.latitude, lng: coord.longitude))
+                }
+        }
+    }
+
+    private var mapContent: some View {
         Map(initialPosition: .userLocation(fallback: .automatic)) {
             UserAnnotation()
+            ForEach(standaloneDrops) { drop in
+                Annotation("", coordinate: drop.coordinate.cl) {
+                    DropPin(rarity: drop.rarity)
+                }
+            }
             ForEach(routes) { route in
                 let coords = PolylineCodec.decode(route.polyline).map(\.cl)
                 MapPolyline(coordinates: coords)
@@ -119,16 +170,20 @@ public struct RoutePreviewMap: View {
     }
 }
 
-/// Creation Step 1 drawing surface (docs/03 §4): taps come back as coordinates.
+/// Creation Step 1 drawing surface (docs/03 §4): taps come back as
+/// coordinates. `destination` renders a large animated destination pin.
 public struct DrawingMapView: View {
     let pathCoords: [Coordinate]
     let waypoints: [Coordinate]
+    let destination: Coordinate?
     let onTap: (Coordinate) -> Void
 
     public init(pathCoords: [Coordinate], waypoints: [Coordinate],
+                destination: Coordinate? = nil,
                 onTap: @escaping (Coordinate) -> Void) {
         self.pathCoords = pathCoords
         self.waypoints = waypoints
+        self.destination = destination
         self.onTap = onTap
     }
 
@@ -148,6 +203,13 @@ public struct DrawingMapView: View {
                             .frame(width: 20, height: 20)
                             .background(MapPalette.pulse, in: Circle())
                             .shadow(color: MapPalette.ink.opacity(0.2), radius: 3, y: 1)
+                            .transition(.scale(scale: 1.3, anchor: .bottom)
+                                .combined(with: .opacity))
+                    }
+                }
+                if let destination {
+                    Annotation("", coordinate: destination.cl) {
+                        DestinationPin()
                     }
                 }
             }
@@ -161,23 +223,70 @@ public struct DrawingMapView: View {
     }
 }
 
+/// A tall destination pin that drops in with a spring.
+public struct DestinationPin: View {
+    @State private var dropped = false
+
+    public init() {}
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            Image(systemName: "mappin.circle.fill")
+                .font(.title)
+                .foregroundStyle(.white, MapPalette.pulse)
+                .shadow(color: MapPalette.ink.opacity(0.3), radius: 4, y: 2)
+            Triangle()
+                .fill(MapPalette.pulse)
+                .frame(width: 10, height: 8)
+        }
+        .offset(y: dropped ? -4 : -44)
+        .opacity(dropped ? 1 : 0)
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.5)) {
+                dropped = true
+            }
+        }
+    }
+
+    struct Triangle: Shape {
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.closeSubpath()
+            return path
+        }
+    }
+}
+
 /// Active Run chase map (docs/03 §7): follows the runner, shows gems ahead.
+/// `route` is nil on a free run — only standalone drops render.
 public struct ActiveRunMapView: View {
-    let route: Route
+    let route: Route?
+    let freeDrops: [GemDrop]
     let runnerPosition: Coordinate?
     let collectedDropIDs: Set<UUID>
 
-    public init(route: Route, runnerPosition: Coordinate?, collectedDropIDs: Set<UUID>) {
+    public init(route: Route?, freeDrops: [GemDrop] = [], runnerPosition: Coordinate?,
+                collectedDropIDs: Set<UUID>) {
         self.route = route
+        self.freeDrops = freeDrops
         self.runnerPosition = runnerPosition
         self.collectedDropIDs = collectedDropIDs
     }
 
+    private var drops: [GemDrop] {
+        route?.gemDrops ?? freeDrops
+    }
+
     public var body: some View {
         Map(position: .constant(camera)) {
-            MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
-                .stroke(MapPalette.pulse, lineWidth: 4)
-            ForEach(route.gemDrops) { drop in
+            if let route {
+                MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
+                    .stroke(MapPalette.pulse, lineWidth: 4)
+            }
+            ForEach(drops) { drop in
                 Annotation("", coordinate: drop.coordinate.cl) {
                     Image(systemName: collectedDropIDs.contains(drop.id)
                           ? "checkmark.circle.fill" : MapPalette.glyph(drop.rarity))
@@ -202,8 +311,10 @@ public struct ActiveRunMapView: View {
     private var camera: MapCameraPosition {
         if let runner = runnerPosition {
             .camera(MapCamera(centerCoordinate: runner.cl, distance: 900))
-        } else {
+        } else if let route {
             .region(region(for: PolylineCodec.decode(route.polyline)))
+        } else {
+            .userLocation(fallback: .automatic)
         }
     }
 }

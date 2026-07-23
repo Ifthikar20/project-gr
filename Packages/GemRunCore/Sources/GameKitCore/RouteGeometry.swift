@@ -92,4 +92,11 @@ public struct RouteGeometry: Sendable {
         let dy = (a.lat - b.lat) * Self.metersPerDegLat
         return (dx * dx + dy * dy).squareRoot()
     }
+
+    /// Route-free planar distance (m) — for free runs with no polyline.
+    public static func planarDistance(from a: Coordinate, to b: Coordinate) -> Double {
+        let dx = (a.lng - b.lng) * metersPerDegLat * cos(a.lat * .pi / 180)
+        let dy = (a.lat - b.lat) * metersPerDegLat
+        return (dx * dx + dy * dy).squareRoot()
+    }
 }

@@ -38,13 +38,15 @@ public final class ActiveRunEngine {
         return Date().timeIntervalSince(startedAt) - pausedAccumulator
     }
 
-    /// Next uncollected gem ahead of current progress, with straight-line distance.
+    /// Next uncollected gem, with straight-line distance (route or free run).
     public var nextGem: (drop: GemDrop, distanceM: Double)? {
-        guard let route, let geometry, let last = lastSample else { return nil }
+        guard let last = lastSample else { return nil }
         let collectedIDs = Set(collectedEvents.map(\.drop.id))
-        return route.gemDrops
+        let candidates = isFreeRun ? freeDrops : (route?.gemDrops ?? [])
+        return candidates
             .filter { !collectedIDs.contains($0.id) }
-            .map { ($0, geometry.distance(from: last.coordinate, to: $0.coordinate)) }
+            .map { ($0, RouteGeometry.planarDistance(from: last.coordinate,
+                                                     to: $0.coordinate)) }
             .min { $0.1 < $1.1 }
     }
 
@@ -65,17 +67,53 @@ public final class ActiveRunEngine {
         return relative
     }
 
+    // Free runs (no route): collect standalone drops by pure proximity.
+    public private(set) var isFreeRun = false
+    private var freeDrops: [GemDrop] = []
+    private var lastFreeCollection: Coordinate?
+
     public func start(route: Route) {
         guard phase == .idle || phase == .finished else { return }
+        isFreeRun = false
         prepare(route: route, startedAt: Date())
         RunBuffer.begin(routeID: route.id, startedAt: startedAt)
         beginRecording()
+    }
+
+    /// Start a route-free run to collect standalone drops nearby.
+    public func startFree(drops: [GemDrop]) {
+        guard phase == .idle || phase == .finished else { return }
+        isFreeRun = true
+        freeDrops = drops
+        lastFreeCollection = nil
+        route = nil
+        geometry = nil
+        collectionEngine = nil
+        track = []
+        collectedEvents = []
+        distanceM = 0
+        pausedAccumulator = 0
+        startedAt = Date()
+        phase = .running
+        beginRecording()
+    }
+
+    /// Finish a free run: raw materials for the server's drop-collect check.
+    public func stopFree() -> (track: [TrackSample], collected: [GemDrop],
+                               durationS: Int, distanceM: Int)? {
+        guard isFreeRun else { return nil }
+        recorder?.stop()
+        consumeTask?.cancel()
+        phase = .finished
+        let duration = track.count >= 2 ? Int(track.last!.t - track.first!.t) : 0
+        return (track, collectedEvents.map(\.drop), duration, Int(distanceM))
     }
 
     /// Resume a run recovered from the crash-safe buffer (docs/04): replay the
     /// saved samples through the same pipeline, then continue recording live.
     public func restore(route: Route, from pending: RunBuffer.Pending) {
         guard phase == .idle || phase == .finished else { return }
+        isFreeRun = false
         prepare(route: route, startedAt: pending.startedAt)
         RunBuffer.begin(routeID: route.id, startedAt: pending.startedAt)
         for sample in pending.samples {
@@ -162,8 +200,9 @@ public final class ActiveRunEngine {
         }
 
         guard phase == .running else { return }
-        if let last = lastSample, let geometry {
-            let step = geometry.distance(from: last.coordinate, to: sample.coordinate)
+        if let last = lastSample {
+            let step = RouteGeometry.planarDistance(from: last.coordinate,
+                                                    to: sample.coordinate)
             distanceM += step
             // Course from recent motion, for the next-gem bearing arrow.
             if step > 2 {
@@ -175,12 +214,29 @@ public final class ActiveRunEngine {
         }
         lastSample = sample
         track.append(sample)
-        RunBuffer.append(sample)
+        if !isFreeRun {
+            RunBuffer.append(sample)
+        }
 
         if var engine = collectionEngine {
             let events = engine.ingest(sample)
             collectionEngine = engine
             for event in events {
+                collectedEvents.append(event)
+                onCollect?(event)
+            }
+        } else if isFreeRun {
+            // Proximity-only collection: 25 m threshold + exit hysteresis.
+            let collectedIDs = Set(collectedEvents.map(\.drop.id))
+            for drop in freeDrops where !collectedIDs.contains(drop.id) {
+                let dist = RouteGeometry.planarDistance(from: sample.coordinate,
+                                                        to: drop.coordinate)
+                guard dist <= CollectionRules.collectionRadiusM else { continue }
+                if let last = lastFreeCollection,
+                   RouteGeometry.planarDistance(from: sample.coordinate, to: last)
+                       <= CollectionRules.hysteresisExitRadiusM { continue }
+                lastFreeCollection = drop.coordinate
+                let event = CollectionEngine.Event(drop: drop, atAlongRouteM: 0)
                 collectedEvents.append(event)
                 onCollect?(event)
             }

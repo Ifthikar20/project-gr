@@ -11,36 +11,29 @@ struct DrawStepView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            DrawingMapView(pathCoords: model.pathCoords, waypoints: model.waypoints) { coord in
-                model.addWaypoint(coord)
+            DrawingMapView(pathCoords: model.pathCoords,
+                           waypoints: model.planMode == .draw ? model.waypoints : [],
+                           destination: model.planMode == .destination
+                               ? model.destination : nil) { coord in
+                switch model.planMode {
+                case .draw: model.addWaypoint(coord)
+                case .destination: model.setDestination(coord)
+                }
             }
             .ignoresSafeArea(edges: .bottom)
 
             VStack(spacing: 10) {
-                HStack {
-                    Button {
-                        model.undoWaypoint()
-                    } label: {
-                        Label("Undo", systemImage: "arrow.uturn.backward")
-                            .foregroundStyle(DS.Colors.ink)
-                    }
-                    .disabled(model.waypoints.isEmpty)
-                    Spacer()
-                    if model.canCloseLoop {
-                        Button {
-                            model.closeLoop()
-                        } label: {
-                            Label("Close loop", systemImage: "arrow.triangle.capsulepath")
-                        }
-                        .font(.footnote.bold())
-                        .foregroundStyle(DS.Colors.pulse)
-                    }
-                    Spacer()
-                    Text(String(format: "%.2f km · %d points",
-                                Double(model.distanceM) / 1_000, model.waypoints.count))
-                        .font(.footnote)
-                        .foregroundStyle(DS.Colors.inkSecondary)
+                Picker("Mode", selection: $model.planMode) {
+                    Text("Draw it").tag(CreationModel.PlanMode.draw)
+                    Text("To a destination").tag(CreationModel.PlanMode.destination)
                 }
+                .pickerStyle(.segmented)
+
+                switch model.planMode {
+                case .draw: drawControls
+                case .destination: destinationControls
+                }
+
                 PillButton("Next: place gems") { model.step = .gems }
                     .disabled(model.distanceM < 1_000)
                     .opacity(model.distanceM < 1_000 ? 0.5 : 1)
@@ -51,8 +44,83 @@ struct DrawStepView: View {
                 Rectangle().fill(DS.Colors.hairline).frame(height: 1)
             }
         }
-        .navigationTitle("Draw your route")
+        .navigationTitle("Plan your route")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var drawControls: some View {
+        HStack {
+            Button {
+                model.undoWaypoint()
+            } label: {
+                Label("Undo", systemImage: "arrow.uturn.backward")
+                    .foregroundStyle(DS.Colors.ink)
+            }
+            .disabled(model.waypoints.isEmpty)
+            Spacer()
+            if model.canCloseLoop {
+                Button {
+                    model.closeLoop()
+                } label: {
+                    Label("Close loop", systemImage: "arrow.triangle.capsulepath")
+                }
+                .font(.footnote.bold())
+                .foregroundStyle(DS.Colors.pulse)
+            }
+            Spacer()
+            Text(String(format: "%.2f km · %d points",
+                        Double(model.distanceM) / 1_000, model.waypoints.count))
+                .font(.footnote)
+                .foregroundStyle(DS.Colors.inkSecondary)
+        }
+    }
+
+    /// Destination mode (docs/03 update): start = current location or a
+    /// typed address; tap the map to drop the destination pin.
+    private var destinationControls: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                TextField("Start: address (or use my location)",
+                          text: $model.startAddress)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                    .onSubmit { Task { await model.geocodeStart() } }
+                Button {
+                    model.useCurrentLocationStart()
+                } label: {
+                    Image(systemName: "location.fill")
+                        .foregroundStyle(model.customStart == nil
+                            ? DS.Colors.pulse : DS.Colors.ink)
+                        .frame(width: 40, height: 34)
+                        .background(DS.Colors.snowCard,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .stroke(DS.Colors.hairline, lineWidth: 1))
+                }
+            }
+            HStack {
+                if model.isPlanning {
+                    ProgressView().controlSize(.small)
+                    Text("Finding a walkable path…")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                } else if let error = model.planError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.pulse)
+                } else if model.destination == nil {
+                    Text("Tap the map to drop your destination pin")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                } else {
+                    Text(String(format: "%.2f km to your pin",
+                                Double(model.distanceM) / 1_000))
+                        .font(.caption.bold())
+                        .foregroundStyle(DS.Colors.ink)
+                }
+                Spacer()
+            }
+        }
     }
 }
 

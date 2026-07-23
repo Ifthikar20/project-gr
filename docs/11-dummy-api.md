@@ -30,6 +30,15 @@ Every mock call logs to the Xcode console with its real path, e.g. `🌐 [MockAP
 | 13 | `GET /v1/leaderboards/local?geohash` | `localLeaderboard(geohash:)` | **Compete → This Week** | Fake neighborhood board with your weekly score inserted |
 | 14 | `GET /v1/gems/catalog` | `gemCatalog()` | (available; catalog ships in-app) | Returns the gem catalog |
 
+**Wallet & standalone drops (earn-by-running):**
+
+| # | HTTP | Swift call | Used by | Behavior |
+|---|---|---|---|---|
+| 15 | `POST /v1/wallet/sync` | `syncWallet(totalRunKm:)` | Stash wallet card, drop sheet | Mints gems from lifetime Apple-Health km (1 per 2/5/15/40 km by tier); never double-mints; everyone starts at 0 |
+| 16 | `GET /v1/drops?lat&lng&radius_m` | `nearbyDrops(...)` | Explore map | Standalone drops other runners left nearby (mock seeds three) |
+| 17 | `POST /v1/drops` | `dropGem(gemID:lat:lng:)` | Explore drop mode | Places a wallet gem anywhere (consumes wallet; no Legendaries) |
+| 18 | `POST /v1/drops/collect` | `collectDrops(claimed:track:)` | Free-run finish | Awards drops the track passed within 25 m; one-time (first finder); never your own |
+
 Rows marked "(available…)" are implemented in both clients but not yet consumed by a screen — the UI intentionally prefers its offline-first local cache there; they exist so Django has the complete contract from day one.
 
 ## What the mock's `completeRun` does (the authoritative verdict, docs/06)

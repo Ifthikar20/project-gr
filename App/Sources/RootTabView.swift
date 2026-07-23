@@ -31,6 +31,10 @@ struct RootView: View {
         .fullScreenCover(item: $session.activeRoute) { route in
             ActiveRunView(route: route)
         }
+        // Free run: no route — collect standalone drops near you.
+        .fullScreenCover(isPresented: $session.isFreeRunning) {
+            ActiveRunView(route: nil)
+        }
         .fullScreenCover(isPresented: $session.isCreatingRoute) {
             RouteCreationFlow()
         }

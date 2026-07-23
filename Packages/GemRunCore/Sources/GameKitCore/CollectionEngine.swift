@@ -26,6 +26,11 @@ public struct CollectionEngine: Sendable {
     public struct Event: Equatable, Sendable {
         public let drop: GemDrop
         public let atAlongRouteM: Double
+
+        public init(drop: GemDrop, atAlongRouteM: Double) {
+            self.drop = drop
+            self.atAlongRouteM = atAlongRouteM
+        }
     }
 
     private let geometry: RouteGeometry

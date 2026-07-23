@@ -14,4 +14,8 @@ urlpatterns = [
     path("stash", views.stash),
     path("leaderboards/local", views.local_leaderboard),
     path("gems/catalog", views.gem_catalog),
+    # Gem wallet + standalone drops (earn-by-running)
+    path("wallet/sync", views.wallet_sync),
+    path("drops", views.drops),
+    path("drops/collect", views.collect_drops),
 ]

@@ -1,3 +1,4 @@
+import CoreLocation
 import CoreMap
 import CoreModels
 import CorePersistence
@@ -35,8 +36,10 @@ public struct RouteCreationFlow: View {
 @Observable
 final class CreationModel {
     enum Step { case draw, gems, publish }
+    enum PlanMode { case draw, destination }
 
     var step: Step = .draw
+    var planMode: PlanMode = .draw
     var waypoints: [Coordinate] = []
     var pathCoords: [Coordinate] = []
     var placedDrops: [GemDrop] = []
@@ -45,6 +48,14 @@ final class CreationModel {
     var descriptionText = ""
     var placementError: String?
     private var snapping = false
+
+    // Destination mode: start (current location or a typed address) → pin.
+    var destination: Coordinate?
+    var startAddress = ""
+    /// nil = "use my current location" (the default).
+    var customStart: Coordinate?
+    var planError: String?
+    var isPlanning = false
 
     var geometry: RouteGeometry { RouteGeometry(coordinates: pathCoords) }
     var distanceM: Int { Int(geometry.totalLengthM) }
@@ -60,6 +71,57 @@ final class CreationModel {
         case ..<9_000: .moderate
         default: .hard
         }
+    }
+
+    /// Destination mode: a map tap drops the destination pin and the route
+    /// snaps from the start point to it.
+    func setDestination(_ c: Coordinate) {
+        destination = c
+        Task { await planToDestination() }
+    }
+
+    func useCurrentLocationStart() {
+        customStart = nil
+        startAddress = ""
+        Task { await planToDestination() }
+    }
+
+    /// Geocode a typed address into the start point.
+    func geocodeStart() async {
+        let query = startAddress.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else {
+            useCurrentLocationStart()
+            return
+        }
+        planError = nil
+        let placemarks = try? await CLGeocoder().geocodeAddressString(query)
+        guard let location = placemarks?.first?.location else {
+            planError = "Couldn't find that address."
+            return
+        }
+        customStart = Coordinate(lat: location.coordinate.latitude,
+                                 lng: location.coordinate.longitude)
+        await planToDestination()
+    }
+
+    private func planToDestination() async {
+        guard let destination else { return }
+        planError = nil
+        let start: Coordinate
+        if let customStart {
+            start = customStart
+        } else if let here = CLLocationManager().location {
+            start = Coordinate(lat: here.coordinate.latitude,
+                               lng: here.coordinate.longitude)
+        } else {
+            planError = "Waiting for your location — or type a start address."
+            return
+        }
+        isPlanning = true
+        defer { isPlanning = false }
+        let segment = await PathSnapper.snap(from: start, to: destination)
+        waypoints = [start, destination]
+        pathCoords = segment
     }
 
     func addWaypoint(_ c: Coordinate) {

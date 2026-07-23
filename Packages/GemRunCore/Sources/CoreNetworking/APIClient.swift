@@ -87,6 +87,62 @@ public final class HTTPGemRunAPI: GemRunAPI {
         try await get("gems/catalog")
     }
 
+    // MARK: - Gem wallet + standalone drops
+
+    private struct WalletResponse: Decodable {
+        let wallet: [String: Int]
+    }
+
+    public func syncWallet(totalRunKm: Double) async throws -> GemWallet {
+        let response: WalletResponse = try await send("POST", "wallet/sync",
+                                                      body: ["total_run_km": totalRunKm])
+        var wallet: GemWallet = [:]
+        for (key, count) in response.wallet {
+            if let rarity = Rarity(rawValue: key) { wallet[rarity] = count }
+        }
+        return wallet
+    }
+
+    private struct DropsResponse: Decodable {
+        let drops: [GemDrop]
+    }
+
+    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
+        let response: DropsResponse = try await get("drops", query: [
+            "lat": "\(lat)", "lng": "\(lng)", "radius_m": "\(radiusM)",
+        ])
+        return response.drops
+    }
+
+    private struct DropRequest: Encodable {
+        let gemId: String
+        let lat: Double
+        let lng: Double
+    }
+
+    public func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop {
+        try await send("POST", "drops",
+                       body: DropRequest(gemId: gemID.uuidString, lat: lat, lng: lng))
+    }
+
+    private struct CollectRequest: Encodable {
+        let claimed: [UUID]
+        let track: [TrackSample]
+    }
+
+    private struct CollectResponse: Decodable {
+        let awardedDrops: [GemDrop]
+        let xpEarned: Int
+    }
+
+    public func collectDrops(claimed: [UUID],
+                             track: [TrackSample]) async throws -> DropCollectResult {
+        let response: CollectResponse = try await send(
+            "POST", "drops/collect", body: CollectRequest(claimed: claimed, track: track))
+        return DropCollectResult(awardedDrops: response.awardedDrops,
+                                 xpEarned: response.xpEarned)
+    }
+
     // MARK: - Plumbing
 
     private struct Empty: Codable {}

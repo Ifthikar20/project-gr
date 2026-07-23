@@ -151,6 +151,72 @@ class ApiTests(TestCase):
                              HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
         self.assertEqual(me["streak_count"], 1)   # same day: no double count
 
+    # ---- gem wallet + standalone drops (earn-by-running)
+
+    def wallet_sync(self, km):
+        return self.post("/v1/wallet/sync", {"total_run_km": km}, auth=True).json()
+
+    def test_wallet_mints_from_distance_and_never_double_mints(self):
+        self.assertEqual(self.wallet_sync(0)["wallet"], {})          # start at 0
+        wallet = self.wallet_sync(11)["wallet"]
+        self.assertEqual(wallet["common"], 5)                        # 11 // 2
+        self.assertEqual(wallet["uncommon"], 2)                      # 11 // 5
+        self.assertNotIn("rare", wallet)
+        again = self.wallet_sync(11)["wallet"]                       # re-sync: no change
+        self.assertEqual(again, wallet)
+        more = self.wallet_sync(16)["wallet"]                        # +5 km later
+        self.assertEqual(more["common"], 8)                          # 16 // 2
+        self.assertEqual(more["rare"], 1)                            # 16 // 15
+
+    def test_drop_requires_wallet_gem(self):
+        gem_id = str(catalog.gem_of("common")["id"])
+        denied = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
+                           auth=True)
+        self.assertEqual(denied.status_code, 422)                    # wallet empty
+        self.wallet_sync(2)                                          # mint 1 common
+        ok = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
+                       auth=True)
+        self.assertEqual(ok.status_code, 200)
+        nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                               "radius_m": 1000}).json()
+        self.assertEqual(len(nearby["drops"]), 1)
+
+    def test_collect_drop_is_one_time_and_never_own(self):
+        self.wallet_sync(2)
+        gem_id = str(catalog.gem_of("common")["id"])
+        drop = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.001, "lng": -122.0},
+                         auth=True).json()
+        near_track = [{"t": 0, "lat": 37.001, "lng": -122.0,
+                       "horizontal_accuracy": 5, "speed": 3}]
+        # Own drop: never collectable.
+        own = self.post("/v1/drops/collect", {"claimed": [drop["id"]],
+                                              "track": near_track}, auth=True).json()
+        self.assertEqual(own["awarded_drops"], [])
+        # A different runner passes it: collected, then gone for everyone.
+        other_token = self.client.post(
+            "/v1/auth/apple", data=json.dumps({"handle": "rival"}),
+            content_type="application/json").json()["token"]
+        got = self.client.post("/v1/drops/collect",
+                               data=json.dumps({"claimed": [drop["id"]],
+                                                "track": near_track}),
+                               content_type="application/json",
+                               HTTP_AUTHORIZATION=f"Bearer {other_token}").json()
+        self.assertEqual(len(got["awarded_drops"]), 1)
+        self.assertEqual(got["xp_earned"], 10)
+        nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                               "radius_m": 1000}).json()
+        self.assertEqual(nearby["drops"], [])                        # one-time
+        # A track that never came near awards nothing.
+        far = self.client.post("/v1/drops/collect",
+                               data=json.dumps({"claimed": [drop["id"]],
+                                                "track": [{"t": 0, "lat": 38.0,
+                                                           "lng": -122.0,
+                                                           "horizontal_accuracy": 5,
+                                                           "speed": 3}]}),
+                               content_type="application/json",
+                               HTTP_AUTHORIZATION=f"Bearer {other_token}").json()
+        self.assertEqual(far["awarded_drops"], [])
+
     def test_catalog_matches_client_uuids(self):
         gems = self.client.get("/v1/gems/catalog").json()["gems"]
         self.assertEqual(len(gems), 8)

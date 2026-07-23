@@ -30,7 +30,7 @@ public actor MockGemRunAPI: GemRunAPI {
     public init() {}
 
     private func call(_ line: String) async {
-        print("🌐 [MockAPI] \(line)")
+        print("[MockAPI] \(line)")
         try? await Task.sleep(nanoseconds: AppConfig.mockLatencyMs * 1_000_000)
     }
 
@@ -197,6 +197,94 @@ public actor MockGemRunAPI: GemRunAPI {
     public func gemCatalog() async throws -> [Gem] {
         await call("GET /v1/gems/catalog")
         return GemCatalog.entries.map(\.gem)
+    }
+
+    // MARK: - Gem wallet + standalone drops
+
+    private var wallet: GemWallet = [:]                    // start with 0 gems
+    private var mintedCounts: [Rarity: Int] = [:]
+    private var standaloneDrops: [UUID: GemDrop] = [:]
+    private var myDropIDs: Set<UUID> = []                  // never collect your own
+    private var seededStandalone = false
+
+    public func syncWallet(totalRunKm: Double) async throws -> GemWallet {
+        await call("POST /v1/wallet/sync  (\(String(format: "%.1f", totalRunKm)) km)")
+        for (tier, threshold) in MintRules.thresholdKm {
+            let earned = Int(totalRunKm / threshold)
+            let delta = earned - (mintedCounts[tier] ?? 0)
+            if delta > 0 {
+                wallet[tier, default: 0] += delta
+                mintedCounts[tier] = earned
+            }
+        }
+        return wallet
+    }
+
+    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
+        await call("GET /v1/drops?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
+        seedStandaloneIfNeeded(around: Coordinate(lat: lat, lng: lng))
+        return Array(standaloneDrops.values)
+    }
+
+    public func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop {
+        await call("POST /v1/drops  (\(gemID.uuidString.prefix(8)))")
+        guard let entry = GemCatalog.entry(forGemID: gemID),
+              entry.gem.rarity != .legendary,
+              wallet[entry.gem.rarity, default: 0] > 0 else {
+            throw URLError(.cannotParseResponse)
+        }
+        wallet[entry.gem.rarity]! -= 1
+        let drop = GemDrop(id: UUID(), gemID: gemID, rarity: entry.gem.rarity,
+                           lat: lat, lng: lng, positionAlongRouteM: 0,
+                           respawnRule: .oneTime, placedBy: .creator)
+        standaloneDrops[drop.id] = drop
+        myDropIDs.insert(drop.id)
+        return drop
+    }
+
+    public func collectDrops(claimed: [UUID],
+                             track: [TrackSample]) async throws -> DropCollectResult {
+        await call("POST /v1/drops/collect  (\(claimed.count) claimed, \(track.count) samples)")
+        var awarded: [GemDrop] = []
+        for id in claimed {
+            guard let drop = standaloneDrops[id], !myDropIDs.contains(id),
+                  trackPassesNear(track, lat: drop.lat, lng: drop.lng) else { continue }
+            standaloneDrops.removeValue(forKey: id)        // one-time: first finder
+            awarded.append(drop)
+            stashItems.append(StashItem(id: UUID(), gemID: drop.gemID, gemDropID: drop.id,
+                                        runID: UUID(), collectedAt: Date(),
+                                        isFirstFind: true))
+        }
+        let xp = awarded.reduce(0) { $0 + XPRules.base(for: $1.rarity) }
+        return DropCollectResult(awardedDrops: awarded, xpEarned: xp)
+    }
+
+    private func trackPassesNear(_ track: [TrackSample], lat: Double, lng: Double) -> Bool {
+        let k = 111_320.0
+        let klng = k * cos(lat * .pi / 180)
+        return track.contains { s in
+            let dy = (s.lat - lat) * k
+            let dx = (s.lng - lng) * klng
+            return (dx * dx + dy * dy).squareRoot() <= CollectionRules.collectionRadiusM
+        }
+    }
+
+    /// "Someone else loaded the app and left gems near you": three drops from
+    /// other runners within a few hundred meters, waiting to be run to.
+    private func seedStandaloneIfNeeded(around center: Coordinate) {
+        guard !seededStandalone else { return }
+        seededStandalone = true
+        let placements: [(Rarity, Double, Double)] = [
+            (.common, 220, 140), (.uncommon, -310, 260), (.rare, 90, -420),
+        ]
+        for (rarity, dLatM, dLngM) in placements {
+            let position = Self.offset(center, dLatM: dLatM, dLngM: dLngM)
+            let drop = GemDrop(id: UUID(), gemID: GemCatalog.gem(of: rarity).id,
+                               rarity: rarity, lat: position.lat, lng: position.lng,
+                               positionAlongRouteM: 0, respawnRule: .oneTime,
+                               placedBy: .creator)
+            standaloneDrops[drop.id] = drop
+        }
     }
 
     // MARK: - Internals

@@ -473,6 +473,132 @@ def local_leaderboard(request):
         for i, (p, xp) in enumerate(rows)]})
 
 
+# ------------------------------------------------- wallet & standalone drops
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def wallet_sync(request):
+    """Mint wallet gems from total lifetime run distance (Apple Health,
+    client-reported — trusted while the accept-all dev flag is on)."""
+    profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+    data = body_of(request) or {}
+    try:
+        total_km = max(0.0, float(data.get("total_run_km", 0)))
+    except (TypeError, ValueError):
+        return problem(400, "total_run_km must be a number")
+    wallet = dict(profile.wallet or {})
+    minted = dict(profile.wallet_minted or {})
+    for tier, threshold in rules.MINT_THRESHOLD_KM.items():
+        earned = int(total_km // threshold)
+        delta = earned - int(minted.get(tier, 0))
+        if delta > 0:
+            wallet[tier] = int(wallet.get(tier, 0)) + delta
+            minted[tier] = earned
+    profile.wallet = wallet
+    profile.wallet_minted = minted
+    profile.save(update_fields=["wallet", "wallet_minted"])
+    return JsonResponse({"wallet": wallet})
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def drops(request):
+    profile = profile_from(request)
+    if request.method == "GET":
+        try:
+            lat = float(request.GET["lat"])
+            lng = float(request.GET["lng"])
+            radius = int(request.GET.get("radius_m", 5000))
+        except (KeyError, ValueError):
+            return problem(400, "lat, lng and radius_m are required")
+        dlat = radius / 111_320
+        dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
+        qs = GemDrop.objects.filter(route__isnull=True, active=True,
+                                    lat__gte=lat - dlat, lat__lte=lat + dlat,
+                                    lng__gte=lng - dlng, lng__lte=lng + dlng)
+        return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs]})
+
+    # POST — drop a wallet gem anywhere on the map.
+    if profile is None:
+        return problem(401, "Sign in required")
+    data = body_of(request) or {}
+    gem_id = data.get("gem_id")
+    entry = catalog.entry_for(uuid.UUID(gem_id)) if gem_id else None
+    if entry is None:
+        return problem(422, "Unknown gem")
+    rarity = entry["rarity"]
+    if rarity == "legendary":
+        return problem(422, "Legendary gems cannot be dropped")
+    wallet = dict(profile.wallet or {})
+    if int(wallet.get(rarity, 0)) < 1:
+        return problem(422, "No gem of that rarity in your wallet",
+                       code="wallet_empty")
+    try:
+        lat, lng = float(data["lat"]), float(data["lng"])
+    except (KeyError, TypeError, ValueError):
+        return problem(400, "lat and lng are required")
+    wallet[rarity] = int(wallet[rarity]) - 1
+    profile.wallet = wallet
+    profile.save(update_fields=["wallet"])
+    drop = GemDrop.objects.create(
+        route=None, dropped_by=profile, gem_id=entry["id"], rarity=rarity,
+        lat=lat, lng=lng, position_along_route_m=0,
+        respawn_rule="one_time", placed_by="creator")
+    return JsonResponse(drop_json(drop, exact=True))
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+@transaction.atomic
+def collect_drops(request):
+    """Free-run collection of standalone drops: the track must pass within
+    the collection radius; a drop is one-time — first collector takes it —
+    and you can never collect your own."""
+    profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+    data = body_of(request) or {}
+    track = data.get("track") or []
+    claimed = [uuid.UUID(c) for c in (data.get("claimed") or [])]
+    now = datetime.now(tz.utc)
+    awarded = []
+    for drop_id in claimed:
+        drop = (GemDrop.objects.select_for_update()
+                .filter(id=drop_id, route__isnull=True, active=True).first())
+        if drop is None or drop.dropped_by_id == profile.id:
+            continue
+        if not track_passes_near(track, drop.lat, drop.lng):
+            continue
+        drop.active = False
+        drop.save(update_fields=["active"])
+        StashItem.objects.create(profile=profile, gem_id=drop.gem_id,
+                                 gem_drop=drop, collected_at=now,
+                                 is_first_find=True)
+        awarded.append(drop)
+    xp = sum(rules.XP_BY_RARITY[d.rarity] for d in awarded)
+    if xp:
+        profile.xp += xp
+        while profile.xp >= rules.xp_to_advance(profile.level):
+            profile.xp -= rules.xp_to_advance(profile.level)
+            profile.level += 1
+        profile.save(update_fields=["xp", "level"])
+    return JsonResponse({"awarded_drops": [drop_json(d, exact=True) for d in awarded],
+                         "xp_earned": xp})
+
+
+def track_passes_near(track, lat, lng):
+    k = 111_320.0
+    klng = k * max(0.1, math.cos(math.radians(lat)))
+    for s in track:
+        dy = (s["lat"] - lat) * k
+        dx = (s["lng"] - lng) * klng
+        if math.hypot(dx, dy) <= rules.DROP_COLLECT_RADIUS_M:
+            return True
+    return False
+
+
 @csrf_exempt
 @require_http_methods(["GET"])
 def gem_catalog(request):

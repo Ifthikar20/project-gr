@@ -47,7 +47,8 @@ targets:
         NSHealthUpdateUsageDescription: >-
           GemRun saves your finished runs and walks to Health as workouts.
         NSHealthShareUsageDescription: >-
-          GemRun does not read your Health data.
+          GemRun reads your total walking and running distance to turn the
+          kilometers you've run into gems you can drop for other runners.
         CFBundleURLTypes:
           - CFBundleURLName: com.gemrun.app
             CFBundleURLSchemes: [gemrun]

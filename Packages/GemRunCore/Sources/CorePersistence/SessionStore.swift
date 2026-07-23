@@ -50,6 +50,74 @@ public final class SessionStore {
     /// Set by the gemrun://route/{id} deep-link handler; Explore consumes it.
     public var pendingDeepLinkRouteID: UUID?
 
+    // MARK: Gem wallet + free runs (earn-by-running)
+
+    /// Gems available to drop — minted from Apple Health distance; starts at 0.
+    public private(set) var wallet: GemWallet = [:]
+    /// Presents the free-run cover (collect standalone drops, no route).
+    public var isFreeRunning = false
+    public var freeRunDrops: [GemDrop] = []
+
+    /// Reads lifetime run km from Health and mints via the API.
+    public func refreshWallet() async {
+        let km = await HealthDistance.totalRunKm()
+        if let minted = try? await API.shared.syncWallet(totalRunKm: km) {
+            wallet = minted
+        }
+    }
+
+    /// Optimistic local decrement after a successful dropGem call.
+    public func spend(_ rarity: Rarity) {
+        if let count = wallet[rarity], count > 0 {
+            wallet[rarity] = count - 1
+        }
+    }
+
+    public func startFreeRun(drops: [GemDrop]) {
+        freeRunDrops = drops
+        isFreeRunning = true
+    }
+
+    /// Submit a finished free run; persist only what the server awarded.
+    public func recordFreeCompletion(track: [TrackSample], collected: [GemDrop],
+                                     durationS: Int, distanceM: Int) async -> RunCompletionSummary {
+        let result = try? await API.shared.collectDrops(claimed: collected.map(\.id),
+                                                        track: track)
+        let awarded = result?.awardedDrops ?? []
+        let xp = result?.xpEarned ?? 0
+        if let context {
+            for drop in awarded {
+                let entry = GemCatalog.entry(forGemID: drop.gemID)
+                context.insert(StoredStashItem(
+                    id: UUID(), gemID: drop.gemID, gemDropID: drop.id,
+                    gemName: entry?.gem.name ?? "Gem",
+                    rarityRaw: drop.rarity.rawValue,
+                    setName: entry?.setName ?? "Wanderer",
+                    routeID: drop.id, routeName: "Found on a free run",
+                    collectedAt: Date(), isFirstFind: true))
+            }
+            profile?.xp += xp
+            while let p = profile, p.xp >= XPRules.xpToAdvance(from: p.level) {
+                p.xp -= XPRules.xpToAdvance(from: p.level)
+                p.level += 1
+            }
+            try? context.save()
+        }
+        let pace = distanceM > 50 ? Int(Double(durationS) / (Double(distanceM) / 1_000)) : 0
+        return RunCompletionSummary(
+            gems: awarded.map {
+                let entry = GemCatalog.entry(forGemID: $0.gemID)
+                return .init(id: $0.id, name: entry?.gem.name ?? "Gem", rarity: $0.rarity)
+            },
+            revokedCount: collected.count - awarded.count,
+            xpEarned: xp, setBonusXP: 0, completedSetName: nil,
+            streakCount: profile?.streakCount ?? 0, streakExtended: false,
+            multiplier: 1.0, isWalk: false, status: .valid,
+            startedAt: Date().addingTimeInterval(-TimeInterval(durationS)),
+            durationS: durationS, distanceM: distanceM, paceSPerKm: pace,
+            splitsS: [], leaderboardRank: nil, routeName: "Free run")
+    }
+
     private var context: ModelContext?
 
     public init() {

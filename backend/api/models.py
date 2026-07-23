@@ -14,6 +14,10 @@ class Profile(models.Model):
     streak_shields = models.IntegerField(default=0)
     streak_last_date = models.DateField(null=True, blank=True)
     completed_sets = models.JSONField(default=list)
+    # Gem wallet: gems earned by running, available to drop. {"common": 2, ...}
+    wallet = models.JSONField(default=dict)
+    # Per-tier counts already minted, so re-syncs never double-mint.
+    wallet_minted = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -44,7 +48,12 @@ class Route(models.Model):
 
 class GemDrop(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    route = models.ForeignKey(Route, on_delete=models.CASCADE, related_name="gem_drops")
+    # null route = a standalone drop placed anywhere on the map (wallet gems).
+    route = models.ForeignKey(Route, null=True, blank=True,
+                              on_delete=models.CASCADE, related_name="gem_drops")
+    # Who left a standalone drop behind (null for route/system drops).
+    dropped_by = models.ForeignKey(Profile, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="drops")
     gem_id = models.UUIDField()
     rarity = models.CharField(max_length=12)
     lat = models.FloatField()

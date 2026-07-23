@@ -11,6 +11,32 @@ public extension View {
             .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 16))
             .shadow(color: DS.Colors.ink.opacity(0.08), radius: 12, y: 2)
     }
+
+    /// Pin-drop entrance: the view falls onto the map with a spring bounce.
+    /// Used for waypoints, destination pins, and gem drops (docs/03 motion).
+    func pinDrop(delay: Double = 0) -> some View {
+        modifier(PinDropEffect(delay: delay))
+    }
+}
+
+public struct PinDropEffect: ViewModifier {
+    @State private var dropped = false
+    let delay: Double
+
+    public init(delay: Double = 0) {
+        self.delay = delay
+    }
+
+    public func body(content: Content) -> some View {
+        content
+            .offset(y: dropped ? 0 : -28)
+            .scaleEffect(dropped ? 1 : 1.25, anchor: .bottom)
+            .opacity(dropped ? 1 : 0)
+            .onAppear {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.55)
+                    .delay(delay)) { dropped = true }
+            }
+    }
 }
 
 /// Primary pill CTA — the one place pulse is guaranteed to appear on a screen.

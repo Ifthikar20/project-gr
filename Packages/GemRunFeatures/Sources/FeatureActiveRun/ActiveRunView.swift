@@ -11,14 +11,15 @@ import UIKit
 /// band, ink numerals, pulse for the live accent. Presented as a full-screen
 /// cover at App root; the engine lives at App level so the run survives.
 public struct ActiveRunView: View {
-    let route: Route
+    /// nil = free run: no route, collect standalone drops by proximity.
+    let route: Route?
     @Environment(SessionStore.self) private var session
     @Environment(ActiveRunEngine.self) private var engine
     @State private var burst: CollectionEngine.Event?
     @State private var summary: RunCompletionSummary?
     @State private var batteryAtStart: Float = -1
 
-    public init(route: Route) {
+    public init(route: Route?) {
         self.route = route
     }
 
@@ -28,6 +29,7 @@ public struct ActiveRunView: View {
                 RunSummaryView(summary: summary) {
                     engine.reset()
                     session.activeRoute = nil
+                    session.isFreeRunning = false
                 }
             } else {
                 runningUI
@@ -47,9 +49,13 @@ public struct ActiveRunView: View {
             batteryAtStart = UIDevice.current.batteryLevel
             // A restored run is already .running — don't restart it.
             guard engine.phase == .idle || engine.phase == .finished else { return }
-            // Client respawn hint (docs/02): strip drops that can't award today
-            // so the runner never celebrates a gem the server would revoke.
-            engine.start(route: session.collectableRoute(from: route))
+            if let route {
+                // Client respawn hint (docs/02): strip drops that can't award
+                // today, so no celebrating a gem the server would revoke.
+                engine.start(route: session.collectableRoute(from: route))
+            } else {
+                engine.startFree(drops: session.freeRunDrops)
+            }
         }
     }
 
@@ -57,6 +63,7 @@ public struct ActiveRunView: View {
         VStack(spacing: 0) {
             ZStack {
                 ActiveRunMapView(route: route,
+                                 freeDrops: route == nil ? session.freeRunDrops : [],
                                  runnerPosition: engine.lastSample?.coordinate,
                                  collectedDropIDs: Set(engine.collectedEvents.map(\.drop.id)))
                 if let event = burst {
@@ -153,6 +160,19 @@ public struct ActiveRunView: View {
     }
 
     private func finish() {
+        if route == nil {
+            guard let free = engine.stopFree() else { return }
+            logBattery(duration: free.durationS)
+            // POST /v1/drops/collect — server confirms the track passed each drop.
+            Task {
+                let completion = await session.recordFreeCompletion(
+                    track: free.track, collected: free.collected,
+                    durationS: free.durationS, distanceM: free.distanceM)
+                summary = completion
+                await HealthKitWriter.save(completion)
+            }
+            return
+        }
         guard let result = engine.stop() else { return }
         logBattery(duration: result.validation.durationS)
         // Async: submits to POST /v1/runs/{id}/complete and builds the summary
@@ -169,7 +189,7 @@ public struct ActiveRunView: View {
         guard batteryAtStart > 0, now > 0, durationS > 60 else { return }
         let perHour = Double(batteryAtStart - now) * 100 * 3_600 / Double(durationS)
         // The docs/04 gate is < 8%/hour — tracked per TestFlight build.
-        print(String(format: "🔋 [Battery] %.1f%%/hour over %d min",
+        print(String(format: "[Battery] %.1f%%/hour over %d min",
                      perHour, durationS / 60))
     }
 }
