@@ -1,5 +1,6 @@
 import CoreMap
 import CoreModels
+import CoreNetworking
 import CorePersistence
 import DesignSystem
 import SwiftData
@@ -136,6 +137,27 @@ struct PublishStepView: View {
     let onDone: () -> Void
     @Environment(\.modelContext) private var context
     @Environment(SessionStore.self) private var session
+    @State private var isPublishing = false
+    @State private var publishError: String?
+
+    /// POST /v1/routes — the server re-validates the placement budget; the
+    /// returned (published) route is what enters the local cache.
+    private func publish() {
+        isPublishing = true
+        publishError = nil
+        let route = model.buildRoute(creatorHandle: session.profile?.handle)
+        Task {
+            do {
+                let published = try await API.shared.publishRoute(route)
+                context.insert(StoredRoute(route: published))
+                try? context.save()
+                onDone()
+            } catch {
+                publishError = "Publish failed — check your gem placement and try again."
+            }
+            isPublishing = false
+        }
+    }
 
     var body: some View {
         Form {
@@ -152,16 +174,21 @@ struct PublishStepView: View {
             }
             Section {
                 Button {
-                    let route = model.buildRoute(creatorHandle: session.profile?.handle)
-                    context.insert(StoredRoute(route: route))
-                    try? context.save()
-                    onDone()
+                    publish()
                 } label: {
-                    Text("Publish")
-                        .frame(maxWidth: .infinity)
-                        .font(DS.Typography.heading)
+                    if isPublishing {
+                        ProgressView().frame(maxWidth: .infinity)
+                    } else {
+                        Text("Publish")
+                            .frame(maxWidth: .infinity)
+                            .font(DS.Typography.heading)
+                    }
                 }
-                .disabled(model.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(isPublishing
+                    || model.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                if let publishError {
+                    Text(publishError).foregroundStyle(.orange).font(.footnote)
+                }
             }
         }
         .navigationTitle("Publish")

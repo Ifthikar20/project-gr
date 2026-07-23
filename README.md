@@ -25,7 +25,7 @@ Pick a route on the map, drop gems along it, and share it. Anyone who runs that 
 | Architecture | MVVM with `@Observable`, local SPM packages |
 | Maps | MapKit today behind the `CoreMap` seam; Mapbox v11 + custom style is the planned swap (docs 07/09) |
 | Persistence | SwiftData, local-first |
-| Backend | Python (FastAPI assumed) — client ready in `CoreNetworking`, disabled until a base URL is set |
+| Backend | Python/**Django** later — UI runs on an in-app **dummy API** today (`MockGemRunAPI`); swap = set `AppConfig.apiBaseURL` ([doc 11](docs/11-dummy-api.md)) |
 | Status | **Local-first MVP implemented (Phases A–E, F partial)** — see [doc 09](docs/09-build-plan.md) |
 
 ## Building the app

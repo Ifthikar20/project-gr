@@ -134,7 +134,9 @@ public struct ActiveRunView: View {
 
     private func finish() {
         guard let result = engine.stop() else { return }
-        summary = session.recordCompletion(result)
+        // Async: submits to POST /v1/runs/{id}/complete and builds the summary
+        // from the authoritative verdict (mock API today, Django later).
+        Task { summary = await session.recordCompletion(result) }
     }
 
     private func haptic(for rarity: Rarity) {

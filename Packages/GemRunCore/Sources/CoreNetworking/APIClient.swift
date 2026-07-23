@@ -1,102 +1,112 @@
 import CoreModels
 import Foundation
 
-// The /v1 client (docs/06). The app is local-first until the FastAPI backend
-// exists: `APIClient.configured` is nil without a base URL, and all call sites
-// treat that as "offline mode". Wire a URL in AppConfig to go live.
-
-public enum AppConfig {
-    /// Set to the deployed backend URL to enable networking (Phase F).
-    public static let apiBaseURL: URL? = nil
-}
-
-public struct APIError: Error, Decodable {
-    public let title: String
-    public let detail: String?
-    public let code: String?
-}
-
-public struct RunVerdictDTO: Decodable, Sendable {
-    public let validationStatus: String
-    public let awarded: [AwardDTO]
-    public let revoked: [UUID]
-    public let xpEarned: Int
-
-    public struct AwardDTO: Decodable, Sendable {
-        public let gemDropID: UUID
-        public let xp: Int
-    }
-}
-
-public final class APIClient: Sendable {
-    public static let configured: APIClient? = AppConfig.apiBaseURL.map(APIClient.init)
-
+/// URLSession implementation of GemRunAPI for the real backend (Python/Django,
+/// docs/06 paths). Dormant until AppConfig.apiBaseURL is set — the UI runs on
+/// MockGemRunAPI until then, against these exact shapes.
+public final class HTTPGemRunAPI: GemRunAPI {
     private let baseURL: URL
     private let session = URLSession.shared
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    /// JWT from /v1/auth/apple; attach to every request. Keychain in Phase F polish.
+    private var token: String?
 
     public init(baseURL: URL) {
         self.baseURL = baseURL
         self.decoder = JSONDecoder()
+        self.encoder = JSONEncoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .iso8601
-        self.encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.dateEncodingStrategy = .iso8601
     }
 
-    // MARK: - Endpoints (docs/06)
+    // MARK: - GemRunAPI
+
+    public func auth(handle: String) async throws -> AuthResponse {
+        let response: AuthResponse = try await send("POST", "auth/apple",
+                                                    body: ["handle": handle])
+        token = response.token
+        return response
+    }
+
+    public func me() async throws -> UserProfile {
+        try await get("users/me")
+    }
+
+    public func updateMe(handle: String?) async throws -> UserProfile {
+        try await send("PATCH", "users/me", body: ["handle": handle])
+    }
+
+    public func deleteAccount() async throws {
+        let _: Empty = try await send("DELETE", "users/me", body: Empty())
+    }
 
     public func nearbyRoutes(lat: Double, lng: Double, radiusM: Int) async throws -> [Route] {
-        try await get("routes", query: [
-            "lat": "\(lat)", "lng": "\(lng)", "radius_m": "\(radiusM)",
-        ])
+        try await get("routes", query: ["lat": "\(lat)", "lng": "\(lng)",
+                                        "radius_m": "\(radiusM)"])
     }
 
     public func route(id: UUID) async throws -> Route {
         try await get("routes/\(id.uuidString)")
     }
 
-    public func publish(route: Route) async throws -> Route {
+    public func publishRoute(_ route: Route) async throws -> Route {
         try await send("POST", "routes", body: route)
     }
 
-    public struct CompletionRequest: Encodable, Sendable {
-        public let idempotencyKey: String
-        public let startedAt: Date
-        public let endedAt: Date
-        public let track: [TrackSample]
-        public let claimedCollections: [UUID]
-        public let clientFlags: [String]
-
-        public init(idempotencyKey: String, startedAt: Date, endedAt: Date,
-                    track: [TrackSample], claimedCollections: [UUID], clientFlags: [String]) {
-            self.idempotencyKey = idempotencyKey
-            self.startedAt = startedAt
-            self.endedAt = endedAt
-            self.track = track
-            self.claimedCollections = claimedCollections
-            self.clientFlags = clientFlags
-        }
+    public func archiveRoute(id: UUID) async throws {
+        let _: Empty = try await send("DELETE", "routes/\(id.uuidString)", body: Empty())
     }
 
-    /// The authoritative verdict call — client collection is optimistic and
-    /// this response may revoke (docs/06). App Attest attachment: TODO when
-    /// the backend exists to verify it.
-    public func completeRun(routeID: UUID, request: CompletionRequest) async throws -> RunVerdictDTO {
+    public func startRun(routeID: UUID) async throws -> RunSession {
+        try await send("POST", "runs", body: ["route_id": routeID.uuidString])
+    }
+
+    public func completeRun(routeID: UUID,
+                            request: RunCompletionRequest) async throws -> RunVerdict {
         try await send("POST", "runs/\(routeID.uuidString)/complete", body: request)
+    }
+
+    public func stash() async throws -> StashResponse {
+        try await get("stash")
+    }
+
+    public func routeLeaderboard(routeID: UUID,
+                                 window: LeaderboardWindow) async throws -> [LeaderboardEntry] {
+        try await get("routes/\(routeID.uuidString)/leaderboard",
+                      query: ["window": window.rawValue])
+    }
+
+    public func localLeaderboard(geohash: String) async throws -> [LeaderboardEntry] {
+        try await get("leaderboards/local", query: ["geohash": geohash])
+    }
+
+    public func gemCatalog() async throws -> [Gem] {
+        try await get("gems/catalog")
     }
 
     // MARK: - Plumbing
 
-    private func get<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+    private struct Empty: Codable {}
+
+    public struct HTTPError: Error, Decodable {
+        public let title: String
+        public let detail: String?
+        public let code: String?
+    }
+
+    private func get<T: Decodable>(_ path: String,
+                                   query: [String: String] = [:]) async throws -> T {
         var components = URLComponents(url: baseURL.appending(path: "v1/\(path)"),
                                        resolvingAgainstBaseURL: false)!
         if !query.isEmpty {
             components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
-        let (data, response) = try await session.data(from: components.url!)
+        var request = URLRequest(url: components.url!)
+        authorize(&request)
+        let (data, response) = try await session.data(for: request)
         return try decode(data, response)
     }
 
@@ -106,15 +116,23 @@ public final class APIClient: Sendable {
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(body)
+        authorize(&request)
         let (data, response) = try await session.data(for: request)
         return try decode(data, response)
     }
 
+    private func authorize(_ request: inout URLRequest) {
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
+
     private func decode<T: Decodable>(_ data: Data, _ response: URLResponse) throws -> T {
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw (try? decoder.decode(APIError.self, from: data))
-                ?? APIError(title: "HTTP \(http.statusCode)", detail: nil, code: nil)
+            throw (try? decoder.decode(HTTPError.self, from: data))
+                ?? HTTPError(title: "HTTP \(http.statusCode)", detail: nil, code: nil)
         }
+        if data.isEmpty, let empty = Empty() as? T { return empty }
         return try decoder.decode(T.self, from: data)
     }
 }

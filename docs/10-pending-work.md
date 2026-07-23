@@ -10,7 +10,7 @@ local-first MVP implementation (phases A–E complete, F partial).
 - [ ] Physical-device run: create a short route, walk it, collect a gem
 
 ## 2. Known gaps in current code
-- [ ] **Respawn enforcement** — daily / once-per-user dedupe is not checked at collection time; re-running a route re-collects everything (highest impact)
+- [x] **Respawn enforcement** — now enforced by the dummy API's `completeRun` verdict (replay + dedupe, doc 11); client-side in-run hint (grey out already-collected daily gems) still nice-to-have
 - [ ] Crash-safe append-only mid-run sample buffer + "Resume run" recovery (docs/04)
 - [ ] Elevation: created routes have 0 m gain; Epic hard-segment rule approximated as "route ≥ 8 km"; no elevation profile strip
 - [ ] Editor polish: undo re-snap, draggable waypoints/gems, loop-close helper
@@ -28,9 +28,10 @@ local-first MVP implementation (phases A–E complete, F partial).
 - [ ] Author "Night Expedition" style in Mapbox Studio; switch snapping to Mapbox Directions
 
 ## 4. Backend & multi-user (Phase F proper)
-- [ ] FastAPI backend per docs/05–06 (auth, routes CRUD + geo-query, catalog, stash, leaderboards)
-- [ ] Server-side run validation re-running the GameKitCore rules (fixture tests = server test vectors)
-- [ ] App: set `AppConfig.apiBaseURL`; Sign in with Apple; App Attest; sync queue with idempotency keys; optimistic-collection → server-verdict reconcile/revoke
+- [x] Full API surface consumed by the UI via the in-app dummy API (`GemRunAPI` protocol + `MockGemRunAPI` + `HTTPGemRunAPI`; doc 11)
+- [x] Optimistic-collection → verdict reconcile/revoke flow (against the mock)
+- [ ] **Django** backend implementing the 14 `/v1` endpoints in doc 11 (auth, routes CRUD + geo-query, catalog, stash, leaderboards, run validation porting the GameKitCore rules — fixture tests = server test vectors)
+- [ ] App: set `AppConfig.apiBaseURL`; Sign in with Apple; App Attest; offline sync queue with retry
 - [ ] Real leaderboards, per-user gem fuzzing, moderation (report triage, blocklist zones, name checks), server-side account deletion, push notifications
 
 ## 5. App Store readiness

@@ -19,8 +19,9 @@ let package = Package(
         // Pure domain types — no dependencies, compiles anywhere.
         .target(name: "CoreModels"),
         .target(name: "DesignSystem", dependencies: ["CoreModels"]),
-        .target(name: "CoreNetworking", dependencies: ["CoreModels"]),
-        .target(name: "CorePersistence", dependencies: ["CoreModels", "GameKitCore"]),
+        .target(name: "CoreNetworking", dependencies: ["CoreModels", "GameKitCore"]),
+        .target(name: "CorePersistence",
+                dependencies: ["CoreModels", "GameKitCore", "CoreNetworking"]),
         .target(name: "CoreLocationKit", dependencies: ["CoreModels", "GameKitCore"]),
         .target(name: "CoreMap", dependencies: ["CoreModels"]),
         // Pure game logic — no UI/IO. The most heavily tested module.

@@ -30,6 +30,7 @@ let package = Package(
             .product(name: "DesignSystem", package: "GemRunCore"),
             .product(name: "CoreMap", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
+            .product(name: "CoreNetworking", package: "GemRunCore"),
         ]),
         .target(name: "FeatureRouteCreation", dependencies: [
             .product(name: "CoreModels", package: "GemRunCore"),
@@ -37,6 +38,7 @@ let package = Package(
             .product(name: "CoreMap", package: "GemRunCore"),
             .product(name: "GameKitCore", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
+            .product(name: "CoreNetworking", package: "GemRunCore"),
         ]),
         .target(name: "FeatureActiveRun", dependencies: [
             .product(name: "CoreModels", package: "GemRunCore"),
@@ -55,6 +57,7 @@ let package = Package(
             .product(name: "CoreModels", package: "GemRunCore"),
             .product(name: "DesignSystem", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
+            .product(name: "CoreNetworking", package: "GemRunCore"),
         ]),
         .target(name: "FeatureProfile", dependencies: [
             .product(name: "CoreModels", package: "GemRunCore"),

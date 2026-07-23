@@ -1,4 +1,3 @@
-import CoreModels
 import Foundation
 
 /// Local gem catalog (docs/05 Gem/GemSet). Server-served in Phase F+; fixed

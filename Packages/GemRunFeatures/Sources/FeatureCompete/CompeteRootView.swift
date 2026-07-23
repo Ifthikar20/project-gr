@@ -1,14 +1,20 @@
 import CoreModels
+import CoreNetworking
 import CorePersistence
 import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// Leaderboards (docs/03 §10): per-route best times + weekly gem score.
-/// Local-first: boards are computed from on-device runs until Phase F.
+/// Leaderboards (docs/03 §10), loaded from the API — the mock includes fake
+/// competitors so the multi-user UI is visible before the Django backend.
 public struct CompeteRootView: View {
     @Query private var runs: [StoredRun]
+    @Query(sort: \StoredRoute.createdAt) private var storedRoutes: [StoredRoute]
     @State private var board = Board.routes
+    @State private var selectedRouteID: UUID?
+    @State private var routeEntries: [LeaderboardEntry] = []
+    @State private var localEntries: [LeaderboardEntry] = []
+    @State private var isLoading = false
 
     enum Board: String, CaseIterable {
         case routes = "Routes"
@@ -16,6 +22,13 @@ public struct CompeteRootView: View {
     }
 
     public init() {}
+
+    /// Routes worth a board: ones the user has run, else all cached routes.
+    private var boardRoutes: [StoredRoute] {
+        let runIDs = Set(runs.map(\.routeID))
+        let ran = storedRoutes.filter { runIDs.contains($0.id) }
+        return ran.isEmpty ? storedRoutes : ran
+    }
 
     public var body: some View {
         NavigationStack {
@@ -27,81 +40,87 @@ public struct CompeteRootView: View {
                 .padding()
 
                 switch board {
-                case .routes: routeBoards
-                case .local: weeklyBoard
+                case .routes: routeBoard
+                case .local: localBoard
                 }
             }
             .background(DS.Colors.ink)
             .navigationTitle("Compete")
+            .task(id: board) { await load() }
+            .task(id: selectedRouteID) { await load() }
         }
     }
 
-    private var validRuns: [StoredRun] {
-        runs.filter { $0.statusRaw == RunValidationStatus.valid.rawValue && !$0.isWalk }
-    }
+    // MARK: - Route board
 
-    private var routeBoards: some View {
+    private var routeBoard: some View {
         Group {
-            let byRoute = Dictionary(grouping: validRuns, by: \.routeID)
-            if byRoute.isEmpty {
+            if boardRoutes.isEmpty {
                 emptyState("Run a route to see its leaderboard here.")
             } else {
-                List {
-                    ForEach(byRoute.keys.sorted(by: { $0.uuidString < $1.uuidString }),
-                            id: \.self) { routeID in
-                        if let best = byRoute[routeID]?.min(by: { $0.durationS < $1.durationS }) {
-                            Section(best.routeName) {
-                                ForEach(Array((byRoute[routeID] ?? [])
-                                    .sorted { $0.durationS < $1.durationS }
-                                    .prefix(5).enumerated()), id: \.element.id) { i, run in
-                                    row(rank: i + 1, time: run.durationS, date: run.startedAt)
-                                }
+                VStack(spacing: 0) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(boardRoutes) { route in
+                                Button(route.name) { selectedRouteID = route.id }
+                                    .font(.footnote.bold())
+                                    .foregroundStyle(route.id == currentRouteID
+                                        ? DS.Colors.ink : DS.Colors.textPrimary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(route.id == currentRouteID
+                                        ? DS.Colors.gold : DS.Colors.inkRaised,
+                                        in: Capsule())
                             }
                         }
+                        .padding(.horizontal, 16)
                     }
+                    .padding(.bottom, 8)
+                    entryList(routeEntries, valueLabel: { format(seconds: $0) })
+                }
+            }
+        }
+    }
+
+    private var currentRouteID: UUID? { selectedRouteID ?? boardRoutes.first?.id }
+
+    // MARK: - Local weekly board
+
+    private var localBoard: some View {
+        entryList(localEntries, valueLabel: { "\($0) XP" })
+    }
+
+    private func entryList(_ entries: [LeaderboardEntry],
+                           valueLabel: @escaping (Int) -> String) -> some View {
+        Group {
+            if isLoading && entries.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if entries.isEmpty {
+                emptyState("No results yet — get out there.")
+            } else {
+                List(entries, id: \.rank) { entry in
+                    HStack {
+                        Text("#\(entry.rank)")
+                            .foregroundStyle(entry.isMe ? DS.Colors.ink : DS.Colors.gold)
+                            .frame(width: 40, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(entry.isMe ? "You" : "@\(entry.handle)")
+                                .foregroundStyle(entry.isMe ? DS.Colors.ink : DS.Colors.textPrimary)
+                            Text("Level \(entry.level)")
+                                .font(.caption2)
+                                .foregroundStyle(entry.isMe
+                                    ? DS.Colors.ink.opacity(0.7) : DS.Colors.textSecondary)
+                        }
+                        Spacer()
+                        Text(valueLabel(entry.bestTimeS))
+                            .monospacedDigit()
+                            .foregroundStyle(entry.isMe ? DS.Colors.ink : DS.Colors.textPrimary)
+                    }
+                    .listRowBackground(entry.isMe ? DS.Colors.gold : DS.Colors.inkRaised)
                 }
                 .scrollContentBackground(.hidden)
             }
         }
-    }
-
-    private var weeklyBoard: some View {
-        Group {
-            let cal = Calendar.current
-            let weekStart = cal.date(from: cal.dateComponents(
-                [.yearForWeekOfYear, .weekOfYear], from: Date())) ?? Date()
-            let weekXP = runs.filter { $0.startedAt >= weekStart }.map(\.xpEarned).reduce(0, +)
-            VStack(spacing: 12) {
-                Text("+\(weekXP) XP")
-                    .font(DS.Typography.statLarge)
-                    .foregroundStyle(DS.Colors.gold)
-                Text("earned this week")
-                    .font(.subheadline)
-                    .foregroundStyle(DS.Colors.textSecondary)
-                Text("Local rankings arrive when GemRun goes online in your city.")
-                    .font(.caption)
-                    .foregroundStyle(DS.Colors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    private func row(rank: Int, time: Int, date: Date) -> some View {
-        HStack {
-            Text("#\(rank)")
-                .foregroundStyle(DS.Colors.gold)
-                .frame(width: 36, alignment: .leading)
-            Text(String(format: "%d:%02d", time / 60, time % 60))
-                .foregroundStyle(DS.Colors.textPrimary)
-                .monospacedDigit()
-            Spacer()
-            Text(date, style: .date)
-                .font(.caption)
-                .foregroundStyle(DS.Colors.textSecondary)
-        }
-        .listRowBackground(DS.Colors.inkRaised)
     }
 
     private func emptyState(_ message: String) -> some View {
@@ -116,5 +135,28 @@ public struct CompeteRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
+    }
+
+    // MARK: - Loading
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        switch board {
+        case .routes:
+            guard let id = currentRouteID else { return }
+            // GET /v1/routes/{id}/leaderboard
+            routeEntries = (try? await API.shared.routeLeaderboard(
+                routeID: id, window: .allTime)) ?? []
+        case .local:
+            // GET /v1/leaderboards/local
+            localEntries = (try? await API.shared.localLeaderboard(geohash: "local")) ?? []
+        }
+    }
+
+    private func format(seconds: Int) -> String {
+        seconds >= 3_600
+            ? String(format: "%d:%02d:%02d", seconds / 3_600, (seconds % 3_600) / 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }

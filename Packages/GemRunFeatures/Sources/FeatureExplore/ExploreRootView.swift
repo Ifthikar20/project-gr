@@ -1,6 +1,7 @@
 import CoreLocation
 import CoreMap
 import CoreModels
+import CoreNetworking
 import CorePersistence
 import DesignSystem
 import SwiftData
@@ -55,8 +56,8 @@ public struct ExploreRootView: View {
             .sheet(item: $detailRoute) { route in
                 RouteDetailView(route: route)
             }
-            .onAppear {
-                requestLocationAndSeed()
+            .task {
+                await loadNearbyRoutes()
             }
         }
     }
@@ -85,17 +86,25 @@ public struct ExploreRootView: View {
             .padding(.horizontal, 16)
     }
 
-    private func requestLocationAndSeed() {
+    /// GET /v1/routes near the user (mock API today, Django later), upserted
+    /// into the SwiftData cache — the map renders cached routes instantly and
+    /// refreshes when the call lands, so the network is never a bottleneck.
+    private func loadNearbyRoutes() async {
         let manager = CLLocationManager()
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
-        // Cold start (docs/02): seed demo routes around the user, or a default
-        // center before a first fix exists.
         let center = manager.location.map {
             Coordinate(lat: $0.coordinate.latitude, lng: $0.coordinate.longitude)
         } ?? Coordinate(lat: 37.7749, lng: -122.4194)
-        SeedData.seedIfNeeded(context: context, around: center)
+
+        guard let fetched = try? await API.shared.nearbyRoutes(
+            lat: center.lat, lng: center.lng, radiusM: 5_000) else { return }
+        let cachedIDs = Set(storedRoutes.map(\.id))
+        for route in fetched where !cachedIDs.contains(route.id) {
+            context.insert(StoredRoute(route: route))
+        }
+        try? context.save()
     }
 }
 

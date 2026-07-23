@@ -1,0 +1,268 @@
+import CoreModels
+import Foundation
+import GameKitCore
+
+/// The in-app dummy server. Behaves like the future Django backend:
+/// - seeds routes around the caller's location (cold start, docs/02)
+/// - re-validates completed runs authoritatively by REPLAYING the track
+///   through the same CollectionEngine/RunValidator the client used (docs/04)
+/// - enforces respawn rules (daily / once-per-user) at award time
+/// - fakes competitor leaderboard entries so multi-user UI is visible today
+/// Every call logs to the Xcode console with its real /v1 path.
+public actor MockGemRunAPI: GemRunAPI {
+    private var profile = UserProfile(id: UUID(), handle: "runner")
+    private var routes: [UUID: Route] = [:]
+    private var archived: Set<UUID> = []
+    private var stashItems: [StashItem] = []
+    /// Respawn dedupe keys (docs/02): daily → drop+day, once_per_user → drop.
+    private var awardedKeys: Set<String> = []
+    /// Verdicts by idempotency key — repeat submissions return the same result.
+    private var verdicts: [String: RunVerdict] = [:]
+    private var userTimes: [UUID: [(timeS: Int, date: Date)]] = [:]
+    private var competitorTimes: [UUID: [(handle: String, level: Int, timeS: Int)]] = [:]
+    private var seeded = false
+
+    private static let competitors: [(String, Int)] = [
+        ("maya.runs", 7), ("dev_collects", 4), ("sam_routes", 11),
+        ("pace.ghost", 9), ("gemhound", 3),
+    ]
+
+    public init() {}
+
+    private func call(_ line: String) async {
+        print("🌐 [MockAPI] \(line)")
+        try? await Task.sleep(nanoseconds: AppConfig.mockLatencyMs * 1_000_000)
+    }
+
+    // MARK: - Auth & user
+
+    public func auth(handle: String) async throws -> AuthResponse {
+        await call("POST /v1/auth/apple  (handle: \(handle))")
+        profile.handle = handle
+        return AuthResponse(token: "mock-jwt-\(UUID().uuidString.prefix(8))", profile: profile)
+    }
+
+    public func me() async throws -> UserProfile {
+        await call("GET /v1/users/me")
+        return profile
+    }
+
+    public func updateMe(handle: String?) async throws -> UserProfile {
+        await call("PATCH /v1/users/me")
+        if let handle { profile.handle = handle }
+        return profile
+    }
+
+    public func deleteAccount() async throws {
+        await call("DELETE /v1/users/me")
+        stashItems.removeAll()
+        awardedKeys.removeAll()
+        userTimes.removeAll()
+        profile = UserProfile(id: UUID(), handle: "runner")
+    }
+
+    // MARK: - Routes
+
+    public func nearbyRoutes(lat: Double, lng: Double, radiusM: Int) async throws -> [Route] {
+        await call("GET /v1/routes?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
+        seedIfNeeded(around: Coordinate(lat: lat, lng: lng))
+        return routes.values
+            .filter { !archived.contains($0.id) }
+            .sorted { $0.name < $1.name }
+    }
+
+    public func route(id: UUID) async throws -> Route {
+        await call("GET /v1/routes/\(id.uuidString.prefix(8))")
+        guard let route = routes[id] else { throw URLError(.fileDoesNotExist) }
+        return route
+    }
+
+    public func publishRoute(_ route: Route) async throws -> Route {
+        await call("POST /v1/routes  (\(route.name), \(route.gemDrops.count) gems)")
+        // Server-side re-validation of the placement budget (docs/02, docs/06).
+        let points = route.gemDrops.compactMap { PlacementBudget.cost(of: $0.rarity) }.reduce(0, +)
+        guard route.gemDrops.count <= PlacementBudget.slots(forDistanceM: route.distanceM),
+              points <= PlacementBudget.points(forDistanceM: route.distanceM),
+              !route.gemDrops.contains(where: { $0.rarity == .legendary }) else {
+            throw URLError(.cannotParseResponse)
+        }
+        var published = route
+        published.status = .published
+        routes[route.id] = published
+        return published
+    }
+
+    public func archiveRoute(id: UUID) async throws {
+        await call("DELETE /v1/routes/\(id.uuidString.prefix(8))")
+        archived.insert(id)
+    }
+
+    // MARK: - Runs
+
+    public func startRun(routeID: UUID) async throws -> RunSession {
+        await call("POST /v1/runs  (route \(routeID.uuidString.prefix(8)))")
+        let drops = routes[routeID]?.gemDrops ?? []
+        return RunSession(runID: UUID(), exactDrops: drops)
+    }
+
+    public func completeRun(routeID: UUID, request: RunCompletionRequest) async throws -> RunVerdict {
+        await call("POST /v1/runs/\(routeID.uuidString.prefix(8))/complete  "
+            + "(\(request.track.count) samples, \(request.claimedCollections.count) claimed)")
+
+        // Idempotency (docs/06): same key → same verdict, no double awards.
+        if let existing = verdicts[request.idempotencyKey] { return existing }
+        guard let route = routes[routeID] else { throw URLError(.fileDoesNotExist) }
+
+        // Authoritative re-validation: replay the full track (docs/04).
+        let geometry = RouteGeometry(polyline: route.polyline)
+        let validation = RunValidator.validate(track: request.track, geometry: geometry)
+        var engine = CollectionEngine(geometry: geometry, drops: route.gemDrops)
+        for sample in request.track { _ = engine.ingest(sample) }
+        let replayed = Set(engine.collected)
+
+        var awarded: [GemDrop] = []
+        var revoked: [UUID] = []
+        if validation.status != .invalid {
+            for id in request.claimedCollections {
+                guard let drop = route.gemDrops.first(where: { $0.id == id }),
+                      replayed.contains(id),                    // track actually supports it
+                      claimRespawn(drop) else {                 // dedupe rules (docs/02)
+                    revoked.append(id)
+                    continue
+                }
+                awarded.append(drop)
+                stashItems.append(StashItem(id: UUID(), gemID: drop.gemID, gemDropID: drop.id,
+                                            runID: UUID(), collectedAt: Date()))
+            }
+        } else {
+            revoked = request.claimedCollections
+        }
+
+        let xp = validation.status == .invalid ? 0
+            : RunValidator.xp(for: awarded, isWalk: validation.isWalk,
+                              streakDays: request.clientStreakDays)
+
+        var rank: Int?
+        if validation.status == .valid, !validation.isWalk {
+            userTimes[routeID, default: []].append((validation.durationS, Date()))
+            let allTimes = (competitorTimes[routeID] ?? []).map(\.timeS)
+                + userTimes[routeID]!.map(\.timeS)
+            rank = allTimes.filter { $0 < validation.durationS }.count + 1
+        }
+
+        let verdict = RunVerdict(status: validation.status, awardedDrops: awarded,
+                                 revoked: revoked, xpEarned: xp, leaderboardRank: rank)
+        verdicts[request.idempotencyKey] = verdict
+        return verdict
+    }
+
+    // MARK: - Stash & boards
+
+    public func stash() async throws -> StashResponse {
+        await call("GET /v1/stash")
+        return StashResponse(items: stashItems)
+    }
+
+    public func routeLeaderboard(routeID: UUID,
+                                 window: LeaderboardWindow) async throws -> [LeaderboardEntry] {
+        await call("GET /v1/routes/\(routeID.uuidString.prefix(8))/leaderboard?window=\(window.rawValue)")
+        var rows: [(handle: String, level: Int, timeS: Int, isMe: Bool)] =
+            (competitorTimes[routeID] ?? []).map { ($0.handle, $0.level, $0.timeS, false) }
+        if let best = userTimes[routeID]?.map(\.timeS).min() {
+            rows.append((profile.handle, profile.level, best, true))
+        }
+        return rows.sorted { $0.timeS < $1.timeS }
+            .enumerated()
+            .map { LeaderboardEntry(rank: $0.offset + 1, handle: $0.element.handle,
+                                    level: $0.element.level, bestTimeS: $0.element.timeS,
+                                    isMe: $0.element.isMe) }
+    }
+
+    public func localLeaderboard(geohash: String) async throws -> [LeaderboardEntry] {
+        await call("GET /v1/leaderboards/local?geohash=\(geohash)")
+        let weekXP = stashItems.filter {
+            $0.collectedAt > Date().addingTimeInterval(-7 * 86_400)
+        }.count * 25
+        var rows = Self.competitors.enumerated().map { i, c in
+            (handle: c.0, level: c.1, score: 950 - i * 180, isMe: false)
+        }
+        rows.append((profile.handle, profile.level, weekXP, true))
+        return rows.sorted { $0.score > $1.score }
+            .enumerated()
+            .map { LeaderboardEntry(rank: $0.offset + 1, handle: $0.element.handle,
+                                    level: $0.element.level, bestTimeS: $0.element.score,
+                                    isMe: $0.element.isMe) }
+    }
+
+    public func gemCatalog() async throws -> [Gem] {
+        await call("GET /v1/gems/catalog")
+        return GemCatalog.entries.map(\.gem)
+    }
+
+    // MARK: - Internals
+
+    private func claimRespawn(_ drop: GemDrop) -> Bool {
+        let key: String = switch drop.respawnRule {
+        case .daily:
+            "\(drop.id)-\(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)"
+        case .oncePerUser, .oneTime:
+            "\(drop.id)"
+        }
+        guard !awardedKeys.contains(key) else { return false }
+        awardedKeys.insert(key)
+        return true
+    }
+
+    /// Cold-start seeding (docs/02): three loops around the caller, each with
+    /// fake competitor times so leaderboards read as a live city.
+    private func seedIfNeeded(around center: Coordinate) {
+        guard !seeded else { return }
+        seeded = true
+        let specs: [(String, Double, Double, Double, RouteDifficulty, [(Rarity, Double)])] = [
+            ("First Light Loop", 0, 0, 320, .easy,
+             [(.common, 0.15), (.common, 0.5), (.uncommon, 0.85)]),
+            ("Gem Hunter's Circuit", 900, 400, 800, .moderate,
+             [(.common, 0.1), (.uncommon, 0.35), (.rare, 0.55), (.uncommon, 0.8)]),
+            ("Ridge Endurance Run", -1_200, -700, 1_450, .hard,
+             [(.common, 0.1), (.rare, 0.45), (.epic, 0.7), (.uncommon, 0.9)]),
+        ]
+        for (name, dLat, dLng, radius, difficulty, gems) in specs {
+            let route = Self.loop(named: name, center: Self.offset(center, dLatM: dLat, dLngM: dLng),
+                                  radiusM: radius, difficulty: difficulty, gems: gems)
+            routes[route.id] = route
+            // Plausible fake times: base pace 4:50–6:20 /km by entry order.
+            competitorTimes[route.id] = Self.competitors.prefix(3).enumerated().map { i, c in
+                (c.0, c.1, Int(Double(route.distanceM) / 1_000 * Double(290 + i * 45)))
+            }
+        }
+    }
+
+    private static func loop(named name: String, center: Coordinate, radiusM: Double,
+                             difficulty: RouteDifficulty, gems: [(Rarity, Double)]) -> Route {
+        let n = 36
+        let coords = (0...n).map { i -> Coordinate in
+            let angle = 2 * .pi * Double(i) / Double(n)
+            return offset(center, dLatM: radiusM * sin(angle), dLngM: radiusM * cos(angle))
+        }
+        let geometry = RouteGeometry(coordinates: coords)
+        let drops = gems.map { rarity, fraction -> GemDrop in
+            let alongM = geometry.totalLengthM * fraction
+            let position = geometry.coordinate(atDistance: alongM)
+            return GemDrop(id: UUID(), gemID: GemCatalog.gem(of: rarity).id, rarity: rarity,
+                           lat: position.lat, lng: position.lng,
+                           positionAlongRouteM: Int(alongM),
+                           respawnRule: rarity == .common || rarity == .uncommon
+                               ? .daily : .oncePerUser,
+                           placedBy: .system)
+        }
+        return Route(id: UUID(), name: name, polyline: PolylineCodec.encode(coords),
+                     distanceM: Int(geometry.totalLengthM),
+                     elevationGainM: Int(geometry.totalLengthM) / 100,
+                     difficulty: difficulty, gemDrops: drops)
+    }
+
+    private static func offset(_ c: Coordinate, dLatM: Double, dLngM: Double) -> Coordinate {
+        Coordinate(lat: c.lat + dLatM / 111_320,
+                   lng: c.lng + dLngM / (111_320 * cos(c.lat * .pi / 180)))
+    }
+}

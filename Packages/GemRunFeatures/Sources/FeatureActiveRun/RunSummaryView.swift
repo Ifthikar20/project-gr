@@ -40,6 +40,14 @@ struct RunSummaryView: View {
                         .foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
+                } else if summary.revokedCount > 0 {
+                    // Server verdict revoked some optimistic collections (docs/06)
+                    // — e.g. a daily gem already collected today.
+                    Text("\(summary.revokedCount) gem\(summary.revokedCount == 1 ? "" : "s") already collected today didn't count again.")
+                        .font(.footnote)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
                 }
 
                 xpCard
