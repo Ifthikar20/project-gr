@@ -32,6 +32,7 @@ targets:
       path: App/GemRun.entitlements
       properties:
         com.apple.developer.healthkit: true
+        com.apple.developer.applesignin: [Default]
     info:
       path: App/Info.plist
       properties:

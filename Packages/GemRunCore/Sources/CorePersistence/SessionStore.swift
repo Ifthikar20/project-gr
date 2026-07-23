@@ -62,13 +62,46 @@ public final class SessionStore {
     }
 
     public func createProfile(handle: String) {
-        guard let context else { return }
-        let p = StoredProfile(handle: handle.isEmpty ? "runner" : handle)
-        context.insert(p)
+        signIn(provider: .guest, handle: handle, externalID: nil)
+    }
+
+    /// Sign-in entry for every provider. While `AuthFlags.allowAllAccounts` is
+    /// on (TEMPORARY), any attempt succeeds — including provider failures and
+    /// guests. Once Django verifies tokens, unverified sign-ins are rejected.
+    @discardableResult
+    public func signIn(provider: AuthProvider, handle: String,
+                       externalID: String?) -> Bool {
+        guard AuthFlags.allowAllAccounts || externalID != nil else { return false }
+        guard let context else { return false }
+        let cleanHandle = handle.trimmingCharacters(in: .whitespaces)
+        if let profile {
+            profile.authProviderRaw = provider.rawValue
+            profile.externalUserID = externalID
+            if !cleanHandle.isEmpty { profile.handle = cleanHandle }
+        } else {
+            let p = StoredProfile(handle: cleanHandle.isEmpty ? "runner" : cleanHandle,
+                                  authProviderRaw: provider.rawValue,
+                                  externalUserID: externalID)
+            context.insert(p)
+            profile = p
+        }
         try? context.save()
-        profile = p
-        // Register with the API (mock today, Django later) — POST /v1/auth/apple.
-        Task { _ = try? await API.shared.auth(handle: p.handle) }
+        isOnboarded = true
+        // Register with the API (mock today; Django exchanges the identity
+        // token for a JWT here, docs/06) — POST /v1/auth/apple | /google.
+        if let handle = profile?.handle {
+            Task { _ = try? await API.shared.auth(handle: handle) }
+        }
+        return true
+    }
+
+    /// Keeps local data; just returns the user to onboarding.
+    public func signOut() {
+        isOnboarded = false
+    }
+
+    public var authProvider: AuthProvider {
+        AuthProvider(rawValue: profile?.authProviderRaw ?? "guest") ?? .guest
     }
 
     public var streakMultiplier: Double {

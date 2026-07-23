@@ -27,6 +27,20 @@ Mapbox token, an Apple developer account, or the Django backend.
 - App icon (generated faceted-gem artwork)
 - GitHub Actions CI: GameKitCore tests on iOS Simulator
 
+## Auth (added after the completion pass)
+
+Sign in with Apple (native button), Google (SDK-ready stub), and guest login
+are wired through `SessionStore.signIn`. **`AuthFlags.allowAllAccounts = true`
+(CoreModels/Enums.swift) temporarily accepts every account** — provider
+failures and guests included, no token verification. To go strict later:
+1. Flip `AuthFlags.allowAllAccounts` to `false`.
+2. Django verifies Apple `identityToken` / Google `idToken` in `POST /v1/auth/*`.
+3. Google: add the GoogleSignIn-iOS SPM package, set `GIDClientID` in
+   Info.plist + the reversed-client-ID URL scheme, and wire `GIDSignIn` where
+   the `#if canImport(GoogleSignIn)` marker sits in `OnboardingView`.
+4. Apple: requires a paid developer team for the `applesignin` entitlement —
+   remove that line from project.yml if signing complains meanwhile.
+
 ## ⏳ Needs your Mac / accounts
 
 - [ ] First Xcode build (`xcodegen` → build; code authored without a compiler — expect small fixes)

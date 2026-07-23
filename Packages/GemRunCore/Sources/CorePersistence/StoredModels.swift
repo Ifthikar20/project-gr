@@ -128,8 +128,12 @@ public final class StoredProfile {
     public var streakLastDate: Date?
     /// Set names whose completion bonus was already awarded (docs/02).
     public var completedSetsRaw: String = ""
+    public var authProviderRaw: String = "guest"
+    /// Stable ID from the provider (Apple `user`, Google `sub`); nil for guests.
+    public var externalUserID: String?
 
-    public init(handle: String) {
+    public init(handle: String, authProviderRaw: String = "guest",
+                externalUserID: String? = nil) {
         self.id = UUID()
         self.handle = handle
         self.xp = 0
@@ -138,6 +142,8 @@ public final class StoredProfile {
         self.streakShields = 0
         self.streakLastDate = nil
         self.completedSetsRaw = ""
+        self.authProviderRaw = authProviderRaw
+        self.externalUserID = externalUserID
     }
 
     public var completedSets: Set<String> {

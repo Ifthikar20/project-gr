@@ -29,6 +29,7 @@ public struct ProfileRootView: View {
                 statsSection
                 myRoutesSection
                 settingsSection
+                dataSection
             }
             .scrollContentBackground(.hidden)
             .background(DS.Colors.ink)
@@ -127,6 +128,32 @@ public struct ProfileRootView: View {
     }
 
     private var settingsSection: some View {
+        Section("Account") {
+            let provider = switch session.authProvider {
+            case .apple: "Signed in with Apple"
+            case .google: "Signed in with Google"
+            case .guest: "Guest account"
+            }
+            Label(provider, systemImage: session.authProvider == .guest
+                  ? "person.fill.questionmark" : "checkmark.seal.fill")
+                .foregroundStyle(DS.Colors.textPrimary)
+                .listRowBackground(DS.Colors.inkRaised)
+            if AuthFlags.allowAllAccounts {
+                Text("Dev mode: all accounts temporarily accepted (AuthFlags.allowAllAccounts).")
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.textSecondary)
+                    .listRowBackground(DS.Colors.inkRaised)
+            }
+            Button("Sign out") {
+                session.signOut()
+            }
+            .foregroundStyle(DS.Colors.gold)
+            .listRowBackground(DS.Colors.inkRaised)
+        }
+        .headerProminence(.increased)
+    }
+
+    private var dataSection: some View {
         Section("Settings") {
             Button("Erase all local data", role: .destructive) {
                 confirmingReset = true

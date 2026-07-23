@@ -1,14 +1,19 @@
+import AuthenticationServices
 import CoreLocation
+import CoreModels
 import CorePersistence
 import DesignSystem
 import SwiftUI
 
 /// Value prop → location priming → identity, under 60 seconds (docs/03 §1).
-/// Sign in with Apple replaces the handle field in Phase F; local profile now.
+/// Identity offers Sign in with Apple, Google, or guest. While
+/// `AuthFlags.allowAllAccounts` is on (TEMPORARY), every path succeeds —
+/// including provider failures — so any account works during development.
 public struct OnboardingView: View {
     @Environment(SessionStore.self) private var session
     @State private var page = 0
     @State private var handle = ""
+    @State private var authError: String?
 
     public init() {}
 
@@ -89,29 +94,96 @@ public struct OnboardingView: View {
     }
 
     private var identity: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
             Image(systemName: "person.crop.circle.badge.plus")
-                .font(.system(size: 64))
+                .font(.system(size: 56))
                 .foregroundStyle(DS.Colors.gold)
-            Text("Pick a handle")
+            Text("Who's hunting?")
                 .font(DS.Typography.display(28))
                 .foregroundStyle(DS.Colors.textPrimary)
-            TextField("runner", text: $handle)
+            TextField("handle (optional)", text: $handle)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .frame(width: 220)
+
+            SignInWithAppleButton(.signIn) { request in
+                request.requestedScopes = [.fullName]
+            } onCompletion: { result in
+                handleAppleResult(result)
+            }
+            .signInWithAppleButtonStyle(.white)
+            .frame(width: 260, height: 46)
+            .clipShape(Capsule())
+
             Button {
-                session.createProfile(handle: handle)
-                session.isOnboarded = true
+                continueWithGoogle()
             } label: {
-                Text("Start hunting")
+                Label("Continue with Google", systemImage: "g.circle.fill")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 12)
-                    .background(DS.Colors.gold, in: Capsule())
+                    .frame(width: 260, height: 46)
+                    .background(.white, in: Capsule())
             }
+
+            Button("Continue as guest") {
+                session.signIn(provider: .guest, handle: handle, externalID: nil)
+            }
+            .font(.footnote)
+            .foregroundStyle(DS.Colors.textSecondary)
+
+            if let authError {
+                Text(authError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
+            if AuthFlags.allowAllAccounts {
+                Text("Dev mode: all accounts are temporarily accepted.")
+                    .font(.caption2)
+                    .foregroundStyle(DS.Colors.textSecondary)
+            }
+        }
+    }
+
+    private func handleAppleResult(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let auth):
+            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential else {
+                fallthroughIfAllowed(provider: .apple, message: "Apple sign-in returned no credential.")
+                return
+            }
+            let name = handle.isEmpty
+                ? (credential.fullName?.givenName ?? "runner") : handle
+            // Django later verifies credential.identityToken server-side
+            // (docs/06); with the dev flag on, the local identity is enough.
+            session.signIn(provider: .apple, handle: name, externalID: credential.user)
+        case .failure:
+            // Simulator without an Apple ID, or the user cancelled.
+            fallthroughIfAllowed(provider: .apple,
+                                 message: "Apple sign-in didn't complete.")
+        }
+    }
+
+    private func continueWithGoogle() {
+        #if canImport(GoogleSignIn)
+        // Real flow once the GoogleSignIn-iOS SPM package + OAuth client ID
+        // (GIDClientID in Info.plist + reversed-ID URL scheme) are added:
+        // GIDSignIn.sharedInstance.signIn(withPresenting:) → profile + idToken,
+        // which Django verifies server-side.
+        authError = "Google SDK present — wire GIDSignIn here."
+        #else
+        fallthroughIfAllowed(provider: .google,
+                             message: "Google Sign-In needs the GoogleSignIn SDK and an OAuth client ID.")
+        #endif
+    }
+
+    private func fallthroughIfAllowed(provider: AuthProvider, message: String) {
+        if AuthFlags.allowAllAccounts {
+            session.signIn(provider: provider, handle: handle, externalID: nil)
+        } else {
+            authError = message
         }
     }
 }
