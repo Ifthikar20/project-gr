@@ -41,14 +41,21 @@ failures and guests included, no token verification. To go strict later:
 4. Apple: requires a paid developer team for the `applesignin` entitlement —
    remove that line from project.yml if signing complains meanwhile.
 
-## ⏳ Needs your Mac / accounts
+## ✅ CI-verified on GitHub's Mac runners (no local Mac needed)
 
-- [ ] First Xcode build (`xcodegen` → build; code authored without a compiler — expect small fixes)
-- [ ] GameKitCore tests green (Xcode, or the CI workflow on push)
-- [ ] Simulator walkthrough with simulated location; physical-device run
-- [ ] Mapbox swap: token in `Configs/Secrets.xcconfig`, SDK via SPM, reimplement
-  the four `CoreMap` views, author the "Night Expedition" Studio style
-- [ ] Signing/team setup; TestFlight; battery gate measured on device
+- [x] **Full app build** — `app-build` CI job: XcodeGen + `xcodebuild` for the
+  iOS Simulator on Xcode 16 (macos-15), zero compile errors. Opening the
+  project locally is now a formality, not a risk.
+- [x] **GameKitCore tests green** — every push, macos-14 simulator.
+- [x] **Django API tests green** — every push, ubuntu.
+
+## ⏳ Still needs your Mac / accounts
+
+- [ ] Simulator walkthrough with simulated location; physical-device GPS run
+- [ ] Mapbox swap: account + token in `Configs/Secrets.xcconfig`, SDK via SPM,
+  reimplement the four `CoreMap` views, author the custom Studio style
+- [ ] Signing/team setup (paid team for the Apple-sign-in entitlement);
+  TestFlight; battery gate measured on device
 
 ## Django backend — ✅ IMPLEMENTED (backend/, verified: 12/12 tests green)
 
