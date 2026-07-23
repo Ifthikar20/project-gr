@@ -18,7 +18,7 @@ public struct ExploreRootView: View {
     @State private var detailRoute: Route?
     @State private var nearbyDrops: [GemDrop] = []
     @State private var isDropMode = false
-    @State private var pendingDropCoordinate: Coordinate?
+    @State private var pendingDropSpot: TappedSpot?
 
     public init() {}
 
@@ -36,7 +36,7 @@ public struct ExploreRootView: View {
                     standaloneDrops: nearbyDrops,
                     selectedID: selectedID,
                     onSelect: { detailRoute = $0 },
-                    onTapCoordinate: isDropMode ? { pendingDropCoordinate = $0 } : nil
+                    onTapCoordinate: isDropMode ? { pendingDropSpot = TappedSpot(coordinate: $0) } : nil
                 )
                 .ignoresSafeArea()
 
@@ -56,8 +56,8 @@ public struct ExploreRootView: View {
             .sheet(item: $detailRoute) { route in
                 RouteDetailView(route: route)
             }
-            .sheet(item: $pendingDropCoordinate) { coordinate in
-                DropGemSheet(coordinate: coordinate) { newDrop in
+            .sheet(item: $pendingDropSpot) { spot in
+                DropGemSheet(coordinate: spot.coordinate) { newDrop in
                     withAnimation { nearbyDrops.append(newDrop) }
                     isDropMode = false
                 }
@@ -181,8 +181,46 @@ public struct ExploreRootView: View {
     }
 }
 
-extension Coordinate: Identifiable {
-    public var id: String { "\(lat),\(lng)" }
+/// Identifiable wrapper for a tapped map coordinate (sheet presentation).
+struct TappedSpot: Identifiable {
+    let coordinate: Coordinate
+    var id: String { "\(coordinate.lat),\(coordinate.lng)" }
+}
+
+/// Airbnb listing-card anatomy: image on top (map preview), then title,
+/// meta line, and the rarity row.
+struct RouteCard: View {
+    let route: Route
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RoutePreviewMap(route: route)
+                .frame(height: 110)
+                .allowsHitTesting(false)
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16,
+                                                  topTrailingRadius: 16))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(route.name)
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                    .lineLimit(1)
+                Text(String(format: "%.1f km · %d m climb · %@",
+                            Double(route.distanceM) / 1_000, route.elevationGainM,
+                            route.difficulty.rawValue.capitalized))
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                RarityDots(counts: rarityCounts)
+            }
+            .padding(12)
+        }
+        .frame(width: 250, alignment: .leading)
+        .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: DS.Colors.ink.opacity(0.1), radius: 12, y: 3)
+    }
+
+    private var rarityCounts: [Rarity: Int] {
+        Dictionary(grouping: route.gemDrops, by: \.rarity).mapValues(\.count)
+    }
 }
 
 /// Pick a wallet gem for the tapped location (docs: earn-by-running wallet).
