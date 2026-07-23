@@ -7,7 +7,6 @@ public enum CollectionRules {
     public static let collectionRadiusM: Double = 25
     public static let hysteresisExitRadiusM: Double = 40
     public static let hysteresisAdvanceM: Double = 50
-    public static let gemLookaheadWindowM: Double = 300
 
     public static let maxCrossTrackM: Double = 40
     public static let minOnRouteSampleRatio: Double = 0.90
@@ -20,22 +19,58 @@ public enum CollectionRules {
     public static let walkPaceThresholdSPerKm = 600      // 10:00 — slower is a walk (0.5× XP)
 }
 
-/// Per-sample collection decisions: 25 m threshold + hysteresis + monotonic
-/// route progress (docs/04). Pure and synchronous — the ActiveRunEngine actor
-/// (Phase D) feeds it samples; tests feed it fixture tracks.
-public struct CollectionEngine {
-    public private(set) var collected: [UUID] = []
-
-    public init(drops: [GemDrop]) {
-        // TODO(Phase B): index drops by positionAlongRouteM for the lookahead window.
-        _ = drops
+/// Per-sample collection decisions (docs/04): 25 m threshold + hysteresis +
+/// monotonic route progress. Pure and synchronous — ActiveRunEngine feeds it
+/// live samples; tests feed it fixture tracks; the server replays full tracks.
+public struct CollectionEngine: Sendable {
+    public struct Event: Equatable, Sendable {
+        public let drop: GemDrop
+        public let atAlongRouteM: Double
     }
 
-    /// Feed one smoothed sample; returns newly collected drop IDs (usually 0 or 1).
-    public mutating func ingest(_ sample: TrackSample) -> [UUID] {
-        // TODO(Phase B): project onto polyline, check threshold, apply hysteresis
-        // and the monotonic-progress rule.
-        _ = sample
-        return []
+    private let geometry: RouteGeometry
+    private let drops: [GemDrop]                 // sorted by positionAlongRouteM
+    private var collectedIDs: Set<UUID> = []
+    private var maxProgressM: Double = 0
+    private var lastCollection: (coordinate: Coordinate, alongM: Double)?
+
+    public var collected: [UUID] { Array(collectedIDs) }
+
+    public init(geometry: RouteGeometry, drops: [GemDrop]) {
+        self.geometry = geometry
+        self.drops = drops.sorted { $0.positionAlongRouteM < $1.positionAlongRouteM }
+    }
+
+    /// Feed one smoothed sample; returns newly collected drops (usually 0 or 1).
+    public mutating func ingest(_ sample: TrackSample) -> [Event] {
+        let position = sample.coordinate
+        let projection = geometry.project(position)
+
+        // Off-route samples advance nothing and collect nothing.
+        guard projection.crossTrackM <= CollectionRules.maxCrossTrackM else { return [] }
+        if projection.alongRouteM > maxProgressM { maxProgressM = projection.alongRouteM }
+
+        var events: [Event] = []
+        for drop in drops where !collectedIDs.contains(drop.id) {
+            let dropAlongM = Double(drop.positionAlongRouteM)
+            // Monotonic-progress rule: route progress must have reached the gem's
+            // position — physically grazing it across a switchback doesn't count.
+            guard maxProgressM + CollectionRules.collectionRadiusM >= dropAlongM else { continue }
+            // Physical proximity.
+            guard geometry.distance(from: position, to: drop.coordinate)
+                    <= CollectionRules.collectionRadiusM else { continue }
+            // Hysteresis after the previous collection: leave its exit radius or
+            // advance far enough along the route before the next trigger.
+            if let last = lastCollection {
+                let exited = geometry.distance(from: position, to: last.coordinate)
+                    > CollectionRules.hysteresisExitRadiusM
+                let advanced = dropAlongM - last.alongM >= CollectionRules.hysteresisAdvanceM
+                guard exited || advanced else { continue }
+            }
+            collectedIDs.insert(drop.id)
+            lastCollection = (drop.coordinate, dropAlongM)
+            events.append(Event(drop: drop, atAlongRouteM: projection.alongRouteM))
+        }
+        return events
     }
 }

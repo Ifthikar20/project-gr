@@ -85,7 +85,7 @@ public struct GemSet: Codable, Identifiable, Sendable {
 
 /// A gem placed at a point on a route. Rare+ drops may carry a fuzzed zone
 /// instead of exact coordinates until collected (docs/06).
-public struct GemDrop: Codable, Identifiable, Sendable {
+public struct GemDrop: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public var gemID: UUID
     public var rarity: Rarity

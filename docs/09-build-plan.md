@@ -2,6 +2,19 @@
 
 Step-by-step implementation phases for turning docs 01–08 into a shipping app. Each phase ends in a **checkpoint** you can verify.
 
+## Status
+
+| Phase | State |
+|---|---|
+| A — Skeleton | ✅ done |
+| B — Game logic + tests | ✅ done (`CollectionEngine`, `RouteGeometry`, `RunValidator`, fixture tests) |
+| C — Map screens | ✅ done via **MapKit** behind the `CoreMap` seam (Mapbox + custom Studio style remains the planned swap — same views, add SDK + token) |
+| D — Run loop | ✅ done (`LiveRunRecorder`, `ActiveRunEngine`, Active Run + Summary screens) |
+| E — All screens | ✅ done (creation flow with budget enforcement, Stash, Compete, Profile, Onboarding) |
+| F — Backend wiring | 🟡 partial: SwiftData persistence + local leaderboards done; `CoreNetworking` client for the docs/06 contract written but **disabled** (`AppConfig.apiBaseURL = nil`) until the FastAPI backend exists; Sign in with Apple + App Attest + sync queue deferred with it |
+
+The app is fully usable **local-first**: seeded routes appear around your location, you can create/publish routes, run them, collect gems, and see stash/streaks/leaderboards — all on-device. Known simplifications: Epic placement approximates the hard-segment rule as "routes ≥ 8 km" (no elevation data offline); undo in the route editor truncates rather than re-snaps; the crash-safe mid-run file buffer is still a TODO in `CorePersistence`.
+
 > **Environment note:** app code is authored in a Linux workspace (no Xcode/Swift toolchain). The `.xcodeproj` is therefore **generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen)** from `project.yml` and never committed — build/run checkpoints happen on a Mac. Pure-logic packages (`GameKitCore`) are testable with `swift test` on any Mac or in CI without a simulator.
 >
 > **Structure note (small deviation from doc 07):** instead of ~14 separate SPM packages, modules are targets inside two umbrella packages — `Packages/GemRunCore` and `Packages/GemRunFeatures`. Identical modularity and dependency enforcement (per-target dependencies), a fraction of the manifest boilerplate.

@@ -23,10 +23,10 @@ Pick a route on the map, drop gems along it, and share it. Anyone who runs that 
 |---|---|
 | Platform | Native iOS (iPhone), SwiftUI, iOS 17+ |
 | Architecture | MVVM with `@Observable`, local SPM packages |
-| Maps | Mapbox Maps SDK v11, custom "Night Expedition" style |
-| Persistence | SwiftData + crash-safe run buffer |
-| Backend | Python (FastAPI assumed) — contract-only in these docs |
-| Status | **Phase A — project skeleton scaffolded** (see [doc 09](docs/09-build-plan.md)) |
+| Maps | MapKit today behind the `CoreMap` seam; Mapbox v11 + custom style is the planned swap (docs 07/09) |
+| Persistence | SwiftData, local-first |
+| Backend | Python (FastAPI assumed) — client ready in `CoreNetworking`, disabled until a base URL is set |
+| Status | **Local-first MVP implemented (Phases A–E, F partial)** — see [doc 09](docs/09-build-plan.md) |
 
 ## Building the app
 

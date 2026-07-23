@@ -24,7 +24,7 @@ targets:
       Release: Configs/Release.xcconfig
     settings:
       base:
-        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_STRICT_CONCURRENCY: targeted
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
         TARGETED_DEVICE_FAMILY: 1
@@ -41,7 +41,7 @@ targets:
         UIBackgroundModes: [location]
     dependencies:
       - package: GemRunCore
-        products: [CoreModels, DesignSystem, CoreMap]
+        products: [CoreModels, DesignSystem, CoreMap, CorePersistence, CoreLocationKit]
       - package: GemRunFeatures
         products:
           - FeatureOnboarding

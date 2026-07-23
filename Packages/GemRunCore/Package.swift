@@ -20,10 +20,10 @@ let package = Package(
         .target(name: "CoreModels"),
         .target(name: "DesignSystem", dependencies: ["CoreModels"]),
         .target(name: "CoreNetworking", dependencies: ["CoreModels"]),
-        .target(name: "CorePersistence", dependencies: ["CoreModels"]),
-        .target(name: "CoreLocationKit", dependencies: ["CoreModels"]),
+        .target(name: "CorePersistence", dependencies: ["CoreModels", "GameKitCore"]),
+        .target(name: "CoreLocationKit", dependencies: ["CoreModels", "GameKitCore"]),
         .target(name: "CoreMap", dependencies: ["CoreModels"]),
-        // Pure game logic — no UI/IO. The most heavily tested module (Phase B).
+        // Pure game logic — no UI/IO. The most heavily tested module.
         .target(name: "GameKitCore", dependencies: ["CoreModels"]),
         .testTarget(name: "GameKitCoreTests", dependencies: ["GameKitCore"]),
     ]
