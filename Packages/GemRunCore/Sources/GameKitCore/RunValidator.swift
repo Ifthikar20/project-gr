@@ -33,13 +33,15 @@ public enum RunValidator {
         public let isWalk: Bool
         public let onRouteRatio: Double
         public let coverageRatio: Double
+        /// Seconds per completed kilometer, in order (summary splits table).
+        public let splitsS: [Int]
     }
 
     public static func validate(track: [TrackSample], geometry: RouteGeometry) -> Result {
         guard track.count >= 2, geometry.totalLengthM > 0 else {
             return Result(status: .invalid, flags: ["empty_track"], durationS: 0,
                           distanceM: 0, paceSPerKm: 0, isWalk: false,
-                          onRouteRatio: 0, coverageRatio: 0)
+                          onRouteRatio: 0, coverageRatio: 0, splitsS: [])
         }
 
         var onRoute = 0
@@ -47,6 +49,9 @@ public enum RunValidator {
         var distanceM = 0.0
         var teleportRunS: TimeInterval = 0
         var flags: [String] = []
+        var splitsS: [Int] = []
+        var nextSplitM = 1_000.0
+        var lastSplitT = track[0].t
 
         for (i, sample) in track.enumerated() {
             let projection = geometry.project(sample.coordinate)
@@ -59,6 +64,11 @@ public enum RunValidator {
                 let dt = max(0.001, sample.t - prev.t)
                 let d = geometry.distance(from: prev.coordinate, to: sample.coordinate)
                 distanceM += d
+                while distanceM >= nextSplitM {
+                    splitsS.append(Int(sample.t - lastSplitT))
+                    lastSplitT = sample.t
+                    nextSplitM += 1_000
+                }
                 if d / dt > CollectionRules.teleportSpeed {
                     teleportRunS += dt
                     if teleportRunS >= CollectionRules.teleportSustainS,
@@ -90,7 +100,8 @@ public enum RunValidator {
 
         return Result(status: status, flags: flags, durationS: durationS,
                       distanceM: Int(distanceM), paceSPerKm: paceSPerKm, isWalk: isWalk,
-                      onRouteRatio: onRouteRatio, coverageRatio: coverageRatio)
+                      onRouteRatio: onRouteRatio, coverageRatio: coverageRatio,
+                      splitsS: splitsS)
     }
 
     /// Total XP for a set of collected drops under the docs/02 rules.

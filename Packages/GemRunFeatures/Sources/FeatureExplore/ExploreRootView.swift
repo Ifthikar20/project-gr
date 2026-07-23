@@ -59,6 +59,14 @@ public struct ExploreRootView: View {
             .task {
                 await loadNearbyRoutes()
             }
+            // gemrun://route/{id} deep links land here via SessionStore.
+            .onChange(of: session.pendingDeepLinkRouteID) { _, id in
+                guard let id else { return }
+                if let stored = storedRoutes.first(where: { $0.id == id }) {
+                    detailRoute = stored.toRoute()
+                }
+                session.pendingDeepLinkRouteID = nil
+            }
         }
     }
 

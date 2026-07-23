@@ -5,6 +5,8 @@ import Foundation
 public enum GPSRules {
     public static let maxHorizontalAccuracyM: Double = 30
     public static let distanceFilterM: Double = 5
+    public static let relaxedDistanceFilterM: Double = 10    // >500 m from next gem
+    public static let relaxFilterBeyondM: Double = 500
     public static let autoPauseBelowSpeed: Double = 0.5      // m/s, sustained 10 s
     public static let autoPauseAfterS: TimeInterval = 10
     public static let autoResumeAboveSpeed: Double = 1.0     // m/s, sustained 3 s
@@ -58,6 +60,15 @@ public final class LiveRunRecorder: NSObject, CLLocationManagerDelegate {
         manager.stopUpdatingLocation()
         manager.allowsBackgroundLocationUpdates = false
         continuation?.finish()
+    }
+
+    /// Battery tactic (docs/04): coarser filter when far from the next gem.
+    /// Accuracy setting stays constant — toggling it thrashes the GPS radio.
+    public func setRelaxedFilter(_ relaxed: Bool) {
+        let target = relaxed ? GPSRules.relaxedDistanceFilterM : GPSRules.distanceFilterM
+        if manager.distanceFilter != target {
+            manager.distanceFilter = target
+        }
     }
 
     // MARK: - CLLocationManagerDelegate

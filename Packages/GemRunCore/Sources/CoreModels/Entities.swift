@@ -36,11 +36,14 @@ public struct Route: Codable, Identifiable, Sendable {
     public var creatorHandle: String?
     public var runCount: Int
     public var gemDrops: [GemDrop]
+    /// Sampled elevations (m) evenly spaced start→finish; nil when unknown.
+    public var elevationProfile: [Int]?
 
     public init(id: UUID, name: String, description: String? = nil, polyline: String,
                 distanceM: Int, elevationGainM: Int, difficulty: RouteDifficulty,
                 status: RouteStatus = .published, creatorHandle: String? = nil,
-                runCount: Int = 0, gemDrops: [GemDrop] = []) {
+                runCount: Int = 0, gemDrops: [GemDrop] = [],
+                elevationProfile: [Int]? = nil) {
         self.id = id
         self.name = name
         self.description = description
@@ -52,6 +55,7 @@ public struct Route: Codable, Identifiable, Sendable {
         self.creatorHandle = creatorHandle
         self.runCount = runCount
         self.gemDrops = gemDrops
+        self.elevationProfile = elevationProfile
     }
 }
 

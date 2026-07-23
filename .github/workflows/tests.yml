@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  gamekit-tests:
+    name: GameKitCore tests (iOS Simulator)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      # xcodebuild against the simulator: package targets import UIKit/SwiftUI,
+      # so a plain macOS-host `swift test` would not compile them.
+      - name: Run tests
+        working-directory: Packages/GemRunCore
+        run: |
+          xcodebuild test \
+            -scheme GemRunCore-Package \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            | xcbeautify --renderer github-actions || \
+          xcodebuild test \
+            -scheme GemRunCore-Package \
+            -destination 'platform=iOS Simulator,name=iPhone 15'

@@ -9,6 +9,7 @@ struct RunSummaryView: View {
     let summary: RunCompletionSummary
     let onDone: () -> Void
     @State private var revealed = 0
+    @State private var shareImage: Image?
 
     private var orderedGems: [RunCompletionSummary.CollectedGem] {
         let order: [Rarity] = [.common, .uncommon, .rare, .epic, .legendary]
@@ -52,6 +53,22 @@ struct RunSummaryView: View {
 
                 xpCard
                 statsCard
+                splitsCard
+
+                if let shareImage {
+                    ShareLink(item: shareImage,
+                              preview: SharePreview("My GemRun on \(summary.routeName)",
+                                                    image: shareImage)) {
+                        Label("Share run card", systemImage: "square.and.arrow.up")
+                            .font(DS.Typography.heading)
+                            .foregroundStyle(DS.Colors.gold)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(DS.Colors.inkRaised,
+                                        in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .padding(.horizontal, 20)
+                }
 
                 Button {
                     onDone()
@@ -68,7 +85,20 @@ struct RunSummaryView: View {
             }
         }
         .background(DS.Colors.ink.ignoresSafeArea())
-        .onAppear { revealNext() }
+        .onAppear {
+            revealNext()
+            renderShareCard()
+        }
+    }
+
+    /// Renders the share card offscreen (docs/03 §8).
+    @MainActor
+    private func renderShareCard() {
+        let renderer = ImageRenderer(content: ShareCardView(summary: summary))
+        renderer.scale = 3
+        if let uiImage = renderer.uiImage {
+            shareImage = Image(uiImage: uiImage)
+        }
     }
 
     private var gemReveal: some View {
@@ -115,6 +145,12 @@ struct RunSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(DS.Colors.textSecondary)
             }
+            if summary.setBonusXP > 0, let setName = summary.completedSetName {
+                Label("\(setName) set complete! +\(summary.setBonusXP) XP",
+                      systemImage: "rosette")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(DS.Colors.gold)
+            }
             if summary.streakExtended {
                 Label("\(summary.streakCount)-day streak", systemImage: "flame.fill")
                     .font(.subheadline.bold())
@@ -140,6 +176,43 @@ struct RunSummaryView: View {
         .padding(16)
         .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 20)
+    }
+
+    private var splitsCard: some View {
+        Group {
+            if !summary.splitsS.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Splits")
+                        .font(DS.Typography.heading)
+                        .foregroundStyle(DS.Colors.textPrimary)
+                    let fastest = summary.splitsS.min() ?? 0
+                    ForEach(Array(summary.splitsS.enumerated()), id: \.offset) { i, split in
+                        HStack {
+                            Text("km \(i + 1)")
+                                .foregroundStyle(DS.Colors.textSecondary)
+                                .frame(width: 52, alignment: .leading)
+                            Text(formatDuration(split))
+                                .monospacedDigit()
+                                .foregroundStyle(split == fastest
+                                    ? DS.Colors.gold : DS.Colors.textPrimary)
+                            Spacer()
+                            GeometryReader { geo in
+                                Capsule()
+                                    .fill(split == fastest
+                                        ? DS.Colors.gold : DS.Colors.gold.opacity(0.35))
+                                    .frame(width: geo.size.width
+                                        * CGFloat(fastest) / CGFloat(max(split, 1)))
+                            }
+                            .frame(height: 6)
+                        }
+                        .font(.subheadline)
+                    }
+                }
+                .padding(16)
+                .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal, 20)
+            }
+        }
     }
 
     private func stat(_ value: String, _ label: String) -> some View {

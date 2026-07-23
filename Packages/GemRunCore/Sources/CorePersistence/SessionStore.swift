@@ -16,15 +16,20 @@ public struct RunCompletionSummary: Sendable {
     public let gems: [CollectedGem]
     public let revokedCount: Int
     public let xpEarned: Int
+    public let setBonusXP: Int
+    public let completedSetName: String?
     public let streakCount: Int
     public let streakExtended: Bool
     public let multiplier: Double
     public let isWalk: Bool
     public let status: RunValidationStatus
+    public let startedAt: Date
     public let durationS: Int
     public let distanceM: Int
     public let paceSPerKm: Int
+    public let splitsS: [Int]
     public let leaderboardRank: Int?
+    public let routeName: String
 }
 
 /// App-wide session (docs/07): profile + optimistic XP/streak state, the two
@@ -42,6 +47,8 @@ public final class SessionStore {
     public var activeRoute: Route?
     /// Setting this presents the Route Creation flow at App root.
     public var isCreatingRoute = false
+    /// Set by the gemrun://route/{id} deep-link handler; Explore consumes it.
+    public var pendingDeepLinkRouteID: UUID?
 
     private var context: ModelContext?
 
@@ -66,6 +73,27 @@ public final class SessionStore {
 
     public var streakMultiplier: Double {
         StreakRules.multiplier(streakDays: profile?.streakCount ?? 0)
+    }
+
+    /// Client-side respawn hint (docs/02): the route with drops the user can't
+    /// collect right now removed — daily ones collected today, Rare+ ever.
+    /// The server verdict remains authoritative; this just avoids celebrating
+    /// gems that would be revoked.
+    public func collectableRoute(from route: Route) -> Route {
+        guard let context else { return route }
+        let stash = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        let today = Calendar.current.startOfDay(for: Date())
+        var filtered = route
+        filtered.gemDrops = route.gemDrops.filter { drop in
+            let matches = stash.filter { $0.gemDropID == drop.id }
+            switch drop.respawnRule {
+            case .daily:
+                return !matches.contains { $0.collectedAt >= today }
+            case .oncePerUser, .oneTime:
+                return matches.isEmpty
+            }
+        }
+        return filtered
     }
 
     /// Submit the finished run to the API and persist from its verdict — the
@@ -102,32 +130,57 @@ public final class SessionStore {
             return .init(id: drop.id, name: entry?.gem.name ?? "Gem", rarity: drop.rarity)
         }
 
-        persist(result: result, status: status, awardedDrops: awardedDrops, xp: xp)
+        let completedSet = persist(result: result, status: status,
+                                   awardedDrops: awardedDrops, xp: xp)
+        let setBonus = completedSet != nil ? XPRules.setCompletionBonus : 0
 
         return RunCompletionSummary(
-            gems: gems, revokedCount: revokedCount, xpEarned: xp,
+            gems: gems, revokedCount: revokedCount, xpEarned: xp + setBonus,
+            setBonusXP: setBonus, completedSetName: completedSet,
             streakCount: profile?.streakCount ?? 0, streakExtended: streakExtended,
             multiplier: streakMultiplier, isWalk: v.isWalk, status: status,
-            durationS: v.durationS, distanceM: v.distanceM, paceSPerKm: v.paceSPerKm,
-            leaderboardRank: verdict?.leaderboardRank ?? nil)
+            startedAt: result.startedAt, durationS: v.durationS, distanceM: v.distanceM,
+            paceSPerKm: v.paceSPerKm, splitsS: v.splitsS,
+            leaderboardRank: verdict?.leaderboardRank ?? nil,
+            routeName: result.route.name)
     }
 
+    /// Returns the name of a set completed by this run, if any (bonus already
+    /// applied to the profile).
     private func persist(result: RunResult, status: RunValidationStatus,
-                         awardedDrops: [GemDrop], xp: Int) {
-        guard let context else { return }
+                         awardedDrops: [GemDrop], xp: Int) -> String? {
+        guard let context else { return nil }
         let v = result.validation
+        var completedSet: String?
         if status != .invalid {
             for drop in awardedDrops {
                 let entry = GemCatalog.entry(forGemID: drop.gemID)
                 context.insert(StoredStashItem(
-                    id: UUID(), gemID: drop.gemID,
+                    id: UUID(), gemID: drop.gemID, gemDropID: drop.id,
                     gemName: entry?.gem.name ?? "Gem",
                     rarityRaw: drop.rarity.rawValue,
                     setName: entry?.setName ?? "Wanderer",
                     routeID: result.route.id, routeName: result.route.name,
-                    collectedAt: Date(), isFirstFind: false))
+                    collectedAt: Date(),
+                    isFirstFind: drop.rarity == .legendary))
             }
-            profile?.xp += xp
+            var totalXP = xp
+            // Set-completion bonus (docs/02): all gems of a set now collected,
+            // bonus not yet awarded → +500 XP + badge (Stash shows completion).
+            if let profile {
+                let stash = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+                let owned = Set(stash.map(\.gemID))
+                for (setName, entries) in Dictionary(grouping: GemCatalog.entries,
+                                                     by: \.setName) {
+                    guard !profile.completedSets.contains(setName),
+                          entries.allSatisfy({ owned.contains($0.gem.id) }) else { continue }
+                    profile.completedSets.insert(setName)
+                    completedSet = setName
+                    totalXP += XPRules.setCompletionBonus
+                    break
+                }
+            }
+            profile?.xp += totalXP
             while let p = profile, p.xp >= XPRules.xpToAdvance(from: p.level) {
                 p.xp -= XPRules.xpToAdvance(from: p.level)
                 p.level += 1
@@ -145,6 +198,7 @@ public final class SessionStore {
             stored.runCount += 1
         }
         try? context.save()
+        return completedSet
     }
 
     /// Calendar-day streak with shields (docs/02). Returns true if extended today.

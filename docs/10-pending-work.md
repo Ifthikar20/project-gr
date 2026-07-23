@@ -1,45 +1,59 @@
 # 10 — Pending Work
 
-Everything not yet done, in recommended order. Snapshot at the end of the
-local-first MVP implementation (phases A–E complete, F partial).
+Status after the completion pass (dummy API + all implementable gaps closed).
+Remaining items need things only the team can provide: a Mac with Xcode, a
+Mapbox token, an Apple developer account, or the Django backend.
 
-## 1. Verify first (Xcode)
-- [ ] First compile: `xcodegen` → build the GemRun scheme (code authored without a compiler; expect small fixes)
-- [ ] `cd Packages/GemRunCore && swift test`
-- [ ] Simulator walkthrough with simulated location (custom GPX along a seeded route)
-- [ ] Physical-device run: create a short route, walk it, collect a gem
+## ✅ Done since the MVP snapshot
 
-## 2. Known gaps in current code
-- [x] **Respawn enforcement** — now enforced by the dummy API's `completeRun` verdict (replay + dedupe, doc 11); client-side in-run hint (grey out already-collected daily gems) still nice-to-have
-- [ ] Crash-safe append-only mid-run sample buffer + "Resume run" recovery (docs/04)
-- [ ] Elevation: created routes have 0 m gain; Epic hard-segment rule approximated as "route ≥ 8 km"; no elevation profile strip
-- [ ] Editor polish: undo re-snap, draggable waypoints/gems, loop-close helper
-- [ ] Set-completion bonus (500 XP + badge); Legendary seeding + first-find logic
-- [ ] Run Summary: splits table, share-card image export
-- [ ] Next-gem bearing arrow (distance-only today)
-- [ ] Adaptive GPS distance filter + battery instrumentation (< 8%/hr gate unmeasured)
-- [ ] HealthKit workout write (Phase 1.5)
-- [ ] Deep-link handler for `gemrun://route/{id}`
-- [ ] CoreHaptics patterns (basic UIKit generators today)
+- Dummy API layer: full 14-endpoint contract consumed by the UI (doc 11)
+- Respawn enforcement — server-side in the mock verdict **and** client-side
+  (already-collected drops are stripped before a run starts)
+- Crash-safe append-only run buffer + "Resume run?" recovery on relaunch
+- Elevation profile strip on Route Detail (synthetic profiles from the mock;
+  real terrain data arrives with the backend)
+- Editor: undo now re-snaps the whole path; "Close loop" helper chip
+- Set-completion bonus (+500 XP, badge state on profile)
+- Legendary seeded on the hard route (one-time respawn, first-find crown)
+- Run Summary: per-km splits table + shareable run-card image (ImageRenderer + ShareLink)
+- Next-gem chip bearing arrow (course-relative)
+- Adaptive GPS distance filter (relaxes >500 m from the next gem)
+- Battery instrumentation: %/hour logged to console per run (docs/04 gate)
+- HealthKit workout write on completion (entitlement + purpose strings wired;
+  fails silently if declined — remove the `entitlements` block in project.yml
+  if signing complains)
+- CoreHaptics rarity patterns with UIKit fallback
+- Deep-link handler for `gemrun://route/{id}` + URL scheme registration
+- App icon (generated faceted-gem artwork)
+- GitHub Actions CI: GameKitCore tests on iOS Simulator
 
-## 3. Mapbox swap (docs/07 decision)
-- [ ] Mapbox account + token in `Configs/Secrets.xcconfig`
-- [ ] Add Mapbox v11 SPM dependency; reimplement the four views in `CoreMap` (only module that touches a map SDK)
-- [ ] Author "Night Expedition" style in Mapbox Studio; switch snapping to Mapbox Directions
+## ⏳ Needs your Mac / accounts
 
-## 4. Backend & multi-user (Phase F proper)
-- [x] Full API surface consumed by the UI via the in-app dummy API (`GemRunAPI` protocol + `MockGemRunAPI` + `HTTPGemRunAPI`; doc 11)
-- [x] Optimistic-collection → verdict reconcile/revoke flow (against the mock)
-- [ ] **Django** backend implementing the 14 `/v1` endpoints in doc 11 (auth, routes CRUD + geo-query, catalog, stash, leaderboards, run validation porting the GameKitCore rules — fixture tests = server test vectors)
-- [ ] App: set `AppConfig.apiBaseURL`; Sign in with Apple; App Attest; offline sync queue with retry
-- [ ] Real leaderboards, per-user gem fuzzing, moderation (report triage, blocklist zones, name checks), server-side account deletion, push notifications
+- [ ] First Xcode build (`xcodegen` → build; code authored without a compiler — expect small fixes)
+- [ ] GameKitCore tests green (Xcode, or the CI workflow on push)
+- [ ] Simulator walkthrough with simulated location; physical-device run
+- [ ] Mapbox swap: token in `Configs/Secrets.xcconfig`, SDK via SPM, reimplement
+  the four `CoreMap` views, author the "Night Expedition" Studio style
+- [ ] Signing/team setup; TestFlight; battery gate measured on device
 
-## 5. App Store readiness
-- [ ] App icon artwork + launch screen
-- [ ] Signing, privacy nutrition labels, background-location review notes + demo video
-- [ ] Real curated seed routes for the launch city (current seeds are synthetic circles); OSM ODbL attribution once OSM data is used
-- [ ] TestFlight; battery measurement protocol; optional macOS CI for `swift test`
+## ⏳ Needs the Django backend
 
-## 6. Later by design (Phases 2–3, docs/08)
+- [ ] Implement the 14 `/v1` endpoints (doc 11 table + implementation notes);
+  port the validation pipeline from GameKitCore (fixture tests = test vectors)
+- [ ] Set `AppConfig.apiBaseURL` in `GemRunAPI.swift` to go live
+- [ ] Sign in with Apple (replace the mock handle auth), App Attest, offline
+  sync queue with retry, server-owned streak state
+- [ ] Real seeded launch-city routes (OSM-derived, curated) + ODbL attribution
+- [ ] Moderation: report triage, blocklist zones, name checks; server-side
+  account deletion; push notifications
+
+## Deliberately later (Phases 2–3, docs/08)
+
 Social/following, challenges/events, Live Activities, Apple Watch, audio cues,
 Legendary notifications, monetization (cosmetic only), Android.
+
+## Known approximations (documented, not blocking)
+
+- Epic "hard segment" rule ≈ "route ≥ 8 km" until real elevation data exists
+- Waypoints/gems are tap-placed (drag-to-reposition is a polish item)
+- Mock streak trust: `clientStreakDays` is client-supplied until Django owns it

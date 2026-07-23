@@ -38,7 +38,12 @@ xcodegen                     # generates GemRun.xcodeproj from project.yml
 open GemRun.xcodeproj        # build & run the GemRun scheme (iOS 17+ simulator)
 ```
 
-Logic tests (no simulator needed): `cd Packages/GemRunCore && swift test`
+Logic tests (from Xcode: open the package and run the GameKitCoreTests scheme, or):
+
+```sh
+cd Packages/GemRunCore
+xcodebuild test -scheme GemRunCore-Package -destination 'platform=iOS Simulator,name=iPhone 15'
+```
 
 Mapbox token (needed from Phase C): copy `Configs/Secrets.example.xcconfig` → `Configs/Secrets.xcconfig` and fill in your token — the file is gitignored.
 

@@ -48,8 +48,48 @@ public final class ActiveRunEngine {
             .min { $0.1 < $1.1 }
     }
 
+    /// Direction of travel (degrees, 0 = north, clockwise) from recent motion.
+    public private(set) var courseDeg: Double?
+
+    /// Bearing to the next gem relative to travel direction, -180…180
+    /// (0 = straight ahead). Drives the next-gem chip's arrow (docs/03 §7).
+    public var nextGemRelativeBearingDeg: Double? {
+        guard let next = nextGem, let last = lastSample, let courseDeg else { return nil }
+        let k = 111_320.0
+        let dy = (next.drop.lat - last.lat) * k
+        let dx = (next.drop.lng - last.lng) * k * cos(last.lat * .pi / 180)
+        let absolute = atan2(dx, dy) * 180 / .pi
+        var relative = absolute - courseDeg
+        while relative > 180 { relative -= 360 }
+        while relative < -180 { relative += 360 }
+        return relative
+    }
+
     public func start(route: Route) {
         guard phase == .idle || phase == .finished else { return }
+        prepare(route: route, startedAt: Date())
+        RunBuffer.begin(routeID: route.id, startedAt: startedAt)
+        beginRecording()
+    }
+
+    /// Resume a run recovered from the crash-safe buffer (docs/04): replay the
+    /// saved samples through the same pipeline, then continue recording live.
+    public func restore(route: Route, from pending: RunBuffer.Pending) {
+        guard phase == .idle || phase == .finished else { return }
+        prepare(route: route, startedAt: pending.startedAt)
+        RunBuffer.begin(routeID: route.id, startedAt: pending.startedAt)
+        for sample in pending.samples {
+            ingest(sample)
+        }
+        // The gap while the app was dead counts as paused, not elapsed.
+        let lastT = pending.samples.last?.t ?? 0
+        pausedAccumulator = max(0, Date().timeIntervalSince(startedAt) - lastT)
+        lowSpeedSince = nil
+        phase = .running
+        beginRecording()
+    }
+
+    private func prepare(route: Route, startedAt: Date) {
         let geometry = RouteGeometry(polyline: route.polyline)
         self.route = route
         self.geometry = geometry
@@ -58,14 +98,15 @@ public final class ActiveRunEngine {
         self.collectedEvents = []
         self.distanceM = 0
         self.pausedAccumulator = 0
-        self.startedAt = Date()
+        self.startedAt = startedAt
         self.phase = .running
+    }
 
+    private func beginRecording() {
         let recorder = LiveRunRecorder()
         self.recorder = recorder
         LiveRunRecorder.requestPermissionIfNeeded()
         recorder.start()
-
         consumeTask = Task { [weak self] in
             for await sample in recorder.samples {
                 self?.ingest(sample)
@@ -86,6 +127,7 @@ public final class ActiveRunEngine {
         recorder?.stop()
         consumeTask?.cancel()
         phase = .finished
+        RunBuffer.clear()
         let validation = RunValidator.validate(track: track, geometry: geometry)
         return RunResult(route: route, startedAt: startedAt, track: track,
                          collectedDrops: collectedEvents.map(\.drop),
@@ -121,10 +163,19 @@ public final class ActiveRunEngine {
 
         guard phase == .running else { return }
         if let last = lastSample, let geometry {
-            distanceM += geometry.distance(from: last.coordinate, to: sample.coordinate)
+            let step = geometry.distance(from: last.coordinate, to: sample.coordinate)
+            distanceM += step
+            // Course from recent motion, for the next-gem bearing arrow.
+            if step > 2 {
+                let k = 111_320.0
+                let dy = (sample.lat - last.lat) * k
+                let dx = (sample.lng - last.lng) * k * cos(last.lat * .pi / 180)
+                courseDeg = atan2(dx, dy) * 180 / .pi
+            }
         }
         lastSample = sample
         track.append(sample)
+        RunBuffer.append(sample)
 
         if var engine = collectionEngine {
             let events = engine.ingest(sample)
@@ -133,6 +184,11 @@ public final class ActiveRunEngine {
                 collectedEvents.append(event)
                 onCollect?(event)
             }
+        }
+
+        // Adaptive GPS (docs/04): relax the filter when no gem is near.
+        if let next = nextGem {
+            recorder?.setRelaxedFilter(next.distanceM > GPSRules.relaxFilterBeyondM)
         }
     }
 

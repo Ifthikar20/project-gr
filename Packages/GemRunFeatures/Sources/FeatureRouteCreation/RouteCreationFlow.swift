@@ -83,19 +83,41 @@ final class CreationModel {
     func undoWaypoint() {
         guard !waypoints.isEmpty else { return }
         waypoints.removeLast()
-        // Re-snap from scratch is overkill for MVP: truncate the path to the
-        // last remaining waypoint's nearest vertex.
-        if let last = waypoints.last {
-            let g = RouteGeometry(coordinates: pathCoords)
-            let along = g.project(last).alongRouteM
-            var kept: [Coordinate] = []
-            for (i, c) in pathCoords.enumerated() where g.cumulative[i] <= along + 1 {
-                kept.append(c)
-            }
-            pathCoords = kept.isEmpty ? [last] : kept
-        } else {
+        Task { await rebuildPath() }
+    }
+
+    /// Loop-close helper (docs/03 §4): offered when the last waypoint is near
+    /// the start; snaps a final segment back to the first waypoint.
+    var canCloseLoop: Bool {
+        guard waypoints.count >= 3, let first = waypoints.first,
+              let last = waypoints.last else { return false }
+        let k = 111_320.0
+        let dy = (first.lat - last.lat) * k
+        let dx = (first.lng - last.lng) * k * cos(first.lat * .pi / 180)
+        let gap = (dx * dx + dy * dy).squareRoot()
+        return gap > 5 && gap < 120
+    }
+
+    func closeLoop() {
+        guard canCloseLoop, let first = waypoints.first else { return }
+        addWaypoint(first)
+    }
+
+    /// Full re-snap of the path through all remaining waypoints.
+    private func rebuildPath() async {
+        guard !snapping else { return }
+        snapping = true
+        defer { snapping = false }
+        guard let first = waypoints.first else {
             pathCoords = []
+            return
         }
+        var rebuilt = [first]
+        for (a, b) in zip(waypoints, waypoints.dropFirst()) {
+            let segment = await PathSnapper.snap(from: a, to: b)
+            rebuilt.append(contentsOf: segment.dropFirst())
+        }
+        pathCoords = rebuilt
     }
 
     /// Budget + spacing + rarity-position rules (docs/02), with kind rejections.

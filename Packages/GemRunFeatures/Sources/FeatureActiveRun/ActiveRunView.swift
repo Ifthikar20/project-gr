@@ -16,6 +16,7 @@ public struct ActiveRunView: View {
     @Environment(ActiveRunEngine.self) private var engine
     @State private var burst: CollectionEngine.Event?
     @State private var summary: RunCompletionSummary?
+    @State private var batteryAtStart: Float = -1
 
     public init(route: Route) {
         self.route = route
@@ -33,16 +34,22 @@ public struct ActiveRunView: View {
             }
         }
         .onAppear {
-            guard engine.phase == .idle || engine.phase == .finished else { return }
             engine.onCollect = { event in
                 burst = event
-                haptic(for: event.drop.rarity)
+                HapticPlayer.shared.collection(for: event.drop.rarity)
                 Task {
                     try? await Task.sleep(for: .seconds(1.5))
                     if burst == event { burst = nil }
                 }
             }
-            engine.start(route: route)
+            // Battery budget instrumentation (docs/04): delta logged at stop.
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            batteryAtStart = UIDevice.current.batteryLevel
+            // A restored run is already .running — don't restart it.
+            guard engine.phase == .idle || engine.phase == .finished else { return }
+            // Client respawn hint (docs/02): strip drops that can't award today
+            // so the runner never celebrates a gem the server would revoke.
+            engine.start(route: session.collectableRoute(from: route))
         }
         .preferredColorScheme(.dark)
     }
@@ -78,6 +85,13 @@ public struct ActiveRunView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "diamond.fill")
                         .foregroundStyle(DS.Colors.rarity(next.drop.rarity))
+                    if let bearing = engine.nextGemRelativeBearingDeg {
+                        Image(systemName: "arrow.up")
+                            .font(.footnote.bold())
+                            .foregroundStyle(DS.Colors.gold)
+                            .rotationEffect(.degrees(bearing))
+                            .animation(.easeInOut(duration: 0.4), value: bearing)
+                    }
                     Text("\(next.drop.rarity.rawValue.capitalized) · \(Int(next.distanceM)) m")
                         .font(.footnote.bold())
                         .foregroundStyle(DS.Colors.textPrimary)
@@ -134,22 +148,23 @@ public struct ActiveRunView: View {
 
     private func finish() {
         guard let result = engine.stop() else { return }
+        logBattery(duration: result.validation.durationS)
         // Async: submits to POST /v1/runs/{id}/complete and builds the summary
         // from the authoritative verdict (mock API today, Django later).
-        Task { summary = await session.recordCompletion(result) }
+        Task {
+            let completion = await session.recordCompletion(result)
+            summary = completion
+            await HealthKitWriter.save(completion)
+        }
     }
 
-    private func haptic(for rarity: Rarity) {
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.success)
-        // Rarity-scaled follow-ups (docs/03): extra impacts for higher tiers.
-        let extraPulses = GemHaptics.collectionPattern(for: rarity).dropFirst()
-        for (i, pulse) in extraPulses.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + pulse.delay + Double(i) * 0.05) {
-                UIImpactFeedbackGenerator(style: .heavy)
-                    .impactOccurred(intensity: pulse.intensity)
-            }
-        }
+    private func logBattery(duration durationS: Int) {
+        let now = UIDevice.current.batteryLevel
+        guard batteryAtStart > 0, now > 0, durationS > 60 else { return }
+        let perHour = Double(batteryAtStart - now) * 100 * 3_600 / Double(durationS)
+        // The docs/04 gate is < 8%/hour — tracked per TestFlight build.
+        print(String(format: "🔋 [Battery] %.1f%%/hour over %d min",
+                     perHour, durationS / 60))
     }
 }
 

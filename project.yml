@@ -28,6 +28,10 @@ targets:
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
         TARGETED_DEVICE_FAMILY: 1
+    entitlements:
+      path: App/GemRun.entitlements
+      properties:
+        com.apple.developer.healthkit: true
     info:
       path: App/Info.plist
       properties:
@@ -39,6 +43,13 @@ targets:
           GemRun uses your location during runs to confirm you passed each gem.
           While-using only — we never track you outside a run.
         UIBackgroundModes: [location]
+        NSHealthUpdateUsageDescription: >-
+          GemRun saves your finished runs and walks to Health as workouts.
+        NSHealthShareUsageDescription: >-
+          GemRun does not read your Health data.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.gemrun.app
+            CFBundleURLSchemes: [gemrun]
     dependencies:
       - package: GemRunCore
         products: [CoreModels, DesignSystem, CoreMap, CorePersistence, CoreLocationKit]

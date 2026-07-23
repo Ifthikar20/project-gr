@@ -19,6 +19,7 @@ public final class StoredRoute {
     public var creatorHandle: String?
     public var runCount: Int
     public var gemDropsData: Data
+    public var elevationProfileData: Data?
     public var createdAt: Date
 
     public init(route: Route) {
@@ -33,6 +34,7 @@ public final class StoredRoute {
         self.creatorHandle = route.creatorHandle
         self.runCount = route.runCount
         self.gemDropsData = (try? JSONEncoder().encode(route.gemDrops)) ?? Data()
+        self.elevationProfileData = route.elevationProfile.flatMap { try? JSONEncoder().encode($0) }
         self.createdAt = Date()
     }
 
@@ -45,7 +47,10 @@ public final class StoredRoute {
               distanceM: distanceM, elevationGainM: elevationGainM,
               difficulty: RouteDifficulty(rawValue: difficultyRaw) ?? .moderate,
               status: RouteStatus(rawValue: statusRaw) ?? .published,
-              creatorHandle: creatorHandle, runCount: runCount, gemDrops: gemDrops)
+              creatorHandle: creatorHandle, runCount: runCount, gemDrops: gemDrops,
+              elevationProfile: elevationProfileData.flatMap {
+                  try? JSONDecoder().decode([Int].self, from: $0)
+              })
     }
 }
 
@@ -84,6 +89,8 @@ public final class StoredRun {
 public final class StoredStashItem {
     @Attribute(.unique) public var id: UUID
     public var gemID: UUID
+    /// Which placement was collected — drives client-side respawn hints.
+    public var gemDropID: UUID?
     public var gemName: String
     public var rarityRaw: String
     public var setName: String
@@ -92,10 +99,12 @@ public final class StoredStashItem {
     public var collectedAt: Date
     public var isFirstFind: Bool
 
-    public init(id: UUID, gemID: UUID, gemName: String, rarityRaw: String, setName: String,
-                routeID: UUID, routeName: String, collectedAt: Date, isFirstFind: Bool) {
+    public init(id: UUID, gemID: UUID, gemDropID: UUID? = nil, gemName: String,
+                rarityRaw: String, setName: String, routeID: UUID, routeName: String,
+                collectedAt: Date, isFirstFind: Bool) {
         self.id = id
         self.gemID = gemID
+        self.gemDropID = gemDropID
         self.gemName = gemName
         self.rarityRaw = rarityRaw
         self.setName = setName
@@ -117,6 +126,8 @@ public final class StoredProfile {
     public var streakCount: Int
     public var streakShields: Int
     public var streakLastDate: Date?
+    /// Set names whose completion bonus was already awarded (docs/02).
+    public var completedSetsRaw: String = ""
 
     public init(handle: String) {
         self.id = UUID()
@@ -126,6 +137,12 @@ public final class StoredProfile {
         self.streakCount = 0
         self.streakShields = 0
         self.streakLastDate = nil
+        self.completedSetsRaw = ""
+    }
+
+    public var completedSets: Set<String> {
+        get { Set(completedSetsRaw.split(separator: "|").map(String.init)) }
+        set { completedSetsRaw = newValue.sorted().joined(separator: "|") }
     }
 }
 

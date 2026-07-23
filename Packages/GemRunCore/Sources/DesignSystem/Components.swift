@@ -25,6 +25,50 @@ public struct RarityDots: View {
     }
 }
 
+/// Elevation profile sparkline with gem position ticks (docs/03 §3).
+public struct ElevationStrip: View {
+    let profile: [Int]
+    /// (fraction along route 0…1, rarity) for tick marks.
+    let markers: [(Double, Rarity)]
+
+    public init(profile: [Int], markers: [(Double, Rarity)]) {
+        self.profile = profile
+        self.markers = markers
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let maxEl = Double(max(profile.max() ?? 1, 1))
+            let points = profile.enumerated().map { i, el in
+                CGPoint(x: geo.size.width * Double(i) / Double(max(profile.count - 1, 1)),
+                        y: geo.size.height * (1 - 0.85 * Double(el) / maxEl))
+            }
+            ZStack {
+                Path { path in
+                    guard let first = points.first else { return }
+                    path.move(to: CGPoint(x: first.x, y: geo.size.height))
+                    points.forEach { path.addLine(to: $0) }
+                    path.addLine(to: CGPoint(x: points.last!.x, y: geo.size.height))
+                }
+                .fill(DS.Colors.gold.opacity(0.15))
+                Path { path in
+                    guard let first = points.first else { return }
+                    path.move(to: first)
+                    points.dropFirst().forEach { path.addLine(to: $0) }
+                }
+                .stroke(DS.Colors.gold, lineWidth: 2)
+                ForEach(Array(markers.enumerated()), id: \.offset) { _, marker in
+                    Circle()
+                        .fill(DS.Colors.rarity(marker.1))
+                        .frame(width: 7, height: 7)
+                        .position(x: geo.size.width * marker.0, y: geo.size.height - 5)
+                }
+            }
+        }
+        .frame(height: 56)
+    }
+}
+
 /// Placeholder used by stub screens during Phases A–B.
 public struct PlaceholderScreen: View {
     let title: String

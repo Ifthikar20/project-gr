@@ -42,6 +42,23 @@ struct RouteDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 16))
 
                     statsRow
+
+                    if let profile = route.elevationProfile, profile.count > 2 {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Elevation")
+                                .font(DS.Typography.heading)
+                                .foregroundStyle(DS.Colors.textPrimary)
+                            ElevationStrip(
+                                profile: profile,
+                                markers: route.gemDrops.map {
+                                    (Double($0.positionAlongRouteM)
+                                        / Double(max(route.distanceM, 1)), $0.rarity)
+                                })
+                        }
+                        .padding(14)
+                        .background(DS.Colors.inkRaised, in: RoundedRectangle(cornerRadius: 14))
+                    }
+
                     gemManifest
                     leaderboardSnippet
 
