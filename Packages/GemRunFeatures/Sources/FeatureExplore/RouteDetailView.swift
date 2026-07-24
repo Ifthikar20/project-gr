@@ -7,6 +7,7 @@ import SwiftUI
 
 /// Airbnb listing-page anatomy (docs/03 §3): full-width map hero, white sheet
 /// with hairline-separated sections, sticky bottom bar with the pulse CTA.
+@MainActor
 struct RouteDetailView: View {
     let route: Route
     @Environment(\.modelContext) private var context

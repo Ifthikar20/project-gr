@@ -14,6 +14,7 @@ public enum GemCatalog {
 
     public static let trailblazerSet = uuid(1)
     public static let harborSet = uuid(2)
+    public static let cityLightsSet = uuid(3)
 
     public static let entries: [Entry] = [
         Entry(gem: Gem(id: uuid(10), name: "Trail Quartz", rarity: .common,
@@ -32,6 +33,14 @@ public enum GemCatalog {
                        setID: harborSet, iconRef: "gem.emerald"), setName: "Harbor Lights"),
         Entry(gem: Gem(id: uuid(22), name: "Deepwater Sapphire", rarity: .rare,
                        setID: harborSet, iconRef: "gem.sapphire"), setName: "Harbor Lights"),
+        Entry(gem: Gem(id: uuid(30), name: "Streetlight Quartz", rarity: .common,
+                       setID: cityLightsSet, iconRef: "gem.quartz"), setName: "City Lights"),
+        Entry(gem: Gem(id: uuid(31), name: "Neon Ruby", rarity: .uncommon,
+                       setID: cityLightsSet, iconRef: "gem.ruby"), setName: "City Lights"),
+        Entry(gem: Gem(id: uuid(32), name: "Skyline Topaz", rarity: .rare,
+                       setID: cityLightsSet, iconRef: "gem.topaz"), setName: "City Lights"),
+        Entry(gem: Gem(id: uuid(33), name: "Midnight Amethyst", rarity: .epic,
+                       setID: cityLightsSet, iconRef: "gem.amethyst"), setName: "City Lights"),
     ]
 
     public static func entry(forGemID id: UUID) -> Entry? {
@@ -41,5 +50,12 @@ public enum GemCatalog {
     /// Any catalog gem of the given rarity (used when placing drops).
     public static func gem(of rarity: Rarity) -> Gem {
         entries.first { $0.gem.rarity == rarity }!.gem
+    }
+
+    /// A random gem of the given rarity — used by placement so we don't drop
+    /// the same emerald every time when multiple gems share a rarity.
+    public static func randomGem(of rarity: Rarity) -> Gem {
+        let choices = entries.filter { $0.gem.rarity == rarity }.map(\.gem)
+        return choices.randomElement() ?? gem(of: rarity)
     }
 }

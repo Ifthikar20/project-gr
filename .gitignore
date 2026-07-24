@@ -21,8 +21,13 @@ backend/.server.pid
 __pycache__/
 *.pyc
 
-# run.sh build output
+# run.sh + device build output
 build/
+build-device/
+
+# XcodeGen also writes these from project.yml on every run — regenerable.
+App/GemRun.entitlements
+App/Info.plist
 
 # OS
 .DS_Store

@@ -4,6 +4,7 @@ import SwiftData
 import SwiftUI
 
 @main
+@MainActor
 struct GemRunApp: App {
     @State private var session = SessionStore()
     // Owned here (docs/07): a run survives any navigation or view teardown.

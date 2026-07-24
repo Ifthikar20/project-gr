@@ -10,6 +10,7 @@ import UIKit
 /// The in-run screen (docs/03 §7), Daybreak Pulse: light map, snow stats
 /// band, ink numerals, pulse for the live accent. Presented as a full-screen
 /// cover at App root; the engine lives at App level so the run survives.
+@MainActor
 public struct ActiveRunView: View {
     /// nil = free run: no route, collect standalone drops by proximity.
     let route: Route?
@@ -194,6 +195,7 @@ public struct ActiveRunView: View {
     }
 }
 
+@MainActor
 struct CollectionBurst: View {
     let rarity: Rarity
     @State private var scale = 0.3

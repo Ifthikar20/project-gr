@@ -73,9 +73,30 @@ run_app() {
 
     if ! command -v xcodegen >/dev/null; then
         echo "Installing XcodeGen..."
-        brew install xcodegen
+        # Skip Homebrew's auto-update + tap-trust checks so unrelated taps
+        # (e.g. mongodb/brew, stripe/stripe-cli) don't break this install.
+        HOMEBREW_NO_AUTO_UPDATE=1 \
+        HOMEBREW_NO_INSTALL_CLEANUP=1 \
+        HOMEBREW_NO_REQUIRE_TAP_TRUST=1 \
+            brew install xcodegen || {
+            echo
+            echo "brew install xcodegen failed. Install it manually, e.g.:"
+            echo "  brew trust mongodb/brew stripe/stripe-cli   # trust taps once"
+            echo "  brew install xcodegen"
+            echo "or grab the binary from https://github.com/yonaskolb/XcodeGen/releases"
+            exit 1
+        }
     fi
     xcodegen
+
+    # XcodeGen 2.46 emits objectVersion 77 (Xcode 16). Downgrade to 63 so
+    # Xcode 15.3+ can also open the project. Safe because project.yml doesn't
+    # use Xcode-16-only features (file system synchronized groups, etc).
+    XCODE_MAJOR=$(xcodebuild -version | awk '/^Xcode /{split($2,v,"."); print v[1]}')
+    if [ "${XCODE_MAJOR:-0}" -lt 16 ]; then
+        /usr/bin/sed -i '' 's/objectVersion = 77;/objectVersion = 63;/' \
+            GemRun.xcodeproj/project.pbxproj
+    fi
 
     UDID=$(xcrun simctl list devices available | grep -Eo 'iPhone [^(]*\(([0-9A-F-]+)\)' \
         | head -1 | grep -Eo '[0-9A-F-]{36}')

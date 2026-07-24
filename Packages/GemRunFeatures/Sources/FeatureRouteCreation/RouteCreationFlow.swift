@@ -8,6 +8,7 @@ import SwiftData
 import SwiftUI
 
 /// The 3-step creation flow: draw → place gems → publish (docs/03 §4–6).
+@MainActor
 public struct RouteCreationFlow: View {
     @Environment(\.dismiss) private var dismiss
     @State private var model = CreationModel()

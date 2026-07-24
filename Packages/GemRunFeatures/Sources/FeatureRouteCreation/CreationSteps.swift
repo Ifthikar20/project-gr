@@ -6,6 +6,7 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
+@MainActor
 struct DrawStepView: View {
     @Bindable var model: CreationModel
 
@@ -124,6 +125,7 @@ struct DrawStepView: View {
     }
 }
 
+@MainActor
 struct GemPlacementStepView: View {
     @Bindable var model: CreationModel
 
@@ -202,6 +204,7 @@ enum PlacementCost {
     }
 }
 
+@MainActor
 struct PublishStepView: View {
     @Bindable var model: CreationModel
     let onDone: () -> Void

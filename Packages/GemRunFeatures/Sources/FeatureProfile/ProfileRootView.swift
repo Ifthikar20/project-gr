@@ -7,6 +7,7 @@ import SwiftUI
 
 /// Identity, streak, creations, settings (docs/03 §11), Daybreak Pulse:
 /// grouped white cards on snow, pulse for streak/level accents.
+@MainActor
 public struct ProfileRootView: View {
     @Environment(SessionStore.self) private var session
     @Environment(\.modelContext) private var context

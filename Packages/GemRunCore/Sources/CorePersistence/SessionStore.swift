@@ -122,11 +122,16 @@ public final class SessionStore {
 
     public init() {
         self.isOnboarded = UserDefaults.standard.bool(forKey: "gemrun.onboarded")
+        // Starter gems so a fresh user can drop from Explore immediately —
+        // the API resyncs on Stash open, but this avoids an empty-wallet
+        // moment on first launch.
+        self.wallet = [.common: 5, .uncommon: 3, .rare: 1]
     }
 
     public func attach(context: ModelContext) {
         self.context = context
         profile = try? context.fetch(FetchDescriptor<StoredProfile>()).first
+        Task { await refreshWallet() }
     }
 
     public func createProfile(handle: String) {

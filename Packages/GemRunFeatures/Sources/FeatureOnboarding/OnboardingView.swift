@@ -9,6 +9,7 @@ import SwiftUI
 /// Daybreak Pulse: snow background, ink display type, pulse CTAs.
 /// While `AuthFlags.allowAllAccounts` is on (TEMPORARY), every sign-in path
 /// succeeds — including provider failures — so any account works in dev.
+@MainActor
 public struct OnboardingView: View {
     @Environment(SessionStore.self) private var session
     @State private var page = 0

@@ -201,7 +201,9 @@ public actor MockGemRunAPI: GemRunAPI {
 
     // MARK: - Gem wallet + standalone drops
 
-    private var wallet: GemWallet = [:]                    // start with 0 gems
+    // Starter pack: new runners open the app with a handful of gems already
+    // in the wallet, so dropping / running feels alive from tap zero.
+    private var wallet: GemWallet = [.common: 5, .uncommon: 3, .rare: 1]
     private var mintedCounts: [Rarity: Int] = [:]
     private var standaloneDrops: [UUID: GemDrop] = [:]
     private var myDropIDs: Set<UUID> = []                  // never collect your own

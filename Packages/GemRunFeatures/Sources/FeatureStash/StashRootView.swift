@@ -6,6 +6,7 @@ import SwiftUI
 
 /// The collection (docs/03 §9), Airbnb wishlist-grid style: white tiles on
 /// snow, rarity as pulse ramp + glyph, ink-tint silhouettes for the missing.
+@MainActor
 public struct StashRootView: View {
     @Environment(SessionStore.self) private var session
     @Query(sort: \StoredStashItem.collectedAt, order: .reverse) private var items: [StoredStashItem]

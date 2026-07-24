@@ -11,6 +11,7 @@ import FeatureStash
 import SwiftData
 import SwiftUI
 
+@MainActor
 struct RootView: View {
     @Environment(SessionStore.self) private var session
     @Environment(ActiveRunEngine.self) private var engine

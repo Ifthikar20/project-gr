@@ -31,6 +31,7 @@ let package = Package(
             .product(name: "CoreMap", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
             .product(name: "CoreNetworking", package: "GemRunCore"),
+            .product(name: "GameKitCore", package: "GemRunCore"),
         ]),
         .target(name: "FeatureRouteCreation", dependencies: [
             .product(name: "CoreModels", package: "GemRunCore"),
