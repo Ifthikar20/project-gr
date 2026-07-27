@@ -56,6 +56,11 @@ public struct ExploreRootView: View {
     enum FirstLoad { case locating, stocking, failed, ready }
     @State private var firstLoad: FirstLoad = .locating
     @Environment(\.openURL) private var openURL
+    /// Reverse-geocoded "Street · City" for the capsule at the top of the
+    /// map. nil until the first geocode lands (the capsule stays hidden).
+    @State private var locationLabel: String?
+    @State private var lastGeocodedCoord: Coordinate?
+    @State private var isGeocodingLabel = false
 
     public init() {}
 
@@ -119,17 +124,39 @@ public struct ExploreRootView: View {
                 }
             }
             .overlay(alignment: .top) {
-                // Honest empty state: fail-closed spawning means an area
-                // with no trusted walkable geometry legitimately has zero
-                // gems — say so instead of showing a silently bare map.
-                if firstLoad == .ready && nearbyDrops.isEmpty {
-                    Text("No gems in this area yet — check back soon")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(DS.Colors.ink)
-                        .airbnbCard(padding: 12)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
-                        .transition(.opacity)
+                if firstLoad == .ready {
+                    VStack(spacing: 8) {
+                        if let locationLabel {
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.fill")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(DS.Colors.pulse)
+                                Text(locationLabel)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(DS.Colors.ink)
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
+                            .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+                            .shadow(color: DS.Colors.ink.opacity(0.08), radius: 5, y: 2)
+                            .transition(.opacity)
+                        }
+                        // Honest empty state: fail-closed spawning means an
+                        // area with no trusted walkable geometry legitimately
+                        // has zero gems — say so instead of showing a
+                        // silently bare map.
+                        if nearbyDrops.isEmpty {
+                            Text("No gems in this area yet — check back soon")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(DS.Colors.ink)
+                                .airbnbCard(padding: 12)
+                                .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -162,6 +189,7 @@ public struct ExploreRootView: View {
                 // the demo city). Re-fetch once a real fix arrives far from
                 // the last query center, or after a big move.
                 guard let fix else { return }
+                Task { await updateLocationLabel(for: fix) }
                 if let last = lastFetchCenter,
                    RouteGeometry.planarDistance(from: last, to: fix) <= 1_500 {
                     return
@@ -504,6 +532,29 @@ public struct ExploreRootView: View {
         destinationPath = segment
     }
 
+    /// Reverse-geocode the fix into the top capsule's "Street · City"
+    /// label. On-device (CLGeocoder), no key needed — but Apple
+    /// rate-limits it, so re-geocode only after moving ~200 m.
+    private func updateLocationLabel(for fix: Coordinate) async {
+        guard !isGeocodingLabel else { return }
+        if locationLabel != nil, let last = lastGeocodedCoord,
+           RouteGeometry.planarDistance(from: last, to: fix) < 200 {
+            return
+        }
+        isGeocodingLabel = true
+        defer { isGeocodingLabel = false }
+        lastGeocodedCoord = fix
+        let location = CLLocation(latitude: fix.lat, longitude: fix.lng)
+        guard let mark = try? await CLGeocoder()
+            .reverseGeocodeLocation(location).first else { return }
+        var parts = [mark.thoroughfare ?? mark.subLocality ?? mark.name,
+                     mark.locality ?? mark.subAdministrativeArea]
+            .compactMap { $0 }
+        if parts.count == 2, parts[0] == parts[1] { parts.removeLast() }
+        guard !parts.isEmpty else { return }
+        withAnimation { locationLabel = parts.joined(separator: " · ") }
+    }
+
     /// The gem card's CTA: snap a walking path from the user to the tapped
     /// gem and start a run along it. Deliberately a FREE run, not a route
     /// run — free runs are the mode that collects standalone drops by
@@ -652,6 +703,9 @@ public struct ExploreRootView: View {
         defer { isLoadingNearby = false }
         if firstLoad != .ready { firstLoad = .stocking }
         lastFetchCenter = center
+        // Covers the cached-CLLocationManager path, where the live-fix
+        // onChange (the usual geocode trigger) hasn't fired yet.
+        Task { await updateLocationLabel(for: center) }
         print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
 
         do {
