@@ -101,8 +101,13 @@ never filled by guessing.
 ### 2.4 Rarity & gem identity (`create_system_drop`)
 
 - Rarity roll: `common/uncommon/rare/epic = 40/30/20/10`. Legendary never
-  system-spawns. Dedicated trails (`PRIME_WALKWAYS = {path, pedestrian,
-  steps}`) use the richer `15/45/27/13`; plain sidewalks keep the default.
+  system-spawns. Rarer loot follows **proven foot traffic, not scenery**:
+  gems placed on popular routes (Tier 1, already gated by
+  `PRESENCE_DROP_MIN_RUNS`) roll the richer `HIGH_TRAFFIC_WEIGHTS =
+  15/45/27/13`; every off-route sidewalk fill (Tier 2) keeps the default
+  mix regardless of OSM way class. The trail-vs-sidewalk distinction is a
+  placement *safety* filter only — the game stocks where people already
+  walk, it does not lure them onto "nicer" paths.
 - Gem identity: `catalog.random_gem_of(rarity, rng)` — a uniform pick among
   all catalog entries of that rarity (26-entry catalog incl. the Ancient
   Relics set), so the map shows ambers/pearls/fossils, not the same quartz.
@@ -139,22 +144,40 @@ not; you run to the true point.)
 
 ## 4. iOS: fetch → state (`FeatureExplore/ExploreRootView.swift`)
 
+**The map is never shown unstocked.** An opaque first-load cover
+(`firstLoadCover`) sits over the map from tab-open until the first gem
+fetch lands, walking `locating → stocking → ready` (or `failed`, which
+keeps the cover up with a Retry). Location permission is requested up
+front under the cover; a denial swaps it to a "Turn on location" +
+Open-Settings prompt (`LiveLocation.isDenied`). The map and its tiles keep
+loading *underneath*, so the reveal is instant — and because the reveal
+happens in the same `withAnimation` block that sets the pins, an empty map
+can never flash before the gems do. The old shape of this bug — open to a
+bare map, close, reopen to find gems — is structurally gone.
+
 `loadNearby()` runs on tab appear, on the first GPS fix, and on pull
 refresh:
 
 1. Gate on a real location (live fix, else `CLLocationManager.location`,
-   else skip — recommendations are proximity-based, wrong-location fetches
-   show wrong content).
+   else stay on the `locating` cover — recommendations are
+   proximity-based, wrong-location fetches show wrong content; the
+   first-fix `onChange` watcher re-enters the moment GPS lands).
 2. `API.shared.nearbyDrops(lat:lng:radiusM: 8_000)` →
    `CoreNetworking/GemRunAPI.swift` decodes `drops[]` into `[GemDrop]`
    (snake_case CodingKeys; `gem_id` → `gemID: UUID`).
-3. `withAnimation { nearbyDrops = drops }` — drops render straight from
-   this in-memory array. They are deliberately **not** cached in SwiftData:
-   first-come collection means they change hands too fast for a cache to
-   ever be right.
+3. `withAnimation { nearbyDrops = drops; firstLoad = .ready }` — drops
+   render straight from this in-memory array. They are deliberately **not**
+   cached in SwiftData: first-come collection means they change hands too
+   fast for a cache to ever be right.
 4. The same pass feeds `RouteRecommender.recommend(from:drops:)`, which
    synthesizes the 4 suggested walking routes *through* those gems — so the
    carousel and the pins always agree.
+
+If the first response is legitimately empty (fail-closed area: no routes,
+no trusted OSM geometry), the map reveals with an honest "No gems in this
+area yet" banner instead of standing silently bare. A *refresh* failure
+after the first reveal keeps the existing pins — only the first load has
+the hard gate.
 
 ## 5. iOS: state → pixels (`CoreMap/MapProviding.swift`)
 
@@ -166,9 +189,16 @@ refresh:
   (spring from `y −30`, scale 1.3 → 1).
 - Tap → `onSelectDrop(drop)` → `ExploreRootView` sets `infoDrop` → a
   320 pt sheet presents **`GemInfoSheet`**: big emoji, gem name, rarity
-  badge + set name, one-line real-material blurb, and the "Walk or run to
-  it to collect" pill. Unknown `gem_id` degrades to "Mystery Gem" rather
-  than crashing — the sheet never assumes catalog hits.
+  badge + set name, one-line real-material blurb, and a **"Walk or run to
+  collect" button**. Tapping it snaps a walking path from the user to the
+  gem (`PathSnapper.snap`, straight-line fallback if snapping fails) and
+  starts a **free run** along it (`session.startFreeRun(drops:plannedPath:)`)
+  — deliberately a free run, not a route run, because free runs are the
+  mode that collects standalone drops by proximity; the tapped gem awards
+  on arrival and every other nearby gem stays collectable en route. The
+  planned line draws in pulse on the active-run map. Unknown `gem_id`
+  degrades to "Mystery Gem" rather than crashing — the sheet never assumes
+  catalog hits.
 
 **Active-run map** (`ActiveRunMapView`): the same drops arrive as
 `freeDrops` (free runs) or `route.gemDrops`. Uncollected → emoji
@@ -198,7 +228,10 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 | Walkability check `None` on a route point | accepted (polyline is trusted) |
 | top_up_area raises | swallowed; map read still answers |
 | Unknown gem_id on client | "Mystery Gem" fallback in sheet & pin |
-| No GPS fix on client | fetch skipped, retried on first fix |
+| No GPS fix on client | first-load cover stays on "Finding you…"; auto-retries on first fix |
+| Location permission denied | cover becomes a "Turn on location" → Settings prompt |
+| First drops fetch fails | cover stays up with Retry — a bare map never stands in for an error |
+| Legitimately empty area | map reveals with a "No gems in this area yet" banner |
 
 ## 8. Tuning knobs
 
@@ -208,7 +241,7 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 | Near-me limit | `system_drops.NEAR_LIMIT_M` | 800 m |
 | Min gem spacing | `rules.MIN_GEM_SPACING_M` | 100 m |
 | Placement ways | `walkability.PEDESTRIAN_HIGHWAYS` | footway\|pedestrian\|path\|steps |
-| Rarity mix | `system_drops.WEIGHTS` / `PRIME_WEIGHTS` | 40/30/20/10 · 15/45/27/13 |
+| Rarity mix | `system_drops.WEIGHTS` / `HIGH_TRAFFIC_WEIGHTS` | 40/30/20/10 (sidewalk fills) · 15/45/27/13 (popular routes) |
 | Distance bias | `drop_on_walkable_ways` | (250/(250+d))² |
 | Route popularity gate | `PRESENCE_DROP_MIN_RUNS` | 3 (0 in dev) |
 | Client fetch radius | `ExploreRootView.loadNearby` | 8 000 m |
@@ -217,7 +250,9 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 
 1. **The user pays for placement.** The top-up runs inside the map request;
    a cold area costs one Overpass round-trip (seconds when mirrors are
-   slow) before the map answers. Better: answer immediately and top up in a
+   slow) before the map answers. The client's first-load cover makes that
+   wait an explicit "Stocking gems near you…" instead of a bare map, but
+   the latency itself remains. Better: answer immediately and top up in a
    background task / queue keyed by an area cell.
 2. **Overpass is a hard dependency for Tier 2.** Keyless, aggressively
    rate-limited, and its data quality *is* our placement quality — suburbs

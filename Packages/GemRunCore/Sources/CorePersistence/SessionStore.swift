@@ -9,6 +9,9 @@ import SwiftData
 public struct RunCompletionSummary: Sendable {
     public struct CollectedGem: Identifiable, Sendable {
         public let id: UUID
+        /// Catalog gem id — the summary card uses it for the emoji and
+        /// the real-material blurb on the flip side.
+        public let gemID: UUID
         public let name: String
         public let rarity: Rarity
     }
@@ -114,7 +117,8 @@ public final class SessionStore {
         return RunCompletionSummary(
             gems: awarded.map {
                 let entry = GemCatalog.entry(forGemID: $0.gemID)
-                return .init(id: $0.id, name: entry?.gem.name ?? "Gem", rarity: $0.rarity)
+                return .init(id: $0.id, gemID: $0.gemID,
+                             name: entry?.gem.name ?? "Gem", rarity: $0.rarity)
             },
             revokedCount: collected.count - awarded.count,
             xpEarned: xp, setBonusXP: 0, completedSetName: nil,
@@ -240,7 +244,8 @@ public final class SessionStore {
 
         let gems: [RunCompletionSummary.CollectedGem] = awardedDrops.map { drop in
             let entry = GemCatalog.entry(forGemID: drop.gemID)
-            return .init(id: drop.id, name: entry?.gem.name ?? "Gem", rarity: drop.rarity)
+            return .init(id: drop.id, gemID: drop.gemID,
+                         name: entry?.gem.name ?? "Gem", rarity: drop.rarity)
         }
 
         let completedSet = persist(result: result, status: status,

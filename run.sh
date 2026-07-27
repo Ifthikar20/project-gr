@@ -63,7 +63,7 @@ except urllib.error.HTTPError as exc:
     print(f"-- HTTPS:   OK via {src} (server said {exc.code}, connection fine)")
 except Exception as exc:
     print(f"-- HTTPS:   FAILING via {src}: {exc!r}")
-    print("            -> Overpass unreachable: no seeded routes; gems fall back to near-user scatter")
+    print("            -> Overpass unreachable: no seeded routes; off-route gem spawning stays empty (fail closed)")
 PYEOF
     python manage.py migrate --no-input | tail -1
     # Suggested demo routes: STREET-FOLLOWING (chained from real OSM walkable

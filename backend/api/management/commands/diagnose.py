@@ -57,7 +57,7 @@ class Command(BaseCommand):
                 "→ No system gems or qualifying routes here YET — but bootstrap is "
                 f"{'ON' if settings.PRESENCE_BOOTSTRAP else 'OFF'}: the next map open "
                 "(GET /v1/drops) stocks this area itself — on OSM walkable ways when "
-                "reachable, else scattered a short walk from the user.\n"
+                "reachable; with no trusted geometry it stays empty (fail closed).\n"
                 "  Make sure the app's location matches these coordinates."))
         elif not system.exists():
             w(self.style.WARNING(
