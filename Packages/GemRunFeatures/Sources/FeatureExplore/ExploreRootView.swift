@@ -61,18 +61,14 @@ public struct ExploreRootView: View {
 
                 VStack(alignment: .trailing, spacing: 12) {
                     actionButtons
-                    if isDropMode {
-                        dropModeBanner
-                    } else if isDestinationMode {
+                    if isDestinationMode {
                         destinationBanner
                     } else if routes.isEmpty {
                         emptyBanner
-                    } else {
-                        routeCards
                     }
                     if isDestinationMode {
                         startDestinationButton
-                    } else if !isDropMode {
+                    } else {
                         startRunButton
                     }
                 }
@@ -152,28 +148,6 @@ public struct ExploreRootView: View {
                                 in: Circle())
                     .overlay(Circle().stroke(
                         isDestinationMode ? .clear : DS.Colors.hairline, lineWidth: 1))
-                    .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
-            }
-
-            // Drop mode: place a wallet gem on a trail or public spot.
-            Button {
-                if isDropMode {
-                    isDropMode = false
-                    dropError = nil
-                } else {
-                    exitDestinationMode()
-                    isDropMode = true
-                    dropError = nil
-                }
-            } label: {
-                Image(systemName: "diamond.fill")
-                    .font(.title3.bold())
-                    .foregroundStyle(isDropMode ? DS.Colors.snowCard : DS.Colors.ink)
-                    .frame(width: 48, height: 48)
-                    .background(isDropMode ? DS.Colors.pulse : DS.Colors.snowCard,
-                                in: Circle())
-                    .overlay(Circle().stroke(
-                        isDropMode ? .clear : DS.Colors.hairline, lineWidth: 1))
                     .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
             }
 
@@ -406,22 +380,6 @@ public struct ExploreRootView: View {
         session.activeRoute = route
     }
 
-    private var routeCards: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
-                ForEach(routes) { route in
-                    RouteCard(route: route)
-                        .onTapGesture {
-                            selectedID = route.id
-                            detailRoute = route
-                        }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 6)
-        }
-    }
-
     private var emptyBanner: some View {
         Text("No routes here yet — be the first to create one")
             .font(.footnote)
@@ -474,43 +432,6 @@ public struct ExploreRootView: View {
 struct TappedSpot: Identifiable {
     let coordinate: Coordinate
     var id: String { "\(coordinate.lat),\(coordinate.lng)" }
-}
-
-/// Airbnb listing-card anatomy: image on top (map preview), then title,
-/// meta line, and the rarity row.
-@MainActor
-struct RouteCard: View {
-    let route: Route
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            RoutePreviewMap(route: route)
-                .frame(height: 110)
-                .allowsHitTesting(false)
-                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16,
-                                                  topTrailingRadius: 16))
-            VStack(alignment: .leading, spacing: 5) {
-                Text(route.name)
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.ink)
-                    .lineLimit(1)
-                Text(String(format: "%.1f km · %d m climb · %@",
-                            Double(route.distanceM) / 1_000, route.elevationGainM,
-                            route.difficulty.rawValue.capitalized))
-                    .font(.caption)
-                    .foregroundStyle(DS.Colors.inkSecondary)
-                RarityDots(counts: rarityCounts)
-            }
-            .padding(12)
-        }
-        .frame(width: 250, alignment: .leading)
-        .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: DS.Colors.ink.opacity(0.1), radius: 12, y: 3)
-    }
-
-    private var rarityCounts: [Rarity: Int] {
-        Dictionary(grouping: route.gemDrops, by: \.rarity).mapValues(\.count)
-    }
 }
 
 /// Pick a wallet gem for the tapped location (docs: earn-by-running wallet).
