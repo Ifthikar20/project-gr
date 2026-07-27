@@ -1,4 +1,5 @@
 import CoreModels
+import CoreMotion
 import Foundation
 import GameKitCore
 import Observation
@@ -19,9 +20,16 @@ public final class ActiveRunEngine {
     public private(set) var distanceM: Double = 0
     public private(set) var currentSpeed: Double = 0
     public private(set) var lastSample: TrackSample?
+    /// Every accepted position, in order — the breadcrumb trail the run map
+    /// draws behind the runner ("the steps we add as we actually move").
+    public private(set) var traveledPath: [Coordinate] = []
     public private(set) var collectedEvents: [CollectionEngine.Event] = []
     /// UI hook: fired on each collection for haptics/animation.
     public var onCollect: ((CollectionEngine.Event) -> Void)?
+
+    /// Steps taken this run, live from CMPedometer — the same motion pipeline
+    /// that feeds Apple Health. 0 when Motion & Fitness is declined.
+    public private(set) var liveSteps = 0
 
     private var recorder: LiveRunRecorder?
     private var collectionEngine: CollectionEngine?
@@ -30,6 +38,15 @@ public final class ActiveRunEngine {
     private var pausedAccumulator: TimeInterval = 0
     private var lowSpeedSince: TimeInterval?
     private var consumeTask: Task<Void, Never>?
+
+    // Motion-derived distance (Apple-Maps-walking style): GPS jitter creeps
+    // the km counter up while standing still, so once the pedometer reports,
+    // it owns `distanceM` and GPS deltas stop accumulating. Distance walked
+    // during a pause is excluded via the offset.
+    private let pedometer = CMPedometer()
+    private var pedometerReporting = false
+    private var pedometerLastM: Double = 0
+    private var pedometerExcludedM: Double = 0
 
     public init() {}
 
@@ -90,6 +107,7 @@ public final class ActiveRunEngine {
         geometry = nil
         collectionEngine = nil
         track = []
+        traveledPath = []
         collectedEvents = []
         distanceM = 0
         pausedAccumulator = 0
@@ -104,6 +122,7 @@ public final class ActiveRunEngine {
         guard isFreeRun else { return nil }
         recorder?.stop()
         consumeTask?.cancel()
+        pedometer.stopUpdates()
         phase = .finished
         let duration = track.count >= 2 ? Int(track.last!.t - track.first!.t) : 0
         return (track, collectedEvents.map(\.drop), duration, Int(distanceM))
@@ -133,6 +152,7 @@ public final class ActiveRunEngine {
         self.geometry = geometry
         self.collectionEngine = CollectionEngine(geometry: geometry, drops: route.gemDrops)
         self.track = []
+        self.traveledPath = []
         self.collectedEvents = []
         self.distanceM = 0
         self.pausedAccumulator = 0
@@ -150,6 +170,35 @@ public final class ActiveRunEngine {
                 self?.ingest(sample)
             }
         }
+        beginPedometer()
+    }
+
+    private func beginPedometer() {
+        liveSteps = 0
+        pedometerReporting = false
+        pedometerLastM = 0
+        pedometerExcludedM = 0
+        guard CMPedometer.isStepCountingAvailable() else { return }
+        pedometer.startUpdates(from: startedAt) { [weak self] data, _ in
+            guard let data else { return }
+            Task { @MainActor [weak self] in
+                self?.ingestPedometer(data)
+            }
+        }
+    }
+
+    private func ingestPedometer(_ data: CMPedometerData) {
+        guard phase == .running || phase == .paused else { return }
+        liveSteps = data.numberOfSteps.intValue
+        guard let cumulative = data.distance?.doubleValue else { return }
+        if phase == .paused {
+            pedometerExcludedM += max(0, cumulative - pedometerLastM)
+        }
+        pedometerLastM = cumulative
+        pedometerReporting = true
+        if phase == .running {
+            distanceM = max(0, cumulative - pedometerExcludedM)
+        }
     }
 
     public func togglePause() {
@@ -164,6 +213,7 @@ public final class ActiveRunEngine {
         guard let route, let geometry else { return nil }
         recorder?.stop()
         consumeTask?.cancel()
+        pedometer.stopUpdates()
         phase = .finished
         RunBuffer.clear()
         let validation = RunValidator.validate(track: track, geometry: geometry)
@@ -203,7 +253,11 @@ public final class ActiveRunEngine {
         if let last = lastSample {
             let step = RouteGeometry.planarDistance(from: last.coordinate,
                                                     to: sample.coordinate)
-            distanceM += step
+            // GPS deltas only until the pedometer reports; from then on
+            // motion data owns the distance so standing still adds nothing.
+            if !pedometerReporting {
+                distanceM += step
+            }
             // Course from recent motion, for the next-gem bearing arrow.
             if step > 2 {
                 let k = 111_320.0
@@ -214,6 +268,7 @@ public final class ActiveRunEngine {
         }
         lastSample = sample
         track.append(sample)
+        traveledPath.append(sample.coordinate)
         if !isFreeRun {
             RunBuffer.append(sample)
         }
@@ -226,12 +281,12 @@ public final class ActiveRunEngine {
                 onCollect?(event)
             }
         } else if isFreeRun {
-            // Proximity-only collection: 25 m threshold + exit hysteresis.
+            // Proximity-only collection: 100 ft threshold + exit hysteresis.
             let collectedIDs = Set(collectedEvents.map(\.drop.id))
             for drop in freeDrops where !collectedIDs.contains(drop.id) {
                 let dist = RouteGeometry.planarDistance(from: sample.coordinate,
                                                         to: drop.coordinate)
-                guard dist <= CollectionRules.collectionRadiusM else { continue }
+                guard dist <= CollectionRules.dropCollectRadiusM else { continue }
                 if let last = lastFreeCollection,
                    RouteGeometry.planarDistance(from: sample.coordinate, to: last)
                        <= CollectionRules.hysteresisExitRadiusM { continue }

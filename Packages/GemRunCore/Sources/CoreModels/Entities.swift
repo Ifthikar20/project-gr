@@ -11,6 +11,15 @@ public struct UserProfile: Codable, Identifiable, Sendable {
     public var streakCount: Int
     public var streakShields: Int
 
+    // Wire mapping: the client decoder converts snake_case first, so
+    // "avatar_url" arrives as "avatarUrl" — which never matches the
+    // acronym-cased property name. Every *ID/*URL property needs this
+    // (encoder round-trips "avatarUrl" back to "avatar_url").
+    enum CodingKeys: String, CodingKey {
+        case id, handle, xp, level, streakCount, streakShields
+        case avatarURL = "avatarUrl"
+    }
+
     public init(id: UUID, handle: String, avatarURL: URL? = nil,
                 xp: Int = 0, level: Int = 1, streakCount: Int = 0, streakShields: Int = 0) {
         self.id = id
@@ -66,6 +75,11 @@ public struct Gem: Codable, Identifiable, Sendable {
     public var setID: UUID
     public var iconRef: String
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, rarity, iconRef
+        case setID = "setId"
+    }
+
     public init(id: UUID, name: String, rarity: Rarity, setID: UUID, iconRef: String) {
         self.id = id
         self.name = name
@@ -101,6 +115,14 @@ public struct GemDrop: Codable, Equatable, Identifiable, Sendable {
     public var placedBy: GemPlacer
     /// Non-nil when coordinates are fuzzed: radius of the hint zone.
     public var fuzzRadiusM: Int?
+
+    // "gem_id" → convertFromSnakeCase → "gemId" ≠ synthesized "gemID": this
+    // one-letter mismatch silently emptied the whole map (docs/13).
+    enum CodingKeys: String, CodingKey {
+        case id, rarity, lat, lng, positionAlongRouteM, respawnRule,
+             placedBy, fuzzRadiusM
+        case gemID = "gemId"
+    }
 
     public init(id: UUID, gemID: UUID, rarity: Rarity, lat: Double, lng: Double,
                 positionAlongRouteM: Int, respawnRule: RespawnRule,
@@ -145,6 +167,12 @@ public struct Run: Codable, Identifiable, Sendable {
     public var validationStatus: RunValidationStatus
     public var xpEarned: Int
 
+    enum CodingKeys: String, CodingKey {
+        case id, idempotencyKey, startedAt, durationS, distanceM,
+             claimedCollections, validationStatus, xpEarned
+        case routeID = "routeId"
+    }
+
     public init(id: UUID, routeID: UUID, idempotencyKey: String, startedAt: Date,
                 durationS: Int = 0, distanceM: Int = 0, claimedCollections: [UUID] = [],
                 validationStatus: RunValidationStatus = .pending, xpEarned: Int = 0) {
@@ -167,6 +195,13 @@ public struct StashItem: Codable, Identifiable, Sendable {
     public let runID: UUID
     public let collectedAt: Date
     public let isFirstFind: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, collectedAt, isFirstFind
+        case gemID = "gemId"
+        case gemDropID = "gemDropId"
+        case runID = "runId"
+    }
 
     public init(id: UUID, gemID: UUID, gemDropID: UUID, runID: UUID,
                 collectedAt: Date, isFirstFind: Bool = false) {

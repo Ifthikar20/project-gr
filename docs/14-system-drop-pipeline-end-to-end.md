@@ -1,0 +1,245 @@
+# 14 — System Drop Pipeline, End to End
+
+How a system gem goes from *nothing* to *a pin the runner can tap on the
+Explore map*: the trigger, the placement algorithm, the database row, the
+wire format, and every iOS layer that renders it. Complements doc 12 (user
+creation paths) and doc 13 (walkability downstream call); this doc is the
+single vertical slice, current as of 2026-07-27.
+
+```
+ PHONE                          BACKEND                                 PHONE
+┌──────────────┐   GET /v1/drops   ┌─────────────────────────────┐   JSON    ┌───────────────────────┐
+│ Explore tab   │ ────────────────▶│ views.drops()                │ ────────▶│ GemRunAPI.nearbyDrops │
+│ opens / GPS   │  lat,lng,radius  │  └─ system_drops.top_up_area │  drops[] │  └─ [GemDrop] decode  │
+│ fix lands     │                  │      ├─ Tier 1: routes       │          │ ExploreRootView       │
+└──────────────┘                  │      └─ Tier 2: OSM ways ────┼─Overpass │  └─ nearbyDrops state │
+                                  │             │                │          │ ExploreMapView        │
+                                  │       GemDrop rows           │          │  └─ Annotation+DropPin│
+                                  │   (route=NULL, system)       │          │ tap → GemInfoSheet    │
+                                  └─────────────────────────────┘          └───────────────────────┘
+```
+
+---
+
+## 1. Trigger: user presence, not a schedule
+
+There is **no cron, no scheduled spawner**. The map query *is* the trigger.
+
+`GET /v1/drops?lat&lng&radius_m` (`backend/api/views.py → drops()`) calls
+`system_drops.top_up_area(lat, lng, radius)` **synchronously, before
+answering**, wrapped in a bare `try/except` so a top-up failure can never
+break the map read. Consequences:
+
+- Gems exist only where someone has actually opened the map. A region with
+  zero app usage has zero gems, forever, by design.
+- The *first* map open in a new area stocks it (bootstrap); a map open
+  after a gem is collected restocks the freed slot.
+- The user's own request pays the placement latency (see §9).
+
+## 2. Placement algorithm (`backend/api/system_drops.py → top_up_area`)
+
+### 2.1 Budget
+
+Count active standalone system drops inside the query bbox
+(`route__isnull=True, active=True, placed_by="system"`). Spawn only the
+shortfall up to `PRESENCE_DROP_MAX_PER_AREA = 40` (settings.py). Zero
+shortfall → the request does nothing and answers immediately.
+
+### 2.2 Tier 1 — popular routes (`drop_gem_on_route`)
+
+Published routes in the bbox with `run_count ≥ PRESENCE_DROP_MIN_RUNS`
+(env-overridable; dev runs with 0), ordered by popularity. For each, up to
+`ATTEMPTS_PER_ROUTE = 8` tries:
+
+1. Sample a uniform-random distance along the route polyline and
+   interpolate the coordinate (`RouteGeometry.coordinate_at`). Route
+   polylines are **walking-directions-snapped**, so the point is on a path
+   humans actually walked — construction vouches for it.
+2. Reject if farther than `NEAR_LIMIT_M = 800` from the map-open point
+   (gems are a walk, not a drive).
+3. Reject if within `MIN_GEM_SPACING_M = 100` of any active standalone drop
+   (`near_existing_drop`, planar-meters check over a bbox prefilter).
+4. Veto only on an explicit `walkability.is_walkable(...) is False`; `None`
+   (check off / Overpass unreachable) is accepted because the point came
+   from a trusted polyline.
+
+One gem max per route per top-up.
+
+### 2.3 Tier 2 — OSM sidewalks & trails (`drop_on_walkable_ways`)
+
+Fills the remaining budget by sampling points **directly on OpenStreetMap
+way geometry** — the way's node list *is* the walkable-path list, so linear
+interpolation between adjacent nodes stays on the path. There is **no
+random scatter tier**: a rate-limited walkability check fails open and
+lands gems on private land, so empty beats misplaced (pinned by test
+`test_map_open_without_walkable_geometry_spawns_nothing`).
+
+1. **Fetch**: `walkability.fetch_walkable_ways(lat, lng,
+   min(radius, NEAR_LIMIT_M), with_tags=True,
+   highways=PEDESTRIAN_HIGHWAYS)` — one Overpass query, mirrors tried in
+   order, 120 s circuit breaker after total failure.
+2. **Way filter** (in the Overpass query itself):
+   - `highway ~ ^(footway|pedestrian|path|steps)$` — sidewalks
+     (`footway`), walking/running trails (`path`), promenades
+     (`pedestrian`), stairs. Driveways (`service`), farm tracks (`track`),
+     cycleways, bridleways, and all road centerlines are excluded — each of
+     those produced gems that read as sitting on private property.
+   - `foot` and `access` must not be `no`/`private`.
+   - Closed rings (park loops, roundabouts) dropped in post.
+3. **Way choice**: distance-weighted toward the user —
+   `weight = (250 / (250 + d_min))²` where `d_min` is the nearest node's
+   planar distance. A path 100 m away is ~9× likelier than one 800 m away.
+4. **Point sample**: random segment of the chosen way, random `t ∈ [0,1)`
+   lerp between its endpoints.
+5. **Reject** if beyond `NEAR_LIMIT_M` (long ways can lerp past the circle
+   — pinned by `test_bootstrap_never_places_beyond_near_limit`) or within
+   100 m of an existing drop. Up to `count × 8` attempts total.
+
+Slots still empty after both tiers stay empty, with an explicit log line —
+never filled by guessing.
+
+### 2.4 Rarity & gem identity (`create_system_drop`)
+
+- Rarity roll: `common/uncommon/rare/epic = 40/30/20/10`. Legendary never
+  system-spawns. Dedicated trails (`PRIME_WALKWAYS = {path, pedestrian,
+  steps}`) use the richer `15/45/27/13`; plain sidewalks keep the default.
+- Gem identity: `catalog.random_gem_of(rarity, rng)` — a uniform pick among
+  all catalog entries of that rarity (26-entry catalog incl. the Ancient
+  Relics set), so the map shows ambers/pearls/fossils, not the same quartz.
+- The catalog's fixed UUIDs (`uuid.UUID(int=n)`) are byte-identical to the
+  iOS `GemCatalog` UUIDs — the id on the wire *is* the id the client
+  already knows. No catalog sync exists or is needed.
+
+### 2.5 The row
+
+```
+GemDrop(route=NULL, dropped_by=NULL, gem_id=<catalog uuid>, rarity,
+        lat, lng, position_along_route_m=0,
+        respawn_rule="one_time", placed_by="system", active=True)
+```
+
+`route=NULL` is what makes it a *standalone* drop; `placed_by="system"`
+separates it from player wallet drops in every query above.
+
+## 3. Wire format (`views.py → drop_json`)
+
+The same `GET /v1/drops` request that triggered the top-up then reads every
+active standalone drop in the bbox (system *and* player-placed) and returns:
+
+```json
+{"drops": [{"id": "...", "gem_id": "00000000-…-0028", "rarity": "uncommon",
+            "lat": 32.97, "lng": -96.65, "position_along_route_m": 0,
+            "respawn_rule": "one_time", "placed_by": "system",
+            "fuzz_radius_m": null}]}
+```
+
+Map drops are sent `exact=True`. (Route-detail payloads use the fuzzed
+variant — deterministic ≤75 m jitter — but the standalone map list does
+not; you run to the true point.)
+
+## 4. iOS: fetch → state (`FeatureExplore/ExploreRootView.swift`)
+
+`loadNearby()` runs on tab appear, on the first GPS fix, and on pull
+refresh:
+
+1. Gate on a real location (live fix, else `CLLocationManager.location`,
+   else skip — recommendations are proximity-based, wrong-location fetches
+   show wrong content).
+2. `API.shared.nearbyDrops(lat:lng:radiusM: 8_000)` →
+   `CoreNetworking/GemRunAPI.swift` decodes `drops[]` into `[GemDrop]`
+   (snake_case CodingKeys; `gem_id` → `gemID: UUID`).
+3. `withAnimation { nearbyDrops = drops }` — drops render straight from
+   this in-memory array. They are deliberately **not** cached in SwiftData:
+   first-come collection means they change hands too fast for a cache to
+   ever be right.
+4. The same pass feeds `RouteRecommender.recommend(from:drops:)`, which
+   synthesizes the 4 suggested walking routes *through* those gems — so the
+   carousel and the pins always agree.
+
+## 5. iOS: state → pixels (`CoreMap/MapProviding.swift`)
+
+**Explore map** (`ExploreMapView`): each drop becomes a MapKit
+`Annotation` at `drop.coordinate` containing a `Button` wrapping `DropPin`:
+
+- `DropPin` resolves the emoji via `MapPalette.emoji(forGemID:)` — the
+  fixed-UUID catalog lookup again — and plays the pin-drop entrance
+  (spring from `y −30`, scale 1.3 → 1).
+- Tap → `onSelectDrop(drop)` → `ExploreRootView` sets `infoDrop` → a
+  320 pt sheet presents **`GemInfoSheet`**: big emoji, gem name, rarity
+  badge + set name, one-line real-material blurb, and the "Walk or run to
+  it to collect" pill. Unknown `gem_id` degrades to "Mystery Gem" rather
+  than crashing — the sheet never assumes catalog hits.
+
+**Active-run map** (`ActiveRunMapView`): the same drops arrive as
+`freeDrops` (free runs) or `route.gemDrops`. Uncollected → emoji
+annotation. The moment a drop id enters `collectedDropIDs`, an `onChange`
+diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
+~1.2 s), then the pin settles into a muted checkmark.
+
+## 6. Collection closes the loop
+
+- **During a route run**: `CollectionEngine` awards at ≤ 25 m
+  (`collectionRadiusM`) with progress + hysteresis rules.
+- **During a free run**: pure proximity, ≤ 30.5 m (`dropCollectRadiusM`)
+  ≈ 100 ft, so "50 ft away" always collects.
+- Server side, `POST /v1/drops/collect` (or route completion crossing a
+  standalone drop) validates the GPS track, awards **first-come**, and
+  deactivates the row atomically. `respawn_rule="one_time"` means the row
+  never comes back — but the *slot* does: the next map open in that area
+  finds the budget short by one and spawns a fresh gem somewhere else
+  walkable.
+
+## 7. Failure policy summary
+
+| Failure | Behavior |
+|---|---|
+| Overpass mirror down | next mirror; all down → 120 s circuit breaker |
+| No walkable ways answer | Tier 2 spawns **nothing** (fail closed) |
+| Walkability check `None` on a route point | accepted (polyline is trusted) |
+| top_up_area raises | swallowed; map read still answers |
+| Unknown gem_id on client | "Mystery Gem" fallback in sheet & pin |
+| No GPS fix on client | fetch skipped, retried on first fix |
+
+## 8. Tuning knobs
+
+| Knob | Where | Value |
+|---|---|---|
+| Area budget | `settings.PRESENCE_DROP_MAX_PER_AREA` | 40 |
+| Near-me limit | `system_drops.NEAR_LIMIT_M` | 800 m |
+| Min gem spacing | `rules.MIN_GEM_SPACING_M` | 100 m |
+| Placement ways | `walkability.PEDESTRIAN_HIGHWAYS` | footway\|pedestrian\|path\|steps |
+| Rarity mix | `system_drops.WEIGHTS` / `PRIME_WEIGHTS` | 40/30/20/10 · 15/45/27/13 |
+| Distance bias | `drop_on_walkable_ways` | (250/(250+d))² |
+| Route popularity gate | `PRESENCE_DROP_MIN_RUNS` | 3 (0 in dev) |
+| Client fetch radius | `ExploreRootView.loadNearby` | 8 000 m |
+
+## 9. Known limitations (why this isn't the final design)
+
+1. **The user pays for placement.** The top-up runs inside the map request;
+   a cold area costs one Overpass round-trip (seconds when mirrors are
+   slow) before the map answers. Better: answer immediately and top up in a
+   background task / queue keyed by an area cell.
+2. **Overpass is a hard dependency for Tier 2.** Keyless, aggressively
+   rate-limited, and its data quality *is* our placement quality — suburbs
+   with unmapped sidewalks get few or no gems. Better: pre-download way
+   geometry per visited cell (cache table keyed by H3/geohash, refreshed
+   weekly), so placement is a local read.
+3. **The budget is a moving box, not a grid.** "40 per area" is counted in
+   the *query* bbox; two users straddling adjacent, overlapping boxes can
+   each trigger spawns whose union exceeds any single box's intent.
+   Better: fixed spatial cells (H3 res ~8) with per-cell budgets.
+4. **Spacing check is O(drops) per candidate** with a bbox prefilter — fine
+   at 40, wrong at scale. Better: PostGIS + spatial index, or the cell
+   cache above.
+5. **No respawn cadence.** Collected slots refill only on the *next* map
+   open, so a lone player in an area sees restocks exactly when they look —
+   which reads as "gems appear when I open the app" rather than a living
+   world. Better: cell-level respawn windows (e.g. refill at most N per
+   hour).
+6. **`random.Random()` is unseeded per request** — placements are not
+   reproducible for debugging. Passing a seed derived from (cell, day)
+   would make spawn layouts deterministic and testable in the field.
+7. **Popularity signal is thin.** `run_count` on routes is the only "walked
+   by many" input; actual GPS heatmaps from completed runs (doc 04) are not
+   yet used. The truest "previously walked paths" source we own is the
+   `track` samples users already upload.

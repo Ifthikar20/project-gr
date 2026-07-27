@@ -20,6 +20,8 @@ public struct ExploreRootView: View {
     @State private var selectedID: UUID?
     @State private var detailRoute: Route?
     @State private var nearbyDrops: [GemDrop] = []
+    /// Gem pin the user tapped — presents the what-is-this-gem card.
+    @State private var infoDrop: GemDrop?
     @State private var isDropMode = false
     @State private var pendingDropSpot: TappedSpot?
     // Destination mode: tap a spot to build a run from here → there.
@@ -28,9 +30,20 @@ public struct ExploreRootView: View {
     @State private var destinationPath: [Coordinate] = []
     @State private var isPlanningPath = false
     @State private var planError: String?
-    // Live GPS fix drives the runner emoji on the map + park seeding.
+    // Live GPS fix drives the runner emoji on the map + refetch-on-move.
     @State private var live = LiveLocation()
-    @State private var seededParksForCenter: Coordinate?
+    /// Center of the last nearby-fetch, so a first real GPS fix (or a big
+    /// move) far from it triggers a refetch.
+    @State private var lastFetchCenter: Coordinate?
+    @State private var isLoadingNearby = false
+    /// User-toggleable: fold the recommended-routes carousel to see the map.
+    @State private var isRoutesCollapsed = false
+    /// Auto-planned routes from the user's location through nearby gems —
+    /// generated client-side by RouteRecommender; never persisted.
+    @State private var recommendedRoutes: [Route] = []
+    @State private var lastRecommendCenter: Coordinate?
+    @State private var isRecommending = false
+    @Environment(\.scenePhase) private var scenePhase
     // Drop-mode validation state: last denial reason, and "checking…" flag
     // for the POI lookup that gates a drop.
     @State private var dropError: String?
@@ -39,9 +52,23 @@ public struct ExploreRootView: View {
     public init() {}
 
     private var routes: [Route] {
-        storedRoutes
+        let published = storedRoutes
             .filter { $0.statusRaw == RouteStatus.published.rawValue }
             .map { $0.toRoute() }
+        // Only recommend routes near the user — otherwise a route from a city
+        // the user visited weeks ago keeps showing up here.
+        let nearby: [Route]
+        if let here = live.coordinate {
+            nearby = published.filter { route in
+                guard let start = PolylineCodec.decode(route.polyline).first else { return false }
+                return RouteGeometry.planarDistance(from: here, to: start) <= 8_000
+            }
+        } else {
+            nearby = published
+        }
+        // Auto-planned routes come first — they always start where the user
+        // is standing, so they're the most directly actionable.
+        return recommendedRoutes + nearby
     }
 
     public var body: some View {
@@ -55,15 +82,14 @@ public struct ExploreRootView: View {
                     destinationPin: destination,
                     userCoordinate: live.coordinate,
                     onSelect: { detailRoute = $0 },
-                    onTapCoordinate: mapTapHandler
+                    onTapCoordinate: mapTapHandler,
+                    onSelectDrop: { infoDrop = $0 }
                 )
                 .ignoresSafeArea()
 
                 VStack(alignment: .trailing, spacing: 12) {
                     actionButtons
-                    if isDropMode {
-                        dropModeBanner
-                    } else if isDestinationMode {
+                    if isDestinationMode {
                         destinationBanner
                     } else if routes.isEmpty {
                         emptyBanner
@@ -72,7 +98,7 @@ public struct ExploreRootView: View {
                     }
                     if isDestinationMode {
                         startDestinationButton
-                    } else if !isDropMode {
+                    } else {
                         startRunButton
                     }
                 }
@@ -82,6 +108,10 @@ public struct ExploreRootView: View {
             .sheet(item: $detailRoute) { route in
                 RouteDetailView(route: route)
             }
+            .sheet(item: $infoDrop) { drop in
+                GemInfoSheet(drop: drop)
+                    .presentationDetents([.height(320)])
+            }
             .sheet(item: $pendingDropSpot) { spot in
                 DropGemSheet(coordinate: spot.coordinate) { newDrop in
                     withAnimation { nearbyDrops.append(newDrop) }
@@ -90,20 +120,28 @@ public struct ExploreRootView: View {
                 .presentationDetents([.height(320)])
             }
             .task {
+                // Start GPS but DON'T fetch yet — a demo-city fallback would
+                // recommend routes from the wrong place. loadNearby() runs
+                // when the first real fix arrives via onChange below.
                 live.start()
-                await loadNearby()
             }
-            .onChange(of: live.coordinate) { _, new in
-                // As soon as we have a real fix (or it drifts far from the last
-                // seed center), place gems at safe public POIs nearby — parks,
-                // gas stations, cafes, libraries, transit hubs, post offices —
-                // and skip anything near parking or private buildings.
-                guard let new else { return }
-                if let seed = seededParksForCenter,
-                   RouteGeometry.planarDistance(from: seed, to: new) < 1_500 {
+            // Gems come exclusively from the backend (GET /v1/drops in
+            // loadNearby) — no client-side phantom seeding.
+            .onChange(of: live.coordinate) { _, fix in
+                // First fetch can run before a GPS fix exists (falls back to
+                // the demo city). Re-fetch once a real fix arrives far from
+                // the last query center, or after a big move.
+                guard let fix else { return }
+                if let last = lastFetchCenter,
+                   RouteGeometry.planarDistance(from: last, to: fix) <= 1_500 {
                     return
                 }
-                Task { await seedSafeZoneDrops(around: new) }
+                Task { await loadNearby() }
+            }
+            // Returning to the app refreshes the world: collected gems
+            // vanish, new spawns appear — no relaunch needed.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await loadNearby() } }
             }
             .onChange(of: session.pendingDeepLinkRouteID) { _, id in
                 guard let id else { return }
@@ -152,28 +190,6 @@ public struct ExploreRootView: View {
                                 in: Circle())
                     .overlay(Circle().stroke(
                         isDestinationMode ? .clear : DS.Colors.hairline, lineWidth: 1))
-                    .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
-            }
-
-            // Drop mode: place a wallet gem on a trail or public spot.
-            Button {
-                if isDropMode {
-                    isDropMode = false
-                    dropError = nil
-                } else {
-                    exitDestinationMode()
-                    isDropMode = true
-                    dropError = nil
-                }
-            } label: {
-                Image(systemName: "diamond.fill")
-                    .font(.title3.bold())
-                    .foregroundStyle(isDropMode ? DS.Colors.snowCard : DS.Colors.ink)
-                    .frame(width: 48, height: 48)
-                    .background(isDropMode ? DS.Colors.pulse : DS.Colors.snowCard,
-                                in: Circle())
-                    .overlay(Circle().stroke(
-                        isDropMode ? .clear : DS.Colors.hairline, lineWidth: 1))
                     .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
             }
 
@@ -406,19 +422,63 @@ public struct ExploreRootView: View {
         session.activeRoute = route
     }
 
+    /// Suggested routes near the user — cards for the routes the backend
+    /// returned, horizontally scrollable. Header row folds the carousel so
+    /// the map isn't covered when you just want to look at gems.
     private var routeCards: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
-                ForEach(routes) { route in
-                    RouteCard(route: route)
-                        .onTapGesture {
-                            selectedID = route.id
-                            detailRoute = route
-                        }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("\(routes.count) route\(routes.count == 1 ? "" : "s") nearby")
+                    .font(.footnote.bold())
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                Button {
+                    Task { await regenerateRecommendations(force: true) }
+                } label: {
+                    if isRecommending {
+                        ProgressView().scaleEffect(0.7).padding(.horizontal, 4)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.footnote.bold())
+                            .foregroundStyle(DS.Colors.ink)
+                            .padding(6)
+                    }
                 }
+                .disabled(isRecommending)
+                .accessibilityLabel("Refresh recommendations")
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isRoutesCollapsed.toggle()
+                    }
+                } label: {
+                    Image(systemName: isRoutesCollapsed ? "chevron.up" : "chevron.down")
+                        .font(.footnote.bold())
+                        .foregroundStyle(DS.Colors.ink)
+                        .padding(6)
+                }
+                .accessibilityLabel(isRoutesCollapsed ? "Show routes" : "Hide routes")
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6)
+            .background(DS.Colors.snow.opacity(0.92), in: Capsule())
             .padding(.horizontal, 16)
-            .padding(.bottom, 6)
+
+            if !isRoutesCollapsed {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(routes) { route in
+                            RouteCard(route: route)
+                                .onTapGesture {
+                                    selectedID = route.id
+                                    detailRoute = route
+                                }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
     }
 
@@ -434,26 +494,84 @@ public struct ExploreRootView: View {
     /// SwiftData cache, drops render directly (they change hands too fast
     /// to cache).
     private func loadNearby() async {
+        guard !isLoadingNearby else { return }
         let manager = CLLocationManager()
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
-        let center = manager.location.map {
-            Coordinate(lat: $0.coordinate.latitude, lng: $0.coordinate.longitude)
-        } ?? Coordinate(lat: 37.7749, lng: -122.4194)
+        // Recommendations are proximity-based, so a fetch without a real
+        // location shows the wrong routes. Skip until GPS lands; the
+        // onChange(of: live.coordinate) watcher retries on first fix.
+        let center: Coordinate
+        if let fix = live.coordinate {
+            center = fix
+        } else if let last = manager.location {
+            center = Coordinate(lat: last.coordinate.latitude,
+                                lng: last.coordinate.longitude)
+        } else {
+            print("[Explore] skipping fetch — no GPS fix yet")
+            return
+        }
+        isLoadingNearby = true
+        defer { isLoadingNearby = false }
+        lastFetchCenter = center
+        print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
 
-        if let fetched = try? await API.shared.nearbyRoutes(
-            lat: center.lat, lng: center.lng, radiusM: 5_000) {
-            let cachedIDs = Set(storedRoutes.map(\.id))
-            for route in fetched where !cachedIDs.contains(route.id) {
+        do {
+            let fetched = try await API.shared.nearbyRoutes(
+                lat: center.lat, lng: center.lng, radiusM: 8_000)
+            print("[Explore] routes: \(fetched.count)")
+            // Refresh, not just insert: re-encoding cached rows picks up
+            // server-side changes AND migrates gem blobs stored under the
+            // old (pre-CodingKeys) key spelling.
+            let cachedByID = Dictionary(uniqueKeysWithValues:
+                                            storedRoutes.map { ($0.id, $0) })
+            for route in fetched {
+                if let existing = cachedByID[route.id] { context.delete(existing) }
                 context.insert(StoredRoute(route: route))
             }
+            // Backend is authoritative: anything it doesn't return is gone
+            // (deleted server-side, or leftover from a prior mock-mode run).
+            // No distance guard — a SF-coord mock route stranded in a Dallas
+            // user's cache should NOT keep appearing on their map.
+            if AppConfig.apiBaseURL != nil {
+                let fetchedIDs = Set(fetched.map(\.id))
+                for stored in storedRoutes where !fetchedIDs.contains(stored.id) {
+                    context.delete(stored)
+                }
+            }
             try? context.save()
+        } catch {
+            print("[Explore] nearbyRoutes FAILED: \(error)")
         }
-        if let drops = try? await API.shared.nearbyDrops(
-            lat: center.lat, lng: center.lng, radiusM: 5_000) {
+        do {
+            let drops = try await API.shared.nearbyDrops(
+                lat: center.lat, lng: center.lng, radiusM: 8_000)
+            print("[Explore] drops: \(drops.count)")
             withAnimation { nearbyDrops = drops }
+        } catch {
+            print("[Explore] nearbyDrops FAILED: \(error)")
         }
+        // Recommendations key off the fresh drop list — regenerate here so
+        // the carousel updates in the same pass as everything else.
+        await regenerateRecommendations(force: false)
+    }
+
+    /// Client-side route synthesis: 4 walking routes starting at the user's
+    /// live location, visiting different combinations of nearby gems. Debounced
+    /// to moves > 100 m; `force=true` skips the debounce (refresh button).
+    private func regenerateRecommendations(force: Bool) async {
+        guard !isRecommending, let here = live.coordinate else { return }
+        if !force, let last = lastRecommendCenter,
+           RouteGeometry.planarDistance(from: last, to: here) < 100 {
+            return
+        }
+        isRecommending = true
+        defer { isRecommending = false }
+        lastRecommendCenter = here
+        let planned = await RouteRecommender.recommend(from: here, drops: nearbyDrops)
+        withAnimation { recommendedRoutes = planned }
+        print("[Explore] recommended: \(planned.count)")
     }
 }
 
@@ -632,76 +750,6 @@ final class LiveLocation: NSObject, CLLocationManagerDelegate {
                 || manager.authorizationStatus == .authorizedAlways {
                 manager.startUpdatingLocation()
             }
-        }
-    }
-}
-
-extension ExploreRootView {
-    /// Query safe, public POIs around the user (parks, gas stations, cafes,
-    /// libraries, museums, transit, post offices, bakeries, restaurants) and
-    /// drop one gem at each. Explicitly excludes parking lots and skips any
-    /// POI whose name hints at "private" / "residence" / "apartment".
-    /// Rarity is weighted by category — parks and museums lean rarer, cafes
-    /// and bakeries stay common — and the specific gem type is picked at
-    /// random from the catalog so runners see rubies, emeralds, topaz, etc.
-    func seedSafeZoneDrops(around center: Coordinate) async {
-        let safeCategories: [(MKPointOfInterestCategory, [Rarity])] = [
-            (.park,             [.uncommon, .rare, .epic]),
-            (.publicTransport,  [.common, .uncommon]),
-            (.gasStation,       [.common, .uncommon]),
-            (.library,          [.uncommon, .rare]),
-            (.museum,           [.rare, .epic]),
-            (.cafe,             [.common, .common, .uncommon]),
-            (.bakery,           [.common, .uncommon]),
-            (.restaurant,       [.common, .uncommon]),
-            (.postOffice,       [.common]),
-        ]
-
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = "cafe park library gas station"
-        request.region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: center.lat, longitude: center.lng),
-            latitudinalMeters: 4_000, longitudinalMeters: 4_000)
-        request.pointOfInterestFilter = MKPointOfInterestFilter(
-            including: safeCategories.map(\.0))
-
-        guard let response = try? await MKLocalSearch(request: request).start() else { return }
-
-        // Private-building name hints we always skip, even if the POI matches
-        // an allowed category (e.g. "Private Parking Lot Cafe").
-        let banned = ["private", "residence", "apartment", "parking"]
-        var made: [GemDrop] = []
-        for item in response.mapItems.prefix(15) {
-            let name = (item.name ?? item.placemark.name ?? "").lowercased()
-            if banned.contains(where: name.contains) { continue }
-            guard let category = item.pointOfInterestCategory,
-                  let entry = safeCategories.first(where: { $0.0 == category })
-            else { continue }
-            let rarity = entry.1.randomElement() ?? .common
-            let g = GemCatalog.randomGem(of: rarity)
-            // ~30 m jitter so the pin sits near the POI, not on its label.
-            let jitter = { Double.random(in: -0.0004...0.0004) }
-            let c = item.placemark.coordinate
-            made.append(GemDrop(
-                id: UUID(),
-                gemID: g.id,
-                rarity: rarity,
-                lat: c.latitude + jitter(),
-                lng: c.longitude + jitter(),
-                positionAlongRouteM: 0,
-                respawnRule: .oneTime,
-                placedBy: .creator))
-        }
-
-        guard !made.isEmpty else { return }
-        withAnimation {
-            let existing = nearbyDrops
-            let novel = made.filter { new in
-                !existing.contains { RouteGeometry.planarDistance(
-                    from: $0.coordinate, to: new.coordinate) < 40 }
-            }
-            nearbyDrops.append(contentsOf: novel)
-            seededParksForCenter = center
         }
     }
 }

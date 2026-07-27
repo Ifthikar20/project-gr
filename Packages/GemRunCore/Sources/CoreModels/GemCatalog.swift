@@ -6,6 +6,8 @@ public enum GemCatalog {
     public struct Entry: Sendable {
         public let gem: Gem
         public let setName: String
+        /// One-liner for the gem info card: what this material actually is.
+        public var blurb: String = ""
     }
 
     private static func uuid(_ n: UInt8) -> UUID {
@@ -15,6 +17,7 @@ public enum GemCatalog {
     public static let trailblazerSet = uuid(1)
     public static let harborSet = uuid(2)
     public static let cityLightsSet = uuid(3)
+    public static let relicsSet = uuid(4)
 
     public static let entries: [Entry] = [
         Entry(gem: Gem(id: uuid(10), name: "Trail Quartz", rarity: .common,
@@ -41,6 +44,49 @@ public enum GemCatalog {
                        setID: cityLightsSet, iconRef: "gem.topaz"), setName: "City Lights"),
         Entry(gem: Gem(id: uuid(33), name: "Midnight Amethyst", rarity: .epic,
                        setID: cityLightsSet, iconRef: "gem.amethyst"), setName: "City Lights"),
+        // Ancient Relics — organic and rock gemstone materials.
+        Entry(gem: Gem(id: uuid(40), name: "Bone", rarity: .common,
+                       setID: relicsSet, iconRef: "gem.bone"), setName: "Ancient Relics",
+              blurb: "Polished bone — one of humanity's oldest ornament materials."),
+        Entry(gem: Gem(id: uuid(41), name: "Copal", rarity: .common,
+                       setID: relicsSet, iconRef: "gem.copal"), setName: "Ancient Relics",
+              blurb: "Young tree resin: amber in the making, only a few thousand years old."),
+        Entry(gem: Gem(id: uuid(42), name: "Sponge Coral", rarity: .common,
+                       setID: relicsSet, iconRef: "gem.spongecoral"), setName: "Ancient Relics",
+              blurb: "Porous coral with a sponge-like pattern in warm orange-red tones."),
+        Entry(gem: Gem(id: uuid(43), name: "Mother-of-Pearl", rarity: .common,
+                       setID: relicsSet, iconRef: "gem.motherofpearl"), setName: "Ancient Relics",
+              blurb: "The iridescent inner shell layer built by oysters and abalone."),
+        Entry(gem: Gem(id: uuid(44), name: "Amber", rarity: .uncommon,
+                       setID: relicsSet, iconRef: "gem.amber"), setName: "Ancient Relics",
+              blurb: "Fossilized tree resin, millions of years old — sometimes holding ancient insects."),
+        Entry(gem: Gem(id: uuid(45), name: "Ammonite", rarity: .uncommon,
+                       setID: relicsSet, iconRef: "gem.ammonite"), setName: "Ancient Relics",
+              blurb: "A spiral fossil of a sea creature that swam over 66 million years ago."),
+        Entry(gem: Gem(id: uuid(46), name: "Jet", rarity: .uncommon,
+                       setID: relicsSet, iconRef: "gem.jet"), setName: "Ancient Relics",
+              blurb: "A deep-black gem formed from driftwood fossilized under pressure."),
+        Entry(gem: Gem(id: uuid(47), name: "Fossil Coral", rarity: .uncommon,
+                       setID: relicsSet, iconRef: "gem.fossilcoral"), setName: "Ancient Relics",
+              blurb: "Ancient coral turned to agate, its flower-like pattern frozen in stone."),
+        Entry(gem: Gem(id: uuid(48), name: "Pearl", rarity: .rare,
+                       setID: relicsSet, iconRef: "gem.pearl"), setName: "Ancient Relics",
+              blurb: "The only gem grown inside a living creature, layer by layer."),
+        Entry(gem: Gem(id: uuid(49), name: "Red Coral", rarity: .rare,
+                       setID: relicsSet, iconRef: "gem.redcoral"), setName: "Ancient Relics",
+              blurb: "Precious red coral skeleton, polished for jewelry since antiquity."),
+        Entry(gem: Gem(id: uuid(50), name: "Tektite", rarity: .rare,
+                       setID: relicsSet, iconRef: "gem.tektite"), setName: "Ancient Relics",
+              blurb: "Natural glass forged when meteorite impacts hurled molten earth skyward."),
+        Entry(gem: Gem(id: uuid(51), name: "Ammolite", rarity: .epic,
+                       setID: relicsSet, iconRef: "gem.ammolite"), setName: "Ancient Relics",
+              blurb: "A rainbow-iridescent gem formed from fossilized ammonite shells."),
+        Entry(gem: Gem(id: uuid(52), name: "Dinosaur Bone", rarity: .epic,
+                       setID: relicsSet, iconRef: "gem.dinobone"), setName: "Ancient Relics",
+              blurb: "Agatized dinosaur bone — fossil bone whose cells filled with colorful quartz."),
+        Entry(gem: Gem(id: uuid(53), name: "Ivory (historical)", rarity: .epic,
+                       setID: relicsSet, iconRef: "gem.ivory"), setName: "Ancient Relics",
+              blurb: "A gem material of the past — prized historically, protected today."),
     ]
 
     public static func entry(forGemID id: UUID) -> Entry? {

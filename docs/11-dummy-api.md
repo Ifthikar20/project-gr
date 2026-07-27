@@ -4,7 +4,7 @@ The UI talks to a single protocol — `GemRunAPI` in `Packages/GemRunCore/Source
 
 | Implementation | When active | What it is |
 |---|---|---|
-| `MockGemRunAPI` | `AppConfig.apiBaseURL == nil` (**default today**) | In-app dummy server: in-memory actor, ~150 ms simulated latency, seeded routes, fake competitors, authoritative run validation, respawn dedupe |
+| `MockGemRunAPI` | `AppConfig.apiBaseURL == nil` — device builds with nothing configured, or `GEMRUN_API_URL=mock` (Simulator debug builds default to the LIVE local Django server) | In-app dummy server: in-memory actor, ~150 ms simulated latency, seeded routes, fake competitors, authoritative run validation, respawn dedupe |
 | `HTTPGemRunAPI` | `AppConfig.apiBaseURL` set | URLSession client hitting the same `/v1` paths — this is what the **Python/Django** backend implements later |
 
 **The swap is one line:** set `AppConfig.apiBaseURL` to the Django server's URL. No UI code changes.
@@ -19,7 +19,7 @@ Every mock call logs to the Xcode console with its real path, e.g. `🌐 [MockAP
 | 2 | `GET /v1/users/me` | `me()` | (available; profile is cached locally) | Returns stored profile |
 | 3 | `PATCH /v1/users/me` | `updateMe(handle:)` | (available for settings) | Updates handle |
 | 4 | `DELETE /v1/users/me` | `deleteAccount()` | (available for settings) | Wipes mock state |
-| 5 | `GET /v1/routes?lat&lng&radius_m` | `nearbyRoutes(lat:lng:radiusM:)` | **Explore** on appear | Seeds 3 loops around the caller on first call (cold start, docs/02); returns all published routes |
+| 5 | `GET /v1/routes?lat&lng&radius_m` | `nearbyRoutes(lat:lng:radiusM:)` | **Explore** on appear | Returns published routes only — NO demo seeding; the map shows just the routes users actually create. (Backend demo data is opt-in via `manage.py seed`, which builds street-following routes from OSM ways.) |
 | 6 | `GET /v1/routes/{id}` | `route(id:)` | (available; detail uses cache) | Returns the route or 404-equivalent |
 | 7 | `POST /v1/routes` | `publishRoute(_:)` | **Publish step** of route creation | **Re-validates the placement budget server-side** (slots, points, no Legendary); rejects violations |
 | 8 | `DELETE /v1/routes/{id}` | `archiveRoute(id:)` | (available; Profile archives locally) | Marks archived |

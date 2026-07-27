@@ -15,9 +15,9 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from . import catalog, rules, validation
+from . import catalog, rules, system_drops, validation, walkability
 from .geometry import RouteGeometry, polyline_decode
-from .models import GemDrop, Profile, Route, Run, StashItem, Token
+from .models import ClaimAttempt, GemDrop, Profile, Route, Run, StashItem, Token
 
 FUZZ_RADIUS_M = 150
 
@@ -52,10 +52,16 @@ def profile_from(request):
             return token.profile
     if settings.ALLOW_ALL_ACCOUNTS:
         # Dev flag (mirrors iOS AuthFlags.allowAllAccounts): unauthenticated
-        # calls act as a shared dev profile instead of failing.
-        profile, _ = Profile.objects.get_or_create(
-            auth_provider="guest", external_user_id="dev-fallback",
-            defaults={"handle": "runner"})
+        # calls act as a shared dev profile instead of failing. NOT
+        # get_or_create: the app fires routes+drops concurrently, and two
+        # racing creates once left duplicates that 500'd every request —
+        # always take the oldest, tolerate strays.
+        profile = (Profile.objects.filter(auth_provider="guest",
+                                          external_user_id="dev-fallback")
+                   .order_by("created_at").first())
+        if profile is None:
+            profile = Profile.objects.create(handle="runner", auth_provider="guest",
+                                             external_user_id="dev-fallback")
         return profile
     return None
 
@@ -191,6 +197,10 @@ def publish_route(request):
     # exactly-1 km client route can decode a few meters short.
     if distance_m < 980:
         return problem(422, "Routes must be at least 1 km")
+    # Routes must be open-ended walking paths — no loops, rings, retraces.
+    if geom.distance(coords[0], coords[-1]) < 100:
+        return problem(422, "Routes must be open-ended paths, not loops",
+                       code="loop_rejected")
 
     drops = data.get("gem_drops") or []
     errors = validate_placement(drops, distance_m, geom)
@@ -340,11 +350,19 @@ def complete_run(request, route_id):
     else:
         revoked = [str(c) for c in claimed]
 
+    # Standalone drops (system or runner-left) whose coordinates this track
+    # crossed: claimed here too, first-come-first-served (docs/13).
+    crossed = []
+    if verdict_v["status"] != "invalid":
+        crossed = claim_crossed_standalone_drops(profile, track)
+
     streak_extended = update_streak(profile, verdict_v)
     xp = 0
     if verdict_v["status"] != "invalid":
         xp = validation.xp_for([d.rarity for d in awarded], verdict_v["is_walk"],
                                profile.streak_count)
+        # Crossed standalone drops score plain rarity XP (same as /drops/collect).
+        xp += sum(rules.XP_BY_RARITY[d.rarity] for d in crossed)
         profile.xp += xp
         while profile.xp >= rules.xp_to_advance(profile.level):
             profile.xp -= rules.xp_to_advance(profile.level)
@@ -364,6 +382,9 @@ def complete_run(request, route_id):
                     and not StashItem.objects.filter(gem_drop=drop).exists())
         StashItem.objects.create(profile=profile, gem_id=drop.gem_id, gem_drop=drop,
                                  run=run, collected_at=now, is_first_find=is_first)
+    for drop in crossed:
+        StashItem.objects.create(profile=profile, gem_id=drop.gem_id, gem_drop=drop,
+                                 run=run, collected_at=now, is_first_find=True)
 
     rank = None
     if verdict_v["status"] == "valid" and not verdict_v["is_walk"]:
@@ -373,12 +394,53 @@ def complete_run(request, route_id):
         rank = faster + 1
 
     payload = {"status": verdict_v["status"],
-               "awarded_drops": [drop_json(d, exact=True) for d in awarded],
+               "awarded_drops": [drop_json(d, exact=True) for d in awarded + crossed],
                "revoked": revoked, "xp_earned": xp, "leaderboard_rank": rank,
                "streak_extended": streak_extended}
     run.verdict = payload
     run.save(update_fields=["verdict"])
     return JsonResponse(payload)
+
+
+def claim_crossed_standalone_drops(profile, track):
+    """Active standalone drops from the master table whose coordinates the
+    track passed within the collect radius. One-time: the row is atomically
+    deactivated so exactly one runner ever gets each drop; never your own.
+    Runs inside complete_run's transaction (select_for_update)."""
+    if not track:
+        return []
+    lats = [s["lat"] for s in track]
+    lngs = [s["lng"] for s in track]
+    margin_lat = rules.DROP_COLLECT_RADIUS_M / 111_320
+    margin_lng = rules.DROP_COLLECT_RADIUS_M / (
+        111_320 * max(0.1, math.cos(math.radians(lats[0]))))
+    # No active filter here either: a crossed-but-taken drop logs a losing
+    # ClaimAttempt so races stay observable (see collect_drops).
+    candidates = (GemDrop.objects.select_for_update()
+                  .filter(route__isnull=True,
+                          lat__gte=min(lats) - margin_lat, lat__lte=max(lats) + margin_lat,
+                          lng__gte=min(lngs) - margin_lng, lng__lte=max(lngs) + margin_lng))
+    claimed = []
+    for drop in candidates:
+        closest = closest_track_distance(track, drop.lat, drop.lng)
+        if closest is None or closest > rules.DROP_COLLECT_RADIUS_M:
+            continue   # never crossed — not an attempt, no log
+        if drop.dropped_by_id == profile.id:
+            log_claim(profile, drop, "route_run", "own_drop", closest)
+            continue
+        if not drop.active:
+            log_claim(profile, drop, "route_run", "already_taken", closest)
+            continue
+        drop.active = False
+        drop.save(update_fields=["active"])
+        log_claim(profile, drop, "route_run", "awarded", closest)
+        claimed.append(drop)
+    return claimed
+
+
+def log_claim(profile, drop, source, outcome, closest_m):
+    ClaimAttempt.objects.create(profile=profile, gem_drop=drop, source=source,
+                                outcome=outcome, closest_m=closest_m)
 
 
 def claim_respawn(profile, drop, now):
@@ -513,6 +575,14 @@ def drops(request):
             radius = int(request.GET.get("radius_m", 5000))
         except (KeyError, ValueError):
             return problem(400, "lat, lng and radius_m are required")
+        # Presence trigger (docs/13): this map query's coordinates ARE the
+        # capture point — top up system gems here before answering, so gems
+        # only ever spawn where people actually use the app. Best-effort:
+        # a top-up failure must never break the map read.
+        try:
+            system_drops.top_up_area(lat, lng, radius)
+        except Exception:
+            pass
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
         qs = GemDrop.objects.filter(route__isnull=True, active=True,
@@ -539,6 +609,11 @@ def drops(request):
         lat, lng = float(data["lat"]), float(data["lng"])
     except (KeyError, TypeError, ValueError):
         return problem(400, "lat and lng are required")
+    # Walkability downstream call (docs/13): only a definite "not walkable"
+    # rejects — None (check off/unreachable) keeps drops flowing.
+    if walkability.is_walkable(lat, lng) is False:
+        return problem(422, "Gems can only be dropped on walkable paths",
+                       code="not_walkable")
     wallet[rarity] = int(wallet[rarity]) - 1
     profile.wallet = wallet
     profile.save(update_fields=["wallet"])
@@ -565,17 +640,29 @@ def collect_drops(request):
     now = datetime.now(tz.utc)
     awarded = []
     for drop_id in claimed:
+        # Locked WITHOUT the active filter so a lost race is observable:
+        # the loser's transaction waits on the winner's row lock, then sees
+        # active=False and logs already_taken instead of vanishing silently.
         drop = (GemDrop.objects.select_for_update()
-                .filter(id=drop_id, route__isnull=True, active=True).first())
-        if drop is None or drop.dropped_by_id == profile.id:
+                .filter(id=drop_id, route__isnull=True).first())
+        if drop is None:
             continue
-        if not track_passes_near(track, drop.lat, drop.lng):
+        closest = closest_track_distance(track, drop.lat, drop.lng)
+        if drop.dropped_by_id == profile.id:
+            log_claim(profile, drop, "free_run", "own_drop", closest)
+            continue
+        if closest is None or closest > rules.DROP_COLLECT_RADIUS_M:
+            log_claim(profile, drop, "free_run", "too_far", closest)
+            continue
+        if not drop.active:
+            log_claim(profile, drop, "free_run", "already_taken", closest)
             continue
         drop.active = False
         drop.save(update_fields=["active"])
         StashItem.objects.create(profile=profile, gem_id=drop.gem_id,
                                  gem_drop=drop, collected_at=now,
                                  is_first_find=True)
+        log_claim(profile, drop, "free_run", "awarded", closest)
         awarded.append(drop)
     xp = sum(rules.XP_BY_RARITY[d.rarity] for d in awarded)
     if xp:
@@ -588,15 +675,24 @@ def collect_drops(request):
                          "xp_earned": xp})
 
 
-def track_passes_near(track, lat, lng):
+def closest_track_distance(track, lat, lng):
+    """Closest an accuracy-trusted GPS sample came to (lat, lng), in meters.
+    None when no sample was accurate enough to count."""
     k = 111_320.0
     klng = k * max(0.1, math.cos(math.radians(lat)))
+    best = None
     for s in track:
-        dy = (s["lat"] - lat) * k
-        dx = (s["lng"] - lng) * klng
-        if math.hypot(dx, dy) <= rules.DROP_COLLECT_RADIUS_M:
-            return True
-    return False
+        if s.get("horizontal_accuracy", 0) > rules.MAX_CLAIM_ACCURACY_M:
+            continue
+        d = math.hypot((s["lat"] - lat) * k, (s["lng"] - lng) * klng)
+        if best is None or d < best:
+            best = d
+    return best
+
+
+def track_passes_near(track, lat, lng):
+    d = closest_track_distance(track, lat, lng)
+    return d is not None and d <= rules.DROP_COLLECT_RADIUS_M
 
 
 @csrf_exempt

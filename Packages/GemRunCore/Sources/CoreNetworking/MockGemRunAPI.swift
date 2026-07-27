@@ -20,7 +20,6 @@ public actor MockGemRunAPI: GemRunAPI {
     private var verdicts: [String: RunVerdict] = [:]
     private var userTimes: [UUID: [(timeS: Int, date: Date)]] = [:]
     private var competitorTimes: [UUID: [(handle: String, level: Int, timeS: Int)]] = [:]
-    private var seeded = false
 
     private static let competitors: [(String, Int)] = [
         ("maya.runs", 7), ("dev_collects", 4), ("sam_routes", 11),
@@ -65,7 +64,7 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func nearbyRoutes(lat: Double, lng: Double, radiusM: Int) async throws -> [Route] {
         await call("GET /v1/routes?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
-        seedIfNeeded(around: Coordinate(lat: lat, lng: lng))
+        // No demo seeding: only routes users actually published exist.
         return routes.values
             .filter { !archived.contains($0.id) }
             .sorted { $0.name < $1.name }
@@ -267,7 +266,7 @@ public actor MockGemRunAPI: GemRunAPI {
         return track.contains { s in
             let dy = (s.lat - lat) * k
             let dx = (s.lng - lng) * klng
-            return (dx * dx + dy * dy).squareRoot() <= CollectionRules.collectionRadiusM
+            return (dx * dx + dy * dy).squareRoot() <= CollectionRules.dropCollectRadiusM
         }
     }
 
@@ -301,66 +300,6 @@ public actor MockGemRunAPI: GemRunAPI {
         guard !awardedKeys.contains(key) else { return false }
         awardedKeys.insert(key)
         return true
-    }
-
-    /// Cold-start seeding (docs/02): three loops around the caller, each with
-    /// fake competitor times so leaderboards read as a live city.
-    private func seedIfNeeded(around center: Coordinate) {
-        guard !seeded else { return }
-        seeded = true
-        let specs: [(String, Double, Double, Double, RouteDifficulty, [(Rarity, Double)])] = [
-            ("First Light Loop", 0, 0, 320, .easy,
-             [(.common, 0.15), (.common, 0.5), (.uncommon, 0.85)]),
-            ("Gem Hunter's Circuit", 900, 400, 800, .moderate,
-             [(.common, 0.1), (.uncommon, 0.35), (.rare, 0.55), (.uncommon, 0.8)]),
-            // The weekly Legendary lives on the hard route (docs/02): one-time,
-            // system-seeded, first finder gets the crown.
-            ("Ridge Endurance Run", -1_200, -700, 1_450, .hard,
-             [(.common, 0.1), (.rare, 0.45), (.epic, 0.7), (.legendary, 0.78), (.uncommon, 0.9)]),
-        ]
-        for (name, dLat, dLng, radius, difficulty, gems) in specs {
-            let route = Self.loop(named: name, center: Self.offset(center, dLatM: dLat, dLngM: dLng),
-                                  radiusM: radius, difficulty: difficulty, gems: gems)
-            routes[route.id] = route
-            // Plausible fake times: base pace 4:50–6:20 /km by entry order.
-            competitorTimes[route.id] = Self.competitors.prefix(3).enumerated().map { i, c in
-                (c.0, c.1, Int(Double(route.distanceM) / 1_000 * Double(290 + i * 45)))
-            }
-        }
-    }
-
-    private static func loop(named name: String, center: Coordinate, radiusM: Double,
-                             difficulty: RouteDifficulty, gems: [(Rarity, Double)]) -> Route {
-        let n = 36
-        let coords = (0...n).map { i -> Coordinate in
-            let angle = 2 * .pi * Double(i) / Double(n)
-            return offset(center, dLatM: radiusM * sin(angle), dLngM: radiusM * cos(angle))
-        }
-        let geometry = RouteGeometry(coordinates: coords)
-        let drops = gems.map { rarity, fraction -> GemDrop in
-            let alongM = geometry.totalLengthM * fraction
-            let position = geometry.coordinate(atDistance: alongM)
-            let respawn: RespawnRule = switch rarity {
-            case .common, .uncommon: .daily
-            case .rare, .epic: .oncePerUser
-            case .legendary: .oneTime
-            }
-            return GemDrop(id: UUID(), gemID: GemCatalog.gem(of: rarity).id, rarity: rarity,
-                           lat: position.lat, lng: position.lng,
-                           positionAlongRouteM: Int(alongM),
-                           respawnRule: respawn, placedBy: .system)
-        }
-        // Plausible elevation profile: a single main climb scaled to the gain
-        // (real elevation arrives with the backend's terrain data, docs/08).
-        let gain = Int(geometry.totalLengthM) / 100
-        let profile = (0...40).map { i in
-            Int(Double(gain) * (0.5 - 0.5 * cos(2 * .pi * Double(i) / 40)))
-        }
-        return Route(id: UUID(), name: name, polyline: PolylineCodec.encode(coords),
-                     distanceM: Int(geometry.totalLengthM),
-                     elevationGainM: gain,
-                     difficulty: difficulty, gemDrops: drops,
-                     elevationProfile: profile)
     }
 
     private static func offset(_ c: Coordinate, dLatM: Double, dLngM: Double) -> Coordinate {

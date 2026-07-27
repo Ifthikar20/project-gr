@@ -87,6 +87,24 @@ class Run(models.Model):
         ]
 
 
+class ClaimAttempt(models.Model):
+    """Write-audit of the gem race (docs/13): EVERY attempt to claim a
+    standalone drop is logged — winners and losers — so 'who was there and
+    who got it first' is answerable after the fact. StashItem records only
+    the winner; this table records the race."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE,
+                                related_name="claim_attempts")
+    gem_drop = models.ForeignKey(GemDrop, on_delete=models.CASCADE,
+                                 related_name="claim_attempts")
+    source = models.CharField(max_length=12)    # free_run | route_run
+    # awarded | already_taken | too_far | own_drop
+    outcome = models.CharField(max_length=16)
+    # Closest the track came to the drop (accuracy-filtered samples only).
+    closest_m = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class StashItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="stash")

@@ -61,6 +61,21 @@ public enum MapPalette {
         case "gem.topaz": "💛"
         case "gem.amethyst": "💜"
         case "gem.ember": "🔥"
+        // Ancient Relics — organic and rock gemstone materials.
+        case "gem.bone": "🦴"
+        case "gem.copal": "🟡"
+        case "gem.spongecoral": "🧽"
+        case "gem.motherofpearl": "🦪"
+        case "gem.amber": "🍯"
+        case "gem.ammonite": "🐚"
+        case "gem.jet": "🖤"
+        case "gem.fossilcoral": "🪨"
+        case "gem.pearl": "⚪️"
+        case "gem.redcoral": "🪸"
+        case "gem.tektite": "☄️"
+        case "gem.ammolite": "🌈"
+        case "gem.dinobone": "🦕"
+        case "gem.ivory": "🐘"
         default: "💎"
         }
     }
@@ -102,6 +117,32 @@ public struct DropPin: View {
     }
 }
 
+/// One-shot sparkle burst shown at a gem's map location the moment it's
+/// captured mid-run: six sparkles fly outward and fade over ~1.2 s.
+struct SparkleBurst: View {
+    @State private var animate = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<6, id: \.self) { i in
+                Text("✨")
+                    .font(.system(size: 13))
+                    .offset(x: animate ? 24 * cos(Double(i) * .pi / 3) : 0,
+                            y: animate ? 24 * sin(Double(i) * .pi / 3) : 0)
+                    .scaleEffect(animate ? 1.3 : 0.4)
+                    .opacity(animate ? 0 : 1)
+            }
+            Text("✨")
+                .font(.title2)
+                .scaleEffect(animate ? 2.0 : 0.6)
+                .opacity(animate ? 0 : 1)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.2)) { animate = true }
+        }
+    }
+}
+
 /// Explore home map: user location, route polylines, and standalone gem
 /// drops other runners left behind (docs/03 §2). When `onTapCoordinate` is
 /// set (drop mode), map taps come back as coordinates.
@@ -118,13 +159,16 @@ public struct ExploreMapView: View {
     let userCoordinate: Coordinate?
     let onSelect: (Route) -> Void
     let onTapCoordinate: ((Coordinate) -> Void)?
+    /// Tap on a gem pin — the caller shows the gem-info card.
+    let onSelectDrop: ((GemDrop) -> Void)?
 
     public init(routes: [Route], standaloneDrops: [GemDrop] = [], selectedID: UUID?,
                 previewPath: [Coordinate] = [],
                 destinationPin: Coordinate? = nil,
                 userCoordinate: Coordinate? = nil,
                 onSelect: @escaping (Route) -> Void,
-                onTapCoordinate: ((Coordinate) -> Void)? = nil) {
+                onTapCoordinate: ((Coordinate) -> Void)? = nil,
+                onSelectDrop: ((GemDrop) -> Void)? = nil) {
         self.routes = routes
         self.standaloneDrops = standaloneDrops
         self.selectedID = selectedID
@@ -133,6 +177,7 @@ public struct ExploreMapView: View {
         self.userCoordinate = userCoordinate
         self.onSelect = onSelect
         self.onTapCoordinate = onTapCoordinate
+        self.onSelectDrop = onSelectDrop
     }
 
     public var body: some View {
@@ -160,7 +205,12 @@ public struct ExploreMapView: View {
             // within a second of opening), the 🏃 emoji above takes over.
             ForEach(standaloneDrops) { drop in
                 Annotation("", coordinate: drop.coordinate.cl) {
-                    DropPin(gemID: drop.gemID)
+                    Button {
+                        onSelectDrop?(drop)
+                    } label: {
+                        DropPin(gemID: drop.gemID)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             // Point-to-point preview: dashed pulse line from the user to the
@@ -177,9 +227,13 @@ public struct ExploreMapView: View {
             }
             ForEach(routes) { route in
                 let coords = PolylineCodec.decode(route.polyline).map(\.cl)
-                MapPolyline(coordinates: coords)
-                    .stroke(MapPalette.pulse.opacity(route.id == selectedID ? 1 : 0.65),
-                            lineWidth: route.id == selectedID ? 5 : 3)
+                // The resting map shows only start pills + gems; a route's
+                // line draws once the runner picks it (like tapping a
+                // suggestion in Apple Maps).
+                if route.id == selectedID {
+                    MapPolyline(coordinates: coords)
+                        .stroke(MapPalette.pulse, lineWidth: 5)
+                }
                 if let start = coords.first {
                     Annotation(route.name, coordinate: start) {
                         Button { onSelect(route) } label: {
@@ -325,26 +379,98 @@ public struct DestinationPin: View {
     }
 }
 
+/// Publishes the device's compass heading (degrees clockwise from north) so
+/// the run map rotates with the phone — Apple Maps walking-navigation feel.
+@MainActor
+@Observable
+final class CompassProvider {
+    private(set) var headingDeg: Double?
+    private var manager: CLLocationManager?
+    private var proxy: Proxy?
+
+    // Nonisolated so `@State private var compass = CompassProvider()` can
+    // build the instance outside the main actor; the manager is created
+    // in start(), which always runs on it.
+    nonisolated init() {}
+
+    func start() {
+        let proxy = Proxy { [weak self] deg in self?.headingDeg = deg }
+        self.proxy = proxy
+        let manager = CLLocationManager()
+        manager.delegate = proxy
+        manager.headingFilter = 4
+        manager.startUpdatingHeading()
+        self.manager = manager
+    }
+
+    func stop() {
+        manager?.stopUpdatingHeading()
+    }
+
+    private final class Proxy: NSObject, CLLocationManagerDelegate {
+        private let onHeading: @MainActor (Double) -> Void
+
+        init(onHeading: @escaping @MainActor (Double) -> Void) {
+            self.onHeading = onHeading
+        }
+
+        func locationManager(_ manager: CLLocationManager,
+                             didUpdateHeading newHeading: CLHeading) {
+            let deg = newHeading.trueHeading >= 0
+                ? newHeading.trueHeading : newHeading.magneticHeading
+            guard deg >= 0 else { return }
+            Task { @MainActor in self.onHeading(deg) }
+        }
+    }
+}
+
 /// Active Run chase map (docs/03 §7): follows the runner, shows gems ahead.
 /// `route` is nil on a free run — only standalone drops render.
-/// Camera behaves like Google Maps nav: low altitude, 60° pitch, rotated to
-/// the current direction of travel so the runner is always heading "up."
+/// Camera is a fixed north-up bird's-eye view (Google-Maps style — the map
+/// never rotates). The runner marker carries a compass arrowhead that turns
+/// with the phone, so direction lives on the marker, not the map.
+@MainActor
 public struct ActiveRunMapView: View {
     let route: Route?
     let freeDrops: [GemDrop]
+    /// Planned walking line for free runs launched from a recommended route
+    /// (client-side only — there's no backend route to decode it from).
+    let plannedPath: [Coordinate]
     let runnerPosition: Coordinate?
     let collectedDropIDs: Set<UUID>
+    /// Breadcrumb of positions actually traveled this run, drawn behind
+    /// the runner so every step taken is visible on the map.
+    let traveledPath: [Coordinate]
 
-    /// Remembers the previous sample so we can compute bearing frame-to-frame.
+    /// Anchor of the last heading update — kept until the runner moves far
+    /// enough from it, so short per-sample steps still accumulate into
+    /// live rotation instead of freezing the camera north-up.
     @State private var previousRunner: Coordinate?
     @State private var heading: CLLocationDirection = 0
+    /// Follow mode: camera tracks the runner. Users can pan away to inspect
+    /// the map; a floating "Recenter" button snaps back to follow (Apple-Maps
+    /// walking-nav feel). We only push new camera positions while following;
+    /// once panned, the runner-update watchers no-op so the user's view sticks.
+    @State private var cameraPosition: MapCameraPosition = .automatic
+    @State private var isFollowing = true
+    /// Live compass — rotates the follow camera and the runner emoji.
+    @State private var compass = CompassProvider()
+    /// The map's current rotation, so the emoji's rotation stays accurate
+    /// even after the user pans/rotates the map by hand.
+    @State private var cameraHeadingDeg: Double = 0
+    /// Drops currently playing their capture sparkle (cleared ~1.6 s after
+    /// the collection lands, leaving the muted checkmark behind).
+    @State private var sparklingDropIDs: Set<UUID> = []
 
-    public init(route: Route?, freeDrops: [GemDrop] = [], runnerPosition: Coordinate?,
-                collectedDropIDs: Set<UUID>) {
+    public init(route: Route?, freeDrops: [GemDrop] = [],
+                plannedPath: [Coordinate] = [], runnerPosition: Coordinate?,
+                collectedDropIDs: Set<UUID>, traveledPath: [Coordinate] = []) {
         self.route = route
         self.freeDrops = freeDrops
+        self.plannedPath = plannedPath
         self.runnerPosition = runnerPosition
         self.collectedDropIDs = collectedDropIDs
+        self.traveledPath = traveledPath
     }
 
     private var drops: [GemDrop] {
@@ -352,65 +478,181 @@ public struct ActiveRunMapView: View {
     }
 
     public var body: some View {
-        Map(position: .constant(camera)) {
-            if let route {
-                MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
-                    .stroke(MapPalette.pulse, lineWidth: 4)
-            }
-            ForEach(drops) { drop in
-                Annotation("", coordinate: drop.coordinate.cl) {
-                    if collectedDropIDs.contains(drop.id) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(MapPalette.ink.opacity(0.35))
-                    } else {
-                        Text(MapPalette.emoji(forGemID: drop.gemID))
-                            .font(.callout)
-                            .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
+        ZStack(alignment: .topTrailing) {
+            Map(position: $cameraPosition) {
+                if let route {
+                    MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
+                        .stroke(MapPalette.pulse, lineWidth: 4)
+                } else if plannedPath.count > 1 {
+                    MapPolyline(coordinates: plannedPath.map(\.cl))
+                        .stroke(MapPalette.pulse, lineWidth: 4)
+                }
+                // The trail of steps actually taken this run — smoothed with
+                // a 3-sample moving average so it reads as a clean stroke,
+                // not a jitter-scribbled raw GPS line.
+                if traveledPath.count > 1 {
+                    MapPolyline(coordinates: smoothedTrail(traveledPath).map(\.cl))
+                        .stroke(MapPalette.ink.opacity(0.55),
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round,
+                                                   lineJoin: .round))
+                }
+                ForEach(drops) { drop in
+                    Annotation("", coordinate: drop.coordinate.cl) {
+                        if sparklingDropIDs.contains(drop.id) {
+                            SparkleBurst()
+                        } else if collectedDropIDs.contains(drop.id) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.footnote)
+                                .foregroundStyle(MapPalette.ink.opacity(0.35))
+                        } else {
+                            Text(MapPalette.emoji(forGemID: drop.gemID))
+                                .font(.callout)
+                                .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
+                        }
+                    }
+                }
+                if let runner = runnerPosition {
+                    Annotation("", coordinate: runner.cl) {
+                        // Top-down runner: the emoji stays upright; an
+                        // orbiting arrowhead points where the phone points
+                        // (compass heading, corrected for any manual map
+                        // rotation the user did with two fingers).
+                        ZStack {
+                            Image(systemName: "arrowtriangle.up.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(MapPalette.pulse)
+                                .shadow(color: MapPalette.ink.opacity(0.4),
+                                        radius: 1, y: 1)
+                                .offset(y: -26)
+                                .rotationEffect(.degrees(
+                                    (compass.headingDeg ?? heading) - cameraHeadingDeg))
+                                .animation(.easeInOut(duration: 0.3),
+                                           value: compass.headingDeg)
+                            Text("🏃")
+                                .font(.title)
+                                .shadow(color: MapPalette.ink.opacity(0.5),
+                                        radius: 1, y: 1)
+                        }
                     }
                 }
             }
-            if let runner = runnerPosition {
-                Annotation("", coordinate: runner.cl) {
-                    // Chevron pointing "up" matches the camera's heading so it
-                    // always reads as "forward" in the perspective view.
-                    Image(systemName: "location.north.fill")
-                        .font(.title2)
-                        .foregroundStyle(MapPalette.pulse)
-                        .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
+            .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            .onChange(of: collectedDropIDs) { old, new in
+                let fresh = new.subtracting(old)
+                guard !fresh.isEmpty else { return }
+                sparklingDropIDs.formUnion(fresh)
+                Task {
+                    try? await Task.sleep(for: .seconds(1.6))
+                    sparklingDropIDs.subtract(fresh)
                 }
             }
+            .onChange(of: runnerPosition?.lat) { _, _ in
+                updateHeading()
+                pushCameraIfFollowing()
+            }
+            .onChange(of: runnerPosition?.lng) { _, _ in
+                updateHeading()
+                pushCameraIfFollowing()
+            }
+            // Detect user pan: if the camera drifts far from the runner while
+            // we're supposed to be following, they dragged it — release follow.
+            .onMapCameraChange(frequency: .onEnd) { context in
+                cameraHeadingDeg = context.camera.heading
+                guard isFollowing, let runner = runnerPosition else { return }
+                let center = context.camera.centerCoordinate
+                let mPerDegLat = 111_320.0
+                let dy = (center.latitude - runner.lat) * mPerDegLat
+                let dx = (center.longitude - runner.lng) * mPerDegLat
+                        * cos(runner.lat * .pi / 180)
+                if (dx * dx + dy * dy).squareRoot() > 60 {
+                    isFollowing = false
+                }
+            }
+            .onAppear {
+                compass.start()
+                // Seed the camera so the run opens focused on the runner
+                // (or the route bounds), not zoomed out to the whole world.
+                if let runner = runnerPosition {
+                    cameraPosition = .camera(MapCamera(centerCoordinate: runner.cl,
+                                                       distance: 600, heading: 0, pitch: 0))
+                } else if let route {
+                    cameraPosition = .region(region(for: PolylineCodec.decode(route.polyline)))
+                } else {
+                    cameraPosition = .userLocation(fallback: .automatic)
+                }
+            }
+            .onDisappear {
+                compass.stop()
+            }
+
+            if !isFollowing {
+                Button {
+                    isFollowing = true
+                    pushCameraIfFollowing()
+                } label: {
+                    Image(systemName: "location.fill")
+                        .font(.title3)
+                        .foregroundStyle(MapPalette.pulse)
+                        .frame(width: 44, height: 44)
+                        .background(.thinMaterial, in: Circle())
+                        .overlay(Circle().stroke(MapPalette.ink.opacity(0.15), lineWidth: 1))
+                        .shadow(color: MapPalette.ink.opacity(0.2), radius: 4, y: 2)
+                }
+                .padding(.top, 60)
+                .padding(.trailing, 16)
+                .accessibilityLabel("Recenter on runner")
+                .transition(.scale.combined(with: .opacity))
+            }
         }
-        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
-        .onChange(of: runnerPosition?.lat) { _, _ in updateHeading() }
-        .onChange(of: runnerPosition?.lng) { _, _ in updateHeading() }
+        .animation(.easeInOut(duration: 0.2), value: isFollowing)
     }
 
-    /// Bearing from the previous sample to the current one, in degrees clockwise
-    /// from north. Ignores GPS jitter below ~5 m so the camera doesn't spin.
+    /// Push a fresh follow-camera when the runner moves — only while the user
+    /// hasn't panned away. Stops writing to `cameraPosition` when they have,
+    /// so their inspection view sticks until they tap Recenter.
+    private func pushCameraIfFollowing() {
+        guard isFollowing, let runner = runnerPosition else { return }
+        // North-up, no rotation — the marker's arrowhead carries direction.
+        cameraHeadingDeg = 0
+        cameraPosition = .camera(MapCamera(centerCoordinate: runner.cl,
+                                           distance: 600, heading: 0, pitch: 0))
+    }
+
+    /// Simple 3-sample moving average — keeps the trail visually clean without
+    /// the cost/latency of re-running MKDirections on the traveled path.
+    private func smoothedTrail(_ raw: [Coordinate]) -> [Coordinate] {
+        guard raw.count >= 3 else { return raw }
+        var out: [Coordinate] = [raw[0]]
+        for i in 1..<(raw.count - 1) {
+            let a = raw[i - 1], b = raw[i], c = raw[i + 1]
+            out.append(Coordinate(lat: (a.lat + b.lat + c.lat) / 3,
+                                  lng: (a.lng + b.lng + c.lng) / 3))
+        }
+        out.append(raw[raw.count - 1])
+        return out
+    }
+
+    /// Live direction: bearing from the last heading anchor to the current
+    /// position, clockwise from north. The anchor only advances once the
+    /// runner is > 5 m from it — per-second samples at running pace move
+    /// ~3 m, so anchoring per-sample froze the heading; accumulating from
+    /// a fixed anchor keeps the camera rotating like turn-by-turn nav
+    /// while still ignoring GPS jitter.
     private func updateHeading() {
         guard let curr = runnerPosition else { return }
-        defer { previousRunner = curr }
-        guard let prev = previousRunner else { return }
+        guard let prev = previousRunner else {
+            previousRunner = curr
+            return
+        }
         let mPerDegLat = 111_320.0
         let dy = (curr.lat - prev.lat) * mPerDegLat
         let dx = (curr.lng - prev.lng) * mPerDegLat * cos(curr.lat * .pi / 180)
         guard (dx * dx + dy * dy).squareRoot() > 5 else { return }
         let bearing = atan2(dx, dy) * 180 / .pi
         heading = (bearing + 360).truncatingRemainder(dividingBy: 360)
+        previousRunner = curr
     }
 
-    private var camera: MapCameraPosition {
-        if let runner = runnerPosition {
-            // Google-Maps-nav feel: low altitude, tilted, rotated to travel dir.
-            .camera(MapCamera(centerCoordinate: runner.cl,
-                              distance: 350, heading: heading, pitch: 60))
-        } else if let route {
-            .region(region(for: PolylineCodec.decode(route.polyline)))
-        } else {
-            .userLocation(fallback: .automatic)
-        }
-    }
 }
 
 func region(for coords: [Coordinate]) -> MKCoordinateRegion {
@@ -429,21 +671,32 @@ func region(for coords: [Coordinate]) -> MKCoordinateRegion {
 }
 
 /// Snap consecutive waypoints to walkable paths via MKDirections (docs/03 §4).
-/// Falls back to a straight segment when routing fails.
+/// Falls back to a straight segment when routing fails — callers that place
+/// gems must use `snapVerified` and treat `snapped == false` segments as
+/// unconfirmed (they may cross private land; docs/13 §2).
 public enum PathSnapper {
-    public static func snap(from a: Coordinate, to b: Coordinate) async -> [Coordinate] {
+    /// The snapped path plus whether MKDirections actually confirmed it as a
+    /// walking route (`false` = straight-line fallback, NOT a walkable path).
+    public static func snapVerified(from a: Coordinate,
+                                    to b: Coordinate) async -> (path: [Coordinate],
+                                                                snapped: Bool) {
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: a.cl))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: b.cl))
         request.transportType = .walking
         do {
             let response = try await MKDirections(request: request).calculate()
-            guard let poly = response.routes.first?.polyline else { return [a, b] }
+            guard let poly = response.routes.first?.polyline else { return ([a, b], false) }
             var coords = [CLLocationCoordinate2D](repeating: .init(), count: poly.pointCount)
             poly.getCoordinates(&coords, range: NSRange(location: 0, length: poly.pointCount))
-            return coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }
+            return (coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }, true)
         } catch {
-            return [a, b]
+            return ([a, b], false)
         }
+    }
+
+    /// Path-only convenience for previews, where verification doesn't matter.
+    public static func snap(from a: Coordinate, to b: Coordinate) async -> [Coordinate] {
+        await snapVerified(from: a, to: b).path
     }
 }

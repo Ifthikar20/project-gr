@@ -5,6 +5,10 @@ import Foundation
 /// shared by the engine, tests, and (as documented values) the server pipeline.
 public enum CollectionRules {
     public static let collectionRadiusM: Double = 25
+    /// Standalone (walk-near) drops capture at 100 ft — more forgiving than
+    /// route gems because there's no route geometry to corroborate position.
+    /// Server mirror: rules.DROP_COLLECT_RADIUS_M.
+    public static let dropCollectRadiusM: Double = 30.5
     public static let hysteresisExitRadiusM: Double = 40
     public static let hysteresisAdvanceM: Double = 50
 

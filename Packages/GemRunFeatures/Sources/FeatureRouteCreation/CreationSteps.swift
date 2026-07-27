@@ -59,16 +59,6 @@ struct DrawStepView: View {
             }
             .disabled(model.waypoints.isEmpty)
             Spacer()
-            if model.canCloseLoop {
-                Button {
-                    model.closeLoop()
-                } label: {
-                    Label("Close loop", systemImage: "arrow.triangle.capsulepath")
-                }
-                .font(.footnote.bold())
-                .foregroundStyle(DS.Colors.pulse)
-            }
-            Spacer()
             Text(String(format: "%.2f km · %d points",
                         Double(model.distanceM) / 1_000, model.waypoints.count))
                 .font(.footnote)

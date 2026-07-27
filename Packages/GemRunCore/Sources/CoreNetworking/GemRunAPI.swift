@@ -9,13 +9,33 @@ import Foundation
 // UI code only ever sees `API.shared`, so the Django swap is one URL change.
 
 public enum AppConfig {
-    /// Set to the Django backend URL to switch off the mock — e.g.
-    /// `URL(string: "http://127.0.0.1:8000")` with `backend/` running locally
-    /// (see backend/README.md). nil = in-app MockGemRunAPI.
-    public static let apiBaseURL: URL? = nil
+    /// Backend base URL, resolved at launch — never hardcoded. Priority:
+    ///   1. `GEMRUN_API_URL` env var  ("mock" forces the in-app mock;
+    ///      run.sh passes the local Django URL here via SIMCTL_CHILD_…)
+    ///   2. `GemRunAPIBaseURL` Info.plist key (set per-config in project.yml)
+    ///   3. Simulator debug builds default to the local Django server
+    ///      (backend/README.md) so the UI reads live data out of the box.
+    /// nil = in-app MockGemRunAPI (device builds with nothing configured).
+    public static let apiBaseURL: URL? = resolveBaseURL()
+
     /// Simulated latency for the mock, in milliseconds. Keep small — the UI
     /// renders cached data instantly and refreshes when calls land.
     public static let mockLatencyMs: UInt64 = 150
+
+    private static func resolveBaseURL() -> URL? {
+        if let raw = ProcessInfo.processInfo.environment["GEMRUN_API_URL"] {
+            return raw.lowercased() == "mock" ? nil : URL(string: raw)
+        }
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "GemRunAPIBaseURL") as? String,
+           !raw.isEmpty {
+            return raw.lowercased() == "mock" ? nil : URL(string: raw)
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        return URL(string: "http://127.0.0.1:8000")
+        #else
+        return nil
+        #endif
+    }
 }
 
 public enum API {
@@ -45,6 +65,11 @@ public struct AuthResponse: Codable, Sendable {
 public struct RunSession: Codable, Sendable {
     public let runID: UUID
     public let exactDrops: [GemDrop]
+
+    enum CodingKeys: String, CodingKey {
+        case exactDrops
+        case runID = "runId"
+    }
 
     public init(runID: UUID, exactDrops: [GemDrop]) {
         self.runID = runID

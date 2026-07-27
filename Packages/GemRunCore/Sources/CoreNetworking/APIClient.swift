@@ -43,9 +43,15 @@ public final class HTTPGemRunAPI: GemRunAPI {
         let _: Empty = try await send("DELETE", "users/me", body: Empty())
     }
 
+    private struct RoutesResponse: Decodable {
+        let routes: [Route]
+    }
+
     public func nearbyRoutes(lat: Double, lng: Double, radiusM: Int) async throws -> [Route] {
-        try await get("routes", query: ["lat": "\(lat)", "lng": "\(lng)",
-                                        "radius_m": "\(radiusM)"])
+        let response: RoutesResponse = try await get(
+            "routes", query: ["lat": "\(lat)", "lng": "\(lng)",
+                              "radius_m": "\(radiusM)"])
+        return response.routes
     }
 
     public func route(id: UUID) async throws -> Route {
@@ -73,18 +79,31 @@ public final class HTTPGemRunAPI: GemRunAPI {
         try await get("stash")
     }
 
+    private struct EntriesResponse: Decodable {
+        let entries: [LeaderboardEntry]
+    }
+
     public func routeLeaderboard(routeID: UUID,
                                  window: LeaderboardWindow) async throws -> [LeaderboardEntry] {
-        try await get("routes/\(routeID.uuidString)/leaderboard",
-                      query: ["window": window.rawValue])
+        let response: EntriesResponse = try await get(
+            "routes/\(routeID.uuidString)/leaderboard",
+            query: ["window": window.rawValue])
+        return response.entries
     }
 
     public func localLeaderboard(geohash: String) async throws -> [LeaderboardEntry] {
-        try await get("leaderboards/local", query: ["geohash": geohash])
+        let response: EntriesResponse = try await get("leaderboards/local",
+                                                      query: ["geohash": geohash])
+        return response.entries
+    }
+
+    private struct CatalogResponse: Decodable {
+        let gems: [Gem]
     }
 
     public func gemCatalog() async throws -> [Gem] {
-        try await get("gems/catalog")
+        let response: CatalogResponse = try await get("gems/catalog")
+        return response.gems
     }
 
     // MARK: - Gem wallet + standalone drops
@@ -163,7 +182,7 @@ public final class HTTPGemRunAPI: GemRunAPI {
         var request = URLRequest(url: components.url!)
         authorize(&request)
         let (data, response) = try await session.data(for: request)
-        return try decode(data, response)
+        return try decode(data, response, context: "GET /v1/\(path)")
     }
 
     private func send<B: Encodable, T: Decodable>(_ method: String, _ path: String,
@@ -174,7 +193,7 @@ public final class HTTPGemRunAPI: GemRunAPI {
         request.httpBody = try encoder.encode(body)
         authorize(&request)
         let (data, response) = try await session.data(for: request)
-        return try decode(data, response)
+        return try decode(data, response, context: "\(method) /v1/\(path)")
     }
 
     private func authorize(_ request: inout URLRequest) {
@@ -183,12 +202,29 @@ public final class HTTPGemRunAPI: GemRunAPI {
         }
     }
 
-    private func decode<T: Decodable>(_ data: Data, _ response: URLResponse) throws -> T {
+    /// Decode with verbose logging: every call logs its outcome to the
+    /// console, and failures log the FULL error — a keyNotFound decode
+    /// mismatch silently emptied the map once; never again.
+    private func decode<T: Decodable>(_ data: Data, _ response: URLResponse,
+                                      context: String) throws -> T {
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw (try? decoder.decode(HTTPError.self, from: data))
+            let error = (try? decoder.decode(HTTPError.self, from: data))
                 ?? HTTPError(title: "HTTP \(http.statusCode)", detail: nil, code: nil)
+            print("[API] \(context) → \(http.statusCode) ERROR: \(error.title)"
+                  + (error.detail.map { " — \($0)" } ?? ""))
+            throw error
         }
-        if data.isEmpty, let empty = Empty() as? T { return empty }
-        return try decoder.decode(T.self, from: data)
+        if data.isEmpty, let empty = Empty() as? T {
+            print("[API] \(context) → OK (empty)")
+            return empty
+        }
+        do {
+            let value = try decoder.decode(T.self, from: data)
+            print("[API] \(context) → OK (\(data.count) bytes)")
+            return value
+        } catch {
+            print("[API] \(context) → DECODE FAILED: \(error)")
+            throw error
+        }
     }
 }
