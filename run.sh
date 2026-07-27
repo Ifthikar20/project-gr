@@ -129,7 +129,7 @@ run_app() {
     echo "GemRun is running against ${GEMRUN_API_URL:-http://127.0.0.1:${API_PORT}}. Tips:"
     echo "  - Simulate a location: Simulator menu > Features > Location"
     echo "  - In-app mock instead of the backend:  GEMRUN_API_URL=mock ./run.sh app"
-    echo "  - Reset demo data:  ./run.sh stop && (cd backend && .venv/bin/python manage.py seed --reset)"
+    echo "  - Remove demo data: (cd backend && .venv/bin/python manage.py migrate && .venv/bin/python manage.py seed --clear)"
 }
 
 case "$MODE" in
