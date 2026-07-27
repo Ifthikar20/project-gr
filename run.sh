@@ -70,6 +70,10 @@ PYEOF
     if [ "${SEED_DEMO:-1}" = "1" ]; then
         python manage.py seed
     fi
+    # Stock gems NOW (not just on first map open) and log what was created
+    # + the area's full gem inventory.
+    PRESENCE_DROP_MIN_RUNS="${PRESENCE_DROP_MIN_RUNS:-0}" \
+        python manage.py stock_gems
     # Dev gate: any published route spawns system gems immediately (no
     # 3-run popularity wait). Override: PRESENCE_DROP_MIN_RUNS=3 ./run.sh
     PRESENCE_DROP_MIN_RUNS="${PRESENCE_DROP_MIN_RUNS:-0}" \

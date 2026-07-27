@@ -381,6 +381,19 @@ class ApiTests(TestCase):
         self.assertEqual(outcomes, [("route_run", "awarded"),
                                     ("route_run", "already_taken")])
 
+    def test_stock_gems_spawns_at_startup_and_reports(self):
+        self.seed_popular_route(run_count=5)
+        out = io.StringIO()
+        call_command("stock_gems", lat=37.0, lng=-122.0, stdout=out)
+        self.assertIn("Stocked 1 new system gem(s)", out.getvalue())
+        self.assertIn("1 standalone active", out.getvalue())
+        # Second start: already stocked, says so, no pile-up.
+        again = io.StringIO()
+        call_command("stock_gems", lat=37.0, lng=-122.0, stdout=again)
+        self.assertIn("No new gems needed", again.getvalue())
+        self.assertEqual(GemDrop.objects.filter(route__isnull=True,
+                                                placed_by="system").count(), 1)
+
     def test_presence_trigger_spawns_and_replenishes_gems(self):
         self.seed_popular_route(run_count=5)
         # Opening the map IS the trigger: the query's own coordinates get
