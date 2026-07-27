@@ -37,6 +37,29 @@ start_backend() {
     # shellcheck disable=SC1091
     source .venv/bin/activate
     pip install -q -r requirements.txt
+
+    # Verbose startup: show exactly what this backend will run with.
+    echo "-- Python:  $(python --version 2>&1)  (venv: backend/.venv)"
+    echo "-- Git:     $(git log --oneline -1 2>/dev/null || echo 'unknown')"
+    echo "-- Config:  WALKABILITY_MODE=${WALKABILITY_MODE:-overpass}" \
+         "PRESENCE_DROP_MIN_RUNS=${PRESENCE_DROP_MIN_RUNS:-0}" \
+         "SEED_DEMO=${SEED_DEMO:-1}" \
+         "GEMRUN_LOG_LEVEL=${GEMRUN_LOG_LEVEL:-INFO}"
+    python - <<'PYEOF'
+import ssl, urllib.request
+try:
+    import certifi
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    src = "certifi"
+except ImportError:
+    ctx, src = None, "system default (certifi NOT installed)"
+try:
+    urllib.request.urlopen("https://overpass-api.de", timeout=8, context=ctx)
+    print(f"-- HTTPS:   OK via {src}")
+except Exception as exc:
+    print(f"-- HTTPS:   FAILING via {src}: {exc!r}")
+    print("            -> Overpass unreachable: no seeded routes; gems fall back to near-user scatter")
+PYEOF
     python manage.py migrate --no-input | tail -1
     # Suggested demo routes: STREET-FOLLOWING (chained from real OSM walkable
     # ways, never circles), starting at the seed coordinate. Seeds nothing if
@@ -135,6 +158,8 @@ run_app() {
     echo
     echo "GemRun is running against ${GEMRUN_API_URL:-http://127.0.0.1:${API_PORT}}. Tips:"
     echo "  - Simulate a location: Simulator menu > Features > Location"
+    echo "  - Live backend logs (spawns, Overpass, requests):  tail -f backend/.server.log"
+    echo "  - Gem-chain health:  (cd backend && .venv/bin/python manage.py diagnose)"
     echo "  - In-app mock instead of the backend:  GEMRUN_API_URL=mock ./run.sh app"
     echo "  - Remove demo data: (cd backend && .venv/bin/python manage.py migrate && .venv/bin/python manage.py seed --clear)"
 }

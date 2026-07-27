@@ -66,3 +66,23 @@ PRESENCE_BOOTSTRAP = True
 PRESENCE_DROP_MIN_RUNS = int(os.environ.get("PRESENCE_DROP_MIN_RUNS", 3))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Verbose app logging: every Overpass attempt (with the exact failure —
+# SSL, timeout, rate limit), every gem spawn, every bootstrap decision.
+# Shows in the console / backend/.server.log. GEMRUN_LOG_LEVEL=DEBUG|WARNING
+# to adjust.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "gemrun": {"format": "[{asctime}] {levelname} {name}: {message}",
+                   "style": "{"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "gemrun"},
+    },
+    "loggers": {
+        "api": {"handlers": ["console"],
+                "level": os.environ.get("GEMRUN_LOG_LEVEL", "INFO")},
+    },
+}

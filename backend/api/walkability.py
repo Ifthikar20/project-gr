@@ -11,11 +11,15 @@ Three-valued result so callers choose their own fail policy:
     None  — check disabled (WALKABILITY_MODE != "overpass") or unreachable
 """
 import json
+import logging
 import ssl
+import time
 import urllib.parse
 import urllib.request
 
 from django.conf import settings
+
+log = logging.getLogger("api.walkability")
 
 try:
     import certifi
@@ -56,12 +60,21 @@ def query_overpass(query, timeout):
         request = urllib.request.Request(
             url, data=urllib.parse.urlencode({"data": query}).encode(),
             headers={"User-Agent": "GemRun/0.1 (walkability)"})
+        started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=timeout,
                                         context=_SSL_CONTEXT) as response:
-                return json.load(response)
-        except (OSError, ValueError):
-            continue
+                payload = json.load(response)
+            log.info("overpass: %s answered in %.1fs (%d elements)",
+                     url, time.monotonic() - started, len(payload.get("elements", [])))
+            return payload
+        except (OSError, ValueError) as exc:
+            # The exact reason matters — SSL cert failures, timeouts, and
+            # rate limits all look like "unreachable" without this line.
+            log.warning("overpass: %s failed after %.1fs: %r",
+                        url, time.monotonic() - started, exc)
+    log.warning("overpass: all %d mirror(s) failed — walkability unanswerable",
+                len(settings.OVERPASS_URLS))
     return None
 
 

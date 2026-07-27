@@ -7,10 +7,13 @@ that area — if it holds popular routes and is short of active system drops.
 No app usage in a region (no routes, no runs, no map opens) means no gems
 ever spawn there.
 """
+import logging
 import math
 import random
 
 from django.conf import settings
+
+log = logging.getLogger("api.system_drops")
 
 from . import catalog, rules, walkability
 from .geometry import RouteGeometry, polyline_decode
@@ -68,11 +71,13 @@ def drop_gem_on_route(route, rng):
 
 def create_system_drop(lat, lng, rng):
     rarity = rng.choices(RARITIES, weights=WEIGHTS)[0]
-    return GemDrop.objects.create(
+    drop = GemDrop.objects.create(
         route=None, dropped_by=None,
         gem_id=catalog.gem_of(rarity)["id"], rarity=rarity,
         lat=lat, lng=lng, position_along_route_m=0,
         respawn_rule="one_time", placed_by="system")
+    log.info("spawned %s gem at (%.5f, %.5f)", rarity, lat, lng)
+    return drop
 
 
 def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
@@ -150,7 +155,13 @@ def top_up_area(lat, lng, radius_m, rng=None):
                 created += 1
     if active + created == 0 and settings.PRESENCE_BOOTSTRAP:
         cap = settings.PRESENCE_DROP_MAX_PER_AREA
+        log.info("bootstrap: empty area (%.4f, %.4f) — trying OSM walkable ways",
+                 lat, lng)
         created += drop_on_walkable_ways(lat, lng, radius_m, cap, rng)
         if created == 0:
+            log.info("bootstrap: no OSM data — scattering near the user")
             created += drop_near_center(lat, lng, cap, rng)
+    if created:
+        log.info("presence trigger: %d gem(s) spawned for map open at (%.4f, %.4f)",
+                 created, lat, lng)
     return created
