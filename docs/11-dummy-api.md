@@ -19,7 +19,7 @@ Every mock call logs to the Xcode console with its real path, e.g. `🌐 [MockAP
 | 2 | `GET /v1/users/me` | `me()` | (available; profile is cached locally) | Returns stored profile |
 | 3 | `PATCH /v1/users/me` | `updateMe(handle:)` | (available for settings) | Updates handle |
 | 4 | `DELETE /v1/users/me` | `deleteAccount()` | (available for settings) | Wipes mock state |
-| 5 | `GET /v1/routes?lat&lng&radius_m` | `nearbyRoutes(lat:lng:radiusM:)` | **Explore** on appear | Seeds up to 3 demo loops on first call (cold start, docs/02) — each STARTS at the caller's location and is snapped to real streets via MKDirections walking legs; a loop that can't be street-confirmed is skipped (no geometric circles) |
+| 5 | `GET /v1/routes?lat&lng&radius_m` | `nearbyRoutes(lat:lng:radiusM:)` | **Explore** on appear | Returns published routes only — NO demo seeding; the map shows just the routes users actually create. (Backend demo data is opt-in via `manage.py seed`, which builds street-following routes from OSM ways.) |
 | 6 | `GET /v1/routes/{id}` | `route(id:)` | (available; detail uses cache) | Returns the route or 404-equivalent |
 | 7 | `POST /v1/routes` | `publishRoute(_:)` | **Publish step** of route creation | **Re-validates the placement budget server-side** (slots, points, no Legendary); rejects violations |
 | 8 | `DELETE /v1/routes/{id}` | `archiveRoute(id:)` | (available; Profile archives locally) | Marks archived |

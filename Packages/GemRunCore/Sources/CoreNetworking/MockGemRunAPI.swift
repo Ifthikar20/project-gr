@@ -1,4 +1,3 @@
-import CoreMap
 import CoreModels
 import Foundation
 import GameKitCore
@@ -21,7 +20,6 @@ public actor MockGemRunAPI: GemRunAPI {
     private var verdicts: [String: RunVerdict] = [:]
     private var userTimes: [UUID: [(timeS: Int, date: Date)]] = [:]
     private var competitorTimes: [UUID: [(handle: String, level: Int, timeS: Int)]] = [:]
-    private var seeded = false
 
     private static let competitors: [(String, Int)] = [
         ("maya.runs", 7), ("dev_collects", 4), ("sam_routes", 11),
@@ -66,7 +64,7 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func nearbyRoutes(lat: Double, lng: Double, radiusM: Int) async throws -> [Route] {
         await call("GET /v1/routes?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
-        await seedIfNeeded(around: Coordinate(lat: lat, lng: lng))
+        // No demo seeding: only routes users actually published exist.
         return routes.values
             .filter { !archived.contains($0.id) }
             .sorted { $0.name < $1.name }
@@ -302,99 +300,6 @@ public actor MockGemRunAPI: GemRunAPI {
         guard !awardedKeys.contains(key) else { return false }
         awardedKeys.insert(key)
         return true
-    }
-
-    /// Cold-start seeding (docs/02): recommended routes START at the caller's
-    /// location and follow real streets — every leg snapped through Apple
-    /// walking directions (PathSnapper), never geometric circles. A route
-    /// whose legs can't be confirmed on the street network is skipped:
-    /// better no demo route than one crossing water or backyards.
-    private func seedIfNeeded(around center: Coordinate) async {
-        guard !seeded else { return }
-        seeded = true
-        // (name, legs walked out from the start as (bearing°, meters), gems)
-        let specs: [(String, [(Double, Double)], [(Rarity, Double)])] = [
-            ("First Light Loop", [(20, 450), (140, 450)],
-             [(.common, 0.15), (.common, 0.5), (.uncommon, 0.85)]),
-            ("Gem Hunter's Circuit", [(60, 900), (170, 900)],
-             [(.common, 0.1), (.uncommon, 0.35), (.rare, 0.55), (.uncommon, 0.8)]),
-            // The weekly Legendary lives on the hard route (docs/02): one-time,
-            // system-seeded, first finder gets the crown.
-            ("Ridge Endurance Run", [(300, 1_500), (200, 1_500)],
-             [(.common, 0.1), (.rare, 0.45), (.epic, 0.7), (.legendary, 0.78), (.uncommon, 0.9)]),
-        ]
-        for (name, legs, gems) in specs {
-            guard let route = await Self.streetLoop(named: name, from: center,
-                                                    legs: legs, gems: gems) else {
-                print("[MockAPI] seeding: no walkable loop for '\(name)' here — skipped")
-                continue
-            }
-            routes[route.id] = route
-            // Plausible fake times: base pace 4:50–6:20 /km by entry order.
-            competitorTimes[route.id] = Self.competitors.prefix(3).enumerated().map { i, c in
-                (c.0, c.1, Int(Double(route.distanceM) / 1_000 * Double(290 + i * 45)))
-            }
-        }
-    }
-
-    /// A loop that starts and ends at `start`: walk out along each leg's
-    /// bearing, then home — every segment MKDirections-confirmed. Returns nil
-    /// when any segment can't be snapped to a real walking path.
-    private static func streetLoop(named name: String, from start: Coordinate,
-                                   legs: [(Double, Double)],
-                                   gems: [(Rarity, Double)]) async -> Route? {
-        var waypoints = [start]
-        for (bearingDeg, distanceM) in legs {
-            let rad = bearingDeg * .pi / 180
-            waypoints.append(Self.offset(waypoints.last!,
-                                         dLatM: distanceM * cos(rad),
-                                         dLngM: distanceM * sin(rad)))
-        }
-        waypoints.append(start)                      // close the loop back home
-        var coords = [start]
-        for (a, b) in zip(waypoints, waypoints.dropFirst()) {
-            let result = await PathSnapper.snapVerified(from: a, to: b)
-            guard result.snapped else { return nil }
-            coords.append(contentsOf: result.path.dropFirst())
-        }
-        let geometry = RouteGeometry(coordinates: coords)
-        guard geometry.totalLengthM > 400 else { return nil }
-        let difficulty: RouteDifficulty = switch Int(geometry.totalLengthM) {
-        case ..<4_000: .easy
-        case ..<9_000: .moderate
-        default: .hard
-        }
-        return build(named: name, coords: coords, geometry: geometry,
-                     difficulty: difficulty, gems: gems)
-    }
-
-    private static func build(named name: String, coords: [Coordinate],
-                              geometry: RouteGeometry, difficulty: RouteDifficulty,
-                              gems: [(Rarity, Double)]) -> Route {
-        let drops = gems.map { rarity, fraction -> GemDrop in
-            let alongM = geometry.totalLengthM * fraction
-            let position = geometry.coordinate(atDistance: alongM)
-            let respawn: RespawnRule = switch rarity {
-            case .common, .uncommon: .daily
-            case .rare, .epic: .oncePerUser
-            case .legendary: .oneTime
-            }
-            return GemDrop(id: UUID(), gemID: GemCatalog.gem(of: rarity).id, rarity: rarity,
-                           lat: position.lat, lng: position.lng,
-                           positionAlongRouteM: Int(alongM),
-                           respawnRule: respawn, placedBy: .system)
-        }
-        // Plausible elevation profile: a single main climb scaled to the gain
-        // (real elevation arrives with the backend's terrain data, docs/08).
-        let gain = Int(geometry.totalLengthM) / 100
-        let profile = (0...40).map { i in
-            Int(Double(gain) * (0.5 - 0.5 * cos(2 * .pi * Double(i) / 40)))
-        }
-        return Route(id: UUID(), name: name, polyline: PolylineCodec.encode(coords),
-                     distanceM: Int(geometry.totalLengthM),
-                     elevationGainM: gain,
-                     difficulty: difficulty, gemDrops: drops,
-                     elevationProfile: profile)
     }
 
     private static func offset(_ c: Coordinate, dLatM: Double, dLngM: Double) -> Coordinate {

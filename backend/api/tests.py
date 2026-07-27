@@ -462,6 +462,18 @@ class ApiTests(TestCase):
             call_command("seed", lat=64.2, lng=-149.5, stdout=io.StringIO())
         self.assertEqual(Route.objects.filter(creator__isnull=True).count(), 0)
 
+    def test_seed_clear_removes_demo_data_without_reseeding(self):
+        step = 500 * DEG_PER_M_LAT
+        ways = [[(37.0 + i * step, -122.0), (37.0 + (i + 1) * step, -122.0)]
+                for i in range(24)]
+        with mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
+            call_command("seed", lat=37.0, lng=-122.0, stdout=io.StringIO())
+        self.assertTrue(Route.objects.filter(creator__isnull=True).exists())
+        call_command("seed", clear=True, stdout=io.StringIO())
+        self.assertFalse(Route.objects.filter(creator__isnull=True).exists())
+        self.assertFalse(GemDrop.objects.filter(route__isnull=True,
+                                                dropped_by__isnull=True).exists())
+
     def test_catalog_matches_client_uuids(self):
         gems = self.client.get("/v1/gems/catalog").json()["gems"]
         self.assertEqual(len(gems), 8)

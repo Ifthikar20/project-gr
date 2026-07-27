@@ -38,7 +38,8 @@ start_backend() {
     source .venv/bin/activate
     pip install -q -r requirements.txt
     python manage.py migrate --no-input | tail -1
-    python manage.py seed
+    # No auto-seeded demo routes: the map shows only routes users create.
+    # Opt into demo data explicitly:  python manage.py seed --lat .. --lng ..
     nohup python manage.py runserver "0.0.0.0:${API_PORT}" \
         > .server.log 2>&1 &
     echo $! > .server.pid

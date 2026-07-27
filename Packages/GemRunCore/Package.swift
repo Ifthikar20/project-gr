@@ -19,10 +19,7 @@ let package = Package(
         // Pure domain types — no dependencies, compiles anywhere.
         .target(name: "CoreModels"),
         .target(name: "DesignSystem", dependencies: ["CoreModels"]),
-        // CoreMap: the mock seeds demo routes via PathSnapper so they follow
-        // real streets (map SDK imports still confined to CoreMap).
-        .target(name: "CoreNetworking",
-                dependencies: ["CoreModels", "GameKitCore", "CoreMap"]),
+        .target(name: "CoreNetworking", dependencies: ["CoreModels", "GameKitCore"]),
         .target(name: "CorePersistence",
                 dependencies: ["CoreModels", "GameKitCore", "CoreNetworking"]),
         .target(name: "CoreLocationKit", dependencies: ["CoreModels", "GameKitCore"]),

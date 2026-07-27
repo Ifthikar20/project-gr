@@ -74,12 +74,16 @@ class Command(BaseCommand):
         parser.add_argument("--lng", type=float, default=-122.4194)
         parser.add_argument("--reset", action="store_true",
                             help="Delete system-seeded routes/drops before seeding.")
+        parser.add_argument("--clear", action="store_true",
+                            help="Delete system-seeded routes/drops and exit (no reseed).")
 
     def handle(self, *args, **opts):
-        if opts["reset"]:
+        if opts["reset"] or opts["clear"]:
             Route.objects.filter(creator__isnull=True).delete()
             GemDrop.objects.filter(route__isnull=True, dropped_by__isnull=True).delete()
-            self.stdout.write("Reset: system demo routes and drops removed.")
+            self.stdout.write("Cleared system demo routes and drops.")
+            if opts["clear"]:
+                return
         if Route.objects.filter(creator__isnull=True).exists():
             self.stdout.write("Already seeded — skipping.")
             return

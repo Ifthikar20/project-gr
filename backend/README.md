@@ -10,7 +10,8 @@ The Python/Django backend implementing the 14 `/v1` endpoints from
 cd backend
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py seed --lat 37.7749 --lng -122.4194   # demo routes + competitors
+# optional demo data (street-following, from OSM ways; --clear removes it):
+# python manage.py seed --lat 37.7749 --lng -122.4194
 python manage.py drop_gems                             # optional global backstop (docs/13)
 python manage.py runserver 0.0.0.0:8000
 python manage.py test                                  # 28 tests
