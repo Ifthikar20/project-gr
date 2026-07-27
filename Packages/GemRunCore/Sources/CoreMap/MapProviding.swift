@@ -90,8 +90,7 @@ public struct DropPin: View {
     public var body: some View {
         Text(emoji)
             .font(.title2)
-            .shadow(color: .white, radius: 2)
-            .shadow(color: MapPalette.ink.opacity(0.35), radius: 3, y: 1)
+            .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
             .offset(y: dropped ? 0 : -30)
             .scaleEffect(dropped ? 1 : 1.3, anchor: .bottom)
             .opacity(dropped ? 1 : 0)
@@ -117,9 +116,6 @@ public struct ExploreMapView: View {
     /// The runner's live location — when present, renders as an emoji marker
     /// (in place of MapKit's default blue dot) so "here I am" is unmissable.
     let userCoordinate: Coordinate?
-    /// A dotted "run this and you'll collect gems" line: user → nearest gems
-    /// stitched together, drawn under everything else.
-    let suggestedPath: [Coordinate]
     let onSelect: (Route) -> Void
     let onTapCoordinate: ((Coordinate) -> Void)?
 
@@ -127,7 +123,6 @@ public struct ExploreMapView: View {
                 previewPath: [Coordinate] = [],
                 destinationPin: Coordinate? = nil,
                 userCoordinate: Coordinate? = nil,
-                suggestedPath: [Coordinate] = [],
                 onSelect: @escaping (Route) -> Void,
                 onTapCoordinate: ((Coordinate) -> Void)? = nil) {
         self.routes = routes
@@ -136,7 +131,6 @@ public struct ExploreMapView: View {
         self.previewPath = previewPath
         self.destinationPin = destinationPin
         self.userCoordinate = userCoordinate
-        self.suggestedPath = suggestedPath
         self.onSelect = onSelect
         self.onTapCoordinate = onTapCoordinate
     }
@@ -154,20 +148,11 @@ public struct ExploreMapView: View {
 
     private var mapContent: some View {
         Map(initialPosition: .userLocation(fallback: .automatic)) {
-            // Suggested path: draw first so gem pins + user marker sit on top.
-            // Dotted (very short dashes) reads as "a suggestion, not committed."
-            if suggestedPath.count > 1 {
-                MapPolyline(coordinates: suggestedPath.map(\.cl))
-                    .stroke(MapPalette.pulse.opacity(0.75),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round,
-                                               dash: [1, 9]))
-            }
             if let userCoordinate {
                 Annotation("You", coordinate: userCoordinate.cl) {
                     Text("🏃")
                         .font(.title)
-                        .shadow(color: .white, radius: 2)
-                        .shadow(color: MapPalette.ink.opacity(0.35), radius: 3, y: 1)
+                        .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                 }
             }
             // No UserAnnotation fallback: its accuracy halo reads as a big
@@ -242,8 +227,7 @@ public struct RoutePreviewMap: View {
                     } else {
                         Text(MapPalette.emoji(forGemID: drop.gemID))
                             .font(.callout)
-                            .shadow(color: .white, radius: 2)
-                            .shadow(color: MapPalette.ink.opacity(0.25), radius: 2)
+                            .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                     }
                 }
             }
@@ -382,8 +366,7 @@ public struct ActiveRunMapView: View {
                     } else {
                         Text(MapPalette.emoji(forGemID: drop.gemID))
                             .font(.callout)
-                            .shadow(color: .white, radius: 2)
-                            .shadow(color: MapPalette.ink.opacity(0.25), radius: 2)
+                            .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                     }
                 }
             }
@@ -394,8 +377,7 @@ public struct ActiveRunMapView: View {
                     Image(systemName: "location.north.fill")
                         .font(.title2)
                         .foregroundStyle(MapPalette.pulse)
-                        .shadow(color: .white, radius: 2)
-                        .shadow(color: MapPalette.ink.opacity(0.4), radius: 3, y: 1)
+                        .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                 }
             }
         }

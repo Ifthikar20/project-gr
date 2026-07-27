@@ -31,10 +31,10 @@ public struct ExploreRootView: View {
     // Live GPS fix drives the runner emoji on the map + park seeding.
     @State private var live = LiveLocation()
     @State private var seededParksForCenter: Coordinate?
-    // The dotted "run this to collect gems" line, auto-recomputed as gems +
-    // location change. Snapped through nearest N drops from the user.
-    @State private var suggestedPath: [Coordinate] = []
-    @State private var suggestedFrom: Coordinate?
+    // Drop-mode validation state: last denial reason, and "checking…" flag
+    // for the POI lookup that gates a drop.
+    @State private var dropError: String?
+    @State private var isValidatingDrop = false
 
     public init() {}
 
@@ -54,7 +54,6 @@ public struct ExploreRootView: View {
                     previewPath: destinationPath,
                     destinationPin: destination,
                     userCoordinate: live.coordinate,
-                    suggestedPath: suggestedPath,
                     onSelect: { detailRoute = $0 },
                     onTapCoordinate: mapTapHandler
                 )
@@ -100,16 +99,11 @@ public struct ExploreRootView: View {
                 // gas stations, cafes, libraries, transit hubs, post offices —
                 // and skip anything near parking or private buildings.
                 guard let new else { return }
-                Task { await rebuildSuggestedPath(from: new) }
                 if let seed = seededParksForCenter,
                    RouteGeometry.planarDistance(from: seed, to: new) < 1_500 {
                     return
                 }
                 Task { await seedSafeZoneDrops(around: new) }
-            }
-            .onChange(of: nearbyDrops.count) { _, _ in
-                guard let here = live.coordinate else { return }
-                Task { await rebuildSuggestedPath(from: here) }
             }
             .onChange(of: session.pendingDeepLinkRouteID) { _, id in
                 guard let id else { return }
@@ -161,13 +155,15 @@ public struct ExploreRootView: View {
                     .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
             }
 
-            // Drop mode: place a wallet gem anywhere.
+            // Drop mode: place a wallet gem on a trail or public spot.
             Button {
                 if isDropMode {
                     isDropMode = false
+                    dropError = nil
                 } else {
                     exitDestinationMode()
                     isDropMode = true
+                    dropError = nil
                 }
             } label: {
                 Image(systemName: "diamond.fill")
@@ -196,11 +192,30 @@ public struct ExploreRootView: View {
     }
 
     private var dropModeBanner: some View {
-        Text("Tap the map to drop a gem from your wallet")
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(DS.Colors.ink)
-            .airbnbCard(padding: 12)
-            .padding(.horizontal, 16)
+        VStack(alignment: .leading, spacing: 4) {
+            if isValidatingDrop {
+                Text("Checking that spot…")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(DS.Colors.ink)
+            } else if let dropError {
+                Text("Can't drop there")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(DS.Colors.pulse)
+                Text(dropError)
+                    .font(.caption2)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            } else {
+                Text("Tap a trail you've run or a public spot")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(DS.Colors.ink)
+                Text("Parks, cafes, transit, libraries work — hospitals and private buildings don't.")
+                    .font(.caption2)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .airbnbCard(padding: 12)
+        .padding(.horizontal, 16)
     }
 
     /// Destination banner: prompts "tap the map", live-summarizes the snapped
@@ -299,16 +314,37 @@ public struct ExploreRootView: View {
         m < 1_000 ? "\(m) m" : String(format: "%.1f km", Double(m) / 1_000)
     }
 
-    /// The map's tap callback: drop mode routes taps to the gem-drop sheet;
-    /// destination mode sets a new destination and re-snaps the path.
+    /// The map's tap callback: drop mode routes taps through DropValidator
+    /// first (trail-run + public-POI rules); destination mode sets a new
+    /// destination and re-snaps the path.
     private var mapTapHandler: ((Coordinate) -> Void)? {
         if isDropMode {
-            return { pendingDropSpot = TappedSpot(coordinate: $0) }
+            return { c in Task { await validateAndOpenDrop(c) } }
         }
         if isDestinationMode {
             return { setDestination($0) }
         }
         return nil
+    }
+
+    /// Runs DropValidator against past-run trails + published routes. If the
+    /// spot passes, we open the DropGemSheet; otherwise we surface the reason
+    /// in the drop-mode banner without opening the sheet.
+    private func validateAndOpenDrop(_ c: Coordinate) async {
+        isValidatingDrop = true
+        dropError = nil
+        defer { isValidatingDrop = false }
+        let pastTrails = (try? context.fetch(FetchDescriptor<StoredRun>()))?
+            .compactMap(\.trackPolyline) ?? []
+        let published = routes.map(\.polyline)
+        let verdict = await DropValidator.validate(
+            c, pastTrails: pastTrails, nearbyRoutes: published)
+        switch verdict {
+        case .allowed:
+            pendingDropSpot = TappedSpot(coordinate: c)
+        case .denied(let reason):
+            dropError = reason
+        }
     }
 
     private func setDestination(_ c: Coordinate) {
@@ -601,55 +637,6 @@ final class LiveLocation: NSObject, CLLocationManagerDelegate {
 }
 
 extension ExploreRootView {
-    /// Greedy nearest-neighbor traversal from the user through the closest
-    /// gems, snapped via MKDirections. Only rebuilds when the user has moved
-    /// far enough that the current suggestion no longer starts near them.
-    func rebuildSuggestedPath(from origin: Coordinate) async {
-        if let last = suggestedFrom,
-           RouteGeometry.planarDistance(from: last, to: origin) < 150,
-           !suggestedPath.isEmpty {
-            return
-        }
-        let picks = nearestPicks(from: origin, count: 4)
-        guard !picks.isEmpty else {
-            suggestedPath = []
-            suggestedFrom = origin
-            return
-        }
-        var path: [Coordinate] = [origin]
-        var prev = origin
-        for drop in picks {
-            let segment = await PathSnapper.snap(from: prev, to: drop.coordinate)
-            path.append(contentsOf: segment.dropFirst())
-            prev = drop.coordinate
-        }
-        suggestedPath = path
-        suggestedFrom = origin
-    }
-
-    /// Cheap nearest-neighbor pick: sort drops by distance to origin, then walk
-    /// the list greedily, always picking the drop closest to the last pick.
-    private func nearestPicks(from origin: Coordinate, count: Int) -> [GemDrop] {
-        var remaining = nearbyDrops.sorted {
-            RouteGeometry.planarDistance(from: origin, to: $0.coordinate)
-            < RouteGeometry.planarDistance(from: origin, to: $1.coordinate)
-        }
-        // Cap the search radius so we don't suggest a run to the next town.
-        remaining = Array(remaining.prefix(20))
-        var picks: [GemDrop] = []
-        var cursor = origin
-        while picks.count < count, !remaining.isEmpty {
-            let (i, next) = remaining.enumerated().min(by: {
-                RouteGeometry.planarDistance(from: cursor, to: $0.element.coordinate)
-                < RouteGeometry.planarDistance(from: cursor, to: $1.element.coordinate)
-            })!
-            picks.append(next)
-            cursor = next.coordinate
-            remaining.remove(at: i)
-        }
-        return picks
-    }
-
     /// Query safe, public POIs around the user (parks, gas stations, cafes,
     /// libraries, museums, transit, post offices, bakeries, restaurants) and
     /// drop one gem at each. Explicitly excludes parking lots and skips any
@@ -715,6 +702,109 @@ extension ExploreRootView {
             }
             nearbyDrops.append(contentsOf: novel)
             seededParksForCenter = center
+        }
+    }
+}
+
+// MARK: - Drop validation
+
+/// Verdict from checking whether a spot on the map is a legal place to drop
+/// a gem. See DropValidator for the rules — trails-you've-run + runnable
+/// public POIs are OK; hospitals, apartments, parking, private residences
+/// are not.
+enum DropVerdict {
+    case allowed
+    case denied(reason: String)
+}
+
+/// Rule engine that gate-keeps drop mode.
+///
+/// A drop is allowed if any of these hold:
+///   1. It's within 30 m of the polyline of a run the user has completed.
+///   2. It's within 30 m of a published Route polyline (a known runnable path).
+///   3. There's a runnable public POI (park, cafe, restaurant, library, museum,
+///      transit, gas station, bakery, post office, beach, marina) within 80 m,
+///      AND no forbidden POI (hospital, pharmacy, school, university, parking,
+///      airport) or private-address hint within 60 m.
+///
+/// Everything else — an anonymous parcel, a private building, a hospital
+/// parking lot — is denied with a human-readable reason so the user learns
+/// the rule instead of just seeing a red toast.
+enum DropValidator {
+    static let allowedCategories: [MKPointOfInterestCategory] = [
+        .park, .publicTransport, .cafe, .restaurant, .bakery,
+        .library, .museum, .postOffice, .gasStation, .marina,
+        .beach, .stadium,
+    ]
+    static let forbiddenCategories: [MKPointOfInterestCategory] = [
+        .hospital, .pharmacy, .school, .university, .parking, .airport,
+    ]
+    static let bannedNameHints = ["private", "residence", "apartment",
+                                  "condominium", "parking", "hospital", "clinic"]
+
+    static func validate(_ c: Coordinate,
+                         pastTrails: [String],
+                         nearbyRoutes: [String]) async -> DropVerdict {
+        // 1 + 2. On or near any trail we know is runnable.
+        let allTrails = pastTrails + nearbyRoutes
+        for polyline in allTrails {
+            let coords = PolylineCodec.decode(polyline)
+            guard coords.count > 1 else { continue }
+            let geometry = RouteGeometry(coordinates: coords)
+            if geometry.project(c).crossTrackM < 30 { return .allowed }
+        }
+        // 3. POI check.
+        return await checkPOIs(around: c)
+    }
+
+    private static func checkPOIs(around c: Coordinate) async -> DropVerdict {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = "place"
+        request.region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: c.lat, longitude: c.lng),
+            latitudinalMeters: 200, longitudinalMeters: 200)
+        request.pointOfInterestFilter = MKPointOfInterestFilter(
+            including: allowedCategories + forbiddenCategories)
+
+        let response = try? await MKLocalSearch(request: request).start()
+        guard let items = response?.mapItems, !items.isEmpty else {
+            return .denied(reason: "Drop only on trails you've run or a public spot (park, cafe, transit).")
+        }
+        let sorted: [(MKMapItem, Double)] = items.map { item in
+            let p = item.placemark.coordinate
+            return (item, RouteGeometry.planarDistance(
+                from: c,
+                to: Coordinate(lat: p.latitude, lng: p.longitude)))
+        }.sorted { $0.1 < $1.1 }
+
+        for (item, dist) in sorted where dist < 60 {
+            if let category = item.pointOfInterestCategory,
+               forbiddenCategories.contains(category) {
+                return .denied(reason: "Too close to \(displayName(for: category)). Pick a park or cafe instead.")
+            }
+            let name = (item.name ?? "").lowercased()
+            if bannedNameHints.contains(where: name.contains) {
+                return .denied(reason: "Looks like a private place. Try a park, cafe, or transit stop.")
+            }
+        }
+        for (item, dist) in sorted where dist < 80 {
+            if let category = item.pointOfInterestCategory,
+               allowedCategories.contains(category) {
+                return .allowed
+            }
+        }
+        return .denied(reason: "Not a runnable public spot. Drop on trails or near parks, cafes, or transit.")
+    }
+
+    private static func displayName(for category: MKPointOfInterestCategory) -> String {
+        switch category {
+        case .hospital: "a hospital"
+        case .pharmacy: "a pharmacy"
+        case .school: "a school"
+        case .university: "a school"
+        case .parking: "a parking lot"
+        case .airport: "an airport"
+        default: "a restricted area"
         }
     }
 }

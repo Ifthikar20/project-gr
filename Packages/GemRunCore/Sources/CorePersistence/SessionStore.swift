@@ -292,11 +292,15 @@ public final class SessionStore {
                 p.level += 1
             }
         }
+        let trackCoords = result.track.map {
+            Coordinate(lat: $0.lat, lng: $0.lng)
+        }
         context.insert(StoredRun(
             id: UUID(), routeID: result.route.id, routeName: result.route.name,
             startedAt: result.startedAt, durationS: v.durationS, distanceM: v.distanceM,
             paceSPerKm: v.paceSPerKm, isWalk: v.isWalk, statusRaw: status.rawValue,
-            xpEarned: xp, gemsCollected: awardedDrops.count))
+            xpEarned: xp, gemsCollected: awardedDrops.count,
+            trackPolyline: trackCoords.count > 1 ? PolylineCodec.encode(trackCoords) : nil))
 
         let routeID = result.route.id
         if let stored = try? context.fetch(FetchDescriptor<StoredRoute>(

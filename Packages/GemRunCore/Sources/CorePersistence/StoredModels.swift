@@ -67,10 +67,14 @@ public final class StoredRun {
     public var statusRaw: String
     public var xpEarned: Int
     public var gemsCollected: Int
+    /// Encoded polyline of the runner's actual GPS track — used to validate
+    /// gem drops ("only on trails you've run"). Optional so old runs migrate.
+    public var trackPolyline: String?
 
     public init(id: UUID, routeID: UUID, routeName: String, startedAt: Date,
                 durationS: Int, distanceM: Int, paceSPerKm: Int, isWalk: Bool,
-                statusRaw: String, xpEarned: Int, gemsCollected: Int) {
+                statusRaw: String, xpEarned: Int, gemsCollected: Int,
+                trackPolyline: String? = nil) {
         self.id = id
         self.routeID = routeID
         self.routeName = routeName
@@ -82,6 +86,7 @@ public final class StoredRun {
         self.statusRaw = statusRaw
         self.xpEarned = xpEarned
         self.gemsCollected = gemsCollected
+        self.trackPolyline = trackPolyline
     }
 }
 
