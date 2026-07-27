@@ -461,6 +461,15 @@ public struct ActiveRunMapView: View {
     /// Drops currently playing their capture sparkle (cleared ~1.6 s after
     /// the collection lands, leaving the muted checkmark behind).
     @State private var sparklingDropIDs: Set<UUID> = []
+    /// Furthest progress (meters) along the guide line the runner has
+    /// covered. The line is drawn from here onward only, so it visibly
+    /// disappears behind you as you advance. Monotonic: it never refills.
+    @State private var coveredM: Double = 0
+    /// How far off the line you can be while still "covering" it. Snapped
+    /// paths follow road centerlines while people walk the sidewalk beside
+    /// them, so this stays generous: walking parallel to the line consumes
+    /// it; wandering off on a detour does not.
+    private let guideCorridorM: Double = 75
 
     public init(route: Route?, freeDrops: [GemDrop] = [],
                 plannedPath: [Coordinate] = [], runnerPosition: Coordinate?,
@@ -480,11 +489,13 @@ public struct ActiveRunMapView: View {
     public var body: some View {
         ZStack(alignment: .topTrailing) {
             Map(position: $cameraPosition) {
-                if let route {
-                    MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
-                        .stroke(MapPalette.pulse, lineWidth: 4)
-                } else if plannedPath.count > 1 {
-                    MapPolyline(coordinates: plannedPath.map(\.cl))
+                // Only the not-yet-covered remainder of the guide line is
+                // drawn — the part behind the runner disappears, and the
+                // ink breadcrumb below takes over as the record of where
+                // you actually went.
+                let remaining = remainderOf(guideLine, fromM: coveredM)
+                if remaining.count > 1 {
+                    MapPolyline(coordinates: remaining.map(\.cl))
                         .stroke(MapPalette.pulse, lineWidth: 4)
                 }
                 // The trail of steps actually taken this run — smoothed with
@@ -549,10 +560,12 @@ public struct ActiveRunMapView: View {
             .onChange(of: runnerPosition?.lat) { _, _ in
                 updateHeading()
                 pushCameraIfFollowing()
+                consumeGuideLine()
             }
             .onChange(of: runnerPosition?.lng) { _, _ in
                 updateHeading()
                 pushCameraIfFollowing()
+                consumeGuideLine()
             }
             // Detect user pan: if the camera drifts far from the runner while
             // we're supposed to be following, they dragged it — release follow.
@@ -620,6 +633,73 @@ public struct ActiveRunMapView: View {
 
     /// Simple 3-sample moving average — keeps the trail visually clean without
     /// the cost/latency of re-running MKDirections on the traveled path.
+    /// The pulse guide line for this run: the route's polyline, or the
+    /// snapped planned path on a free run. Empty when neither exists.
+    private var guideLine: [Coordinate] {
+        if let route { return PolylineCodec.decode(route.polyline) }
+        return plannedPath
+    }
+
+    /// Advance `coveredM` to the runner's furthest on-line progress. Only
+    /// positions within `guideCorridorM` of the line count — walking the
+    /// sidewalk beside a road-snapped line still consumes it, but leaving
+    /// the line (a shortcut, a detour) freezes it until you rejoin.
+    private func consumeGuideLine() {
+        guard let runner = runnerPosition else { return }
+        let line = guideLine
+        guard line.count > 1,
+              let hit = projectOntoGuide(runner, line: line),
+              hit.crossM <= guideCorridorM else { return }
+        coveredM = max(coveredM, hit.alongM)
+    }
+
+    /// Planar projection of a point onto the polyline: distance along the
+    /// line of the nearest point, and how far off the line the point sits.
+    private func projectOntoGuide(_ p: Coordinate,
+                                  line: [Coordinate]) -> (alongM: Double, crossM: Double)? {
+        let kLat = 111_320.0
+        let kLng = kLat * max(0.1, cos(line[0].lat * .pi / 180))
+        var best: (alongM: Double, crossM: Double)?
+        var cum = 0.0
+        for i in 0..<(line.count - 1) {
+            let a = line[i], b = line[i + 1]
+            let px = (p.lng - a.lng) * kLng, py = (p.lat - a.lat) * kLat
+            let sx = (b.lng - a.lng) * kLng, sy = (b.lat - a.lat) * kLat
+            let len2 = sx * sx + sy * sy
+            let segLen = len2.squareRoot()
+            let t = len2 > 0 ? min(1, max(0, (px * sx + py * sy) / len2)) : 0
+            let cross = ((px - t * sx) * (px - t * sx)
+                + (py - t * sy) * (py - t * sy)).squareRoot()
+            if best == nil || cross < best!.crossM {
+                best = (cum + t * segLen, cross)
+            }
+            cum += segLen
+        }
+        return best
+    }
+
+    /// The polyline from `fromM` meters onward — the cut point interpolated
+    /// on its segment so the line shrinks smoothly, not node by node.
+    private func remainderOf(_ line: [Coordinate], fromM: Double) -> [Coordinate] {
+        guard line.count > 1, fromM > 0 else { return line }
+        let kLat = 111_320.0
+        let kLng = kLat * max(0.1, cos(line[0].lat * .pi / 180))
+        var cum = 0.0
+        for i in 0..<(line.count - 1) {
+            let a = line[i], b = line[i + 1]
+            let segLen = ((b.lat - a.lat) * kLat * (b.lat - a.lat) * kLat
+                + (b.lng - a.lng) * kLng * (b.lng - a.lng) * kLng).squareRoot()
+            if cum + segLen > fromM, segLen > 0 {
+                let t = (fromM - cum) / segLen
+                let cut = Coordinate(lat: a.lat + t * (b.lat - a.lat),
+                                     lng: a.lng + t * (b.lng - a.lng))
+                return [cut] + line[(i + 1)...]
+            }
+            cum += segLen
+        }
+        return []          // fully covered — nothing left to draw
+    }
+
     private func smoothedTrail(_ raw: [Coordinate]) -> [Coordinate] {
         guard raw.count >= 3 else { return raw }
         var out: [Coordinate] = [raw[0]]
