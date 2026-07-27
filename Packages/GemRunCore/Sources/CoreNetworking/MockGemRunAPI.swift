@@ -1,3 +1,4 @@
+import CoreMap
 import CoreModels
 import Foundation
 import GameKitCore
@@ -65,7 +66,7 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func nearbyRoutes(lat: Double, lng: Double, radiusM: Int) async throws -> [Route] {
         await call("GET /v1/routes?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
-        seedIfNeeded(around: Coordinate(lat: lat, lng: lng))
+        await seedIfNeeded(around: Coordinate(lat: lat, lng: lng))
         return routes.values
             .filter { !archived.contains($0.id) }
             .sorted { $0.name < $1.name }
@@ -303,24 +304,31 @@ public actor MockGemRunAPI: GemRunAPI {
         return true
     }
 
-    /// Cold-start seeding (docs/02): three loops around the caller, each with
-    /// fake competitor times so leaderboards read as a live city.
-    private func seedIfNeeded(around center: Coordinate) {
+    /// Cold-start seeding (docs/02): recommended routes START at the caller's
+    /// location and follow real streets — every leg snapped through Apple
+    /// walking directions (PathSnapper), never geometric circles. A route
+    /// whose legs can't be confirmed on the street network is skipped:
+    /// better no demo route than one crossing water or backyards.
+    private func seedIfNeeded(around center: Coordinate) async {
         guard !seeded else { return }
         seeded = true
-        let specs: [(String, Double, Double, Double, RouteDifficulty, [(Rarity, Double)])] = [
-            ("First Light Loop", 0, 0, 320, .easy,
+        // (name, legs walked out from the start as (bearing°, meters), gems)
+        let specs: [(String, [(Double, Double)], [(Rarity, Double)])] = [
+            ("First Light Loop", [(20, 450), (140, 450)],
              [(.common, 0.15), (.common, 0.5), (.uncommon, 0.85)]),
-            ("Gem Hunter's Circuit", 900, 400, 800, .moderate,
+            ("Gem Hunter's Circuit", [(60, 900), (170, 900)],
              [(.common, 0.1), (.uncommon, 0.35), (.rare, 0.55), (.uncommon, 0.8)]),
             // The weekly Legendary lives on the hard route (docs/02): one-time,
             // system-seeded, first finder gets the crown.
-            ("Ridge Endurance Run", -1_200, -700, 1_450, .hard,
+            ("Ridge Endurance Run", [(300, 1_500), (200, 1_500)],
              [(.common, 0.1), (.rare, 0.45), (.epic, 0.7), (.legendary, 0.78), (.uncommon, 0.9)]),
         ]
-        for (name, dLat, dLng, radius, difficulty, gems) in specs {
-            let route = Self.loop(named: name, center: Self.offset(center, dLatM: dLat, dLngM: dLng),
-                                  radiusM: radius, difficulty: difficulty, gems: gems)
+        for (name, legs, gems) in specs {
+            guard let route = await Self.streetLoop(named: name, from: center,
+                                                    legs: legs, gems: gems) else {
+                print("[MockAPI] seeding: no walkable loop for '\(name)' here — skipped")
+                continue
+            }
             routes[route.id] = route
             // Plausible fake times: base pace 4:50–6:20 /km by entry order.
             competitorTimes[route.id] = Self.competitors.prefix(3).enumerated().map { i, c in
@@ -329,14 +337,40 @@ public actor MockGemRunAPI: GemRunAPI {
         }
     }
 
-    private static func loop(named name: String, center: Coordinate, radiusM: Double,
-                             difficulty: RouteDifficulty, gems: [(Rarity, Double)]) -> Route {
-        let n = 36
-        let coords = (0...n).map { i -> Coordinate in
-            let angle = 2 * .pi * Double(i) / Double(n)
-            return offset(center, dLatM: radiusM * sin(angle), dLngM: radiusM * cos(angle))
+    /// A loop that starts and ends at `start`: walk out along each leg's
+    /// bearing, then home — every segment MKDirections-confirmed. Returns nil
+    /// when any segment can't be snapped to a real walking path.
+    private static func streetLoop(named name: String, from start: Coordinate,
+                                   legs: [(Double, Double)],
+                                   gems: [(Rarity, Double)]) async -> Route? {
+        var waypoints = [start]
+        for (bearingDeg, distanceM) in legs {
+            let rad = bearingDeg * .pi / 180
+            waypoints.append(Self.offset(waypoints.last!,
+                                         dLatM: distanceM * cos(rad),
+                                         dLngM: distanceM * sin(rad)))
+        }
+        waypoints.append(start)                      // close the loop back home
+        var coords = [start]
+        for (a, b) in zip(waypoints, waypoints.dropFirst()) {
+            let result = await PathSnapper.snapVerified(from: a, to: b)
+            guard result.snapped else { return nil }
+            coords.append(contentsOf: result.path.dropFirst())
         }
         let geometry = RouteGeometry(coordinates: coords)
+        guard geometry.totalLengthM > 400 else { return nil }
+        let difficulty: RouteDifficulty = switch Int(geometry.totalLengthM) {
+        case ..<4_000: .easy
+        case ..<9_000: .moderate
+        default: .hard
+        }
+        return build(named: name, coords: coords, geometry: geometry,
+                     difficulty: difficulty, gems: gems)
+    }
+
+    private static func build(named name: String, coords: [Coordinate],
+                              geometry: RouteGeometry, difficulty: RouteDifficulty,
+                              gems: [(Rarity, Double)]) -> Route {
         let drops = gems.map { rarity, fraction -> GemDrop in
             let alongM = geometry.totalLengthM * fraction
             let position = geometry.coordinate(atDistance: alongM)
