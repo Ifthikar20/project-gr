@@ -54,14 +54,13 @@ def drop_gem_on_route(route, rng):
         lat, lng = geom.coordinate_at(rng.uniform(0, geom.total_length_m))
         if near_existing_drop(lat, lng):
             continue
-        # System drops FAIL CLOSED when the check is enabled: only an
-        # explicit True places a gem — False (not walkable) and None
-        # (Overpass unanswerable) both skip; a gem can wait for the next
-        # map open. With the check off, the route snap is trusted.
-        verdict = walkability.is_walkable(lat, lng)
-        if verdict is False:
-            continue
-        if verdict is None and settings.WALKABILITY_MODE == "overpass":
+        # Only an explicit "not walkable" vetoes the point. None (check off
+        # or Overpass unanswerable/rate-limited) is accepted: the candidate
+        # was sampled from a walking-directions-snapped route polyline, so
+        # construction already vouches for it — requiring a positive Overpass
+        # answer made gem spawning silently dependent on a rate-limited
+        # public API (docs/13 §2).
+        if walkability.is_walkable(lat, lng) is False:
             continue
         rarity = rng.choices(RARITIES, weights=WEIGHTS)[0]
         return GemDrop.objects.create(

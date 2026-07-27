@@ -257,24 +257,24 @@ class ApiTests(TestCase):
         self.assertEqual(
             GemDrop.objects.filter(route__isnull=True, placed_by="system").count(), 0)
 
-    def test_system_drops_fail_closed_when_check_enabled(self):
-        """With the walkability check ON, system gems require an explicit
-        True: an unanswerable check (None) places nothing; user drops stay
-        fail-open."""
+    def test_system_drops_trust_route_snap_when_check_unanswerable(self):
+        """Candidates come from walking-snapped route polylines, so an
+        unanswerable walkability check (None — Overpass down/rate-limited)
+        must NOT block gem spawning; only an explicit False vetoes."""
         self.seed_popular_route()
         system = GemDrop.objects.filter(route__isnull=True, placed_by="system")
         with self.settings(WALKABILITY_MODE="overpass"):
             with mock.patch("api.walkability.is_walkable", return_value=None):
                 call_command("drop_gems", seed=7, stdout=io.StringIO())
-                self.assertEqual(system.count(), 0)          # fail closed
+                self.assertEqual(system.count(), 1)          # trusted, spawns
                 self.wallet_sync(2)                          # user drop: fail open
                 ok = self.post("/v1/drops",
                                {"gem_id": str(catalog.gem_of("common")["id"]),
                                 "lat": 37.0, "lng": -122.0}, auth=True)
                 self.assertEqual(ok.status_code, 200)
-            with mock.patch("api.walkability.is_walkable", return_value=True):
-                call_command("drop_gems", seed=7, stdout=io.StringIO())
-                self.assertEqual(system.count(), 1)          # confirmed → drops
+            with mock.patch("api.walkability.is_walkable", return_value=False):
+                call_command("drop_gems", seed=8, stdout=io.StringIO())
+                self.assertEqual(system.count(), 1)          # False still vetoes
 
     def test_drop_rejected_on_unwalkable_coordinate(self):
         self.wallet_sync(2)

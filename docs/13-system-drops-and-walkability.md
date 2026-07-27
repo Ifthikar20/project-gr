@@ -82,7 +82,7 @@ indirectly through routing. So walkability is layered:
 |---|---|---|
 | `True` | walkable way within radius | drop / accept |
 | `False` | Overpass answered: nothing walkable (highway median, private land, water) | **skip / reject 422 `not_walkable`** |
-| `None` | check disabled or Overpass unreachable | system drops **fail closed** when the mode is on (a gem can wait); user drops fail open |
+| `None` | check disabled or Overpass unreachable/rate-limited | accepted for system drops (candidates are route-polyline-sampled, walkable by construction) and for user drops — only an explicit `False` ever vetoes |
 
 Configuration (`gemrun/settings.py`): `WALKABILITY_MODE` — default
 `"overpass"` (ON), overridable via the `WALKABILITY_MODE` env var (`"off"`
