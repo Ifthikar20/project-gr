@@ -27,10 +27,21 @@ request tops up system gems around those coordinates first
 (`system_drops.top_up_area`, called best-effort so a failure never breaks
 the map read). User activity is literally the coordinate capture:
 
-- Nobody uses the app in a region → nobody queries there, no routes exist
-  there, no gems ever spawn there. (No users in Alaska = no gems in Alaska.)
+- Gems spawn ONLY where someone actually opens the map — a region nobody
+  visits never gets gems. But the first visitor is always served: an area
+  with no routes and no gems is **bootstrapped** on that first map open.
 - The first map open in an active area stocks it; the next one after a gem
   is collected restocks it.
+
+Spawn placement is tiered, best ground first:
+
+1. **Popular routes** in the area — sample the walking-snapped polyline.
+2. **No routes? Real OSM walkable ways** near the user (Overpass, with
+   mirror fallback) — the way geometry is the walkable-path list itself.
+3. **No OSM reachable either? Short-walk scatter** — 150–450 m from the
+   user's own position, walkability veto still applied when answerable.
+   Last resort so an opened map is never empty; the claim log (§5–6)
+   flags any misplaced stragglers.
 
 The top-up is **self-limiting**, so repeated map opens never pile gems up:
 the target is one active system drop per popular route in the queried area,

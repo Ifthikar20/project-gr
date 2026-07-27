@@ -62,20 +62,73 @@ def drop_gem_on_route(route, rng):
         # public API (docs/13 §2).
         if walkability.is_walkable(lat, lng) is False:
             continue
-        rarity = rng.choices(RARITIES, weights=WEIGHTS)[0]
-        return GemDrop.objects.create(
-            route=None, dropped_by=None,
-            gem_id=catalog.gem_of(rarity)["id"], rarity=rarity,
-            lat=lat, lng=lng, position_along_route_m=0,
-            respawn_rule="one_time", placed_by="system")
+        return create_system_drop(lat, lng, rng)
     return None
 
 
+def create_system_drop(lat, lng, rng):
+    rarity = rng.choices(RARITIES, weights=WEIGHTS)[0]
+    return GemDrop.objects.create(
+        route=None, dropped_by=None,
+        gem_id=catalog.gem_of(rarity)["id"], rarity=rarity,
+        lat=lat, lng=lng, position_along_route_m=0,
+        respawn_rule="one_time", placed_by="system")
+
+
+def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
+    """Bootstrap tier 2: sample points directly on real OSM walkable ways
+    near the map query — the system stocks gems even where no routes exist
+    yet. The way geometry IS the walkable-path list, so no per-point check
+    is needed."""
+    ways = walkability.fetch_walkable_ways(lat, lng, min(radius_m, 1500))
+    if not ways:
+        return 0
+    created = 0
+    for _ in range(count * ATTEMPTS_PER_ROUTE):
+        if created >= count:
+            break
+        way = rng.choice(ways)
+        i = rng.randrange(len(way) - 1)
+        t = rng.random()
+        plat = way[i][0] + t * (way[i + 1][0] - way[i][0])
+        plng = way[i][1] + t * (way[i + 1][1] - way[i][1])
+        if near_existing_drop(plat, plng):
+            continue
+        create_system_drop(plat, plng, rng)
+        created += 1
+    return created
+
+
+def drop_near_center(lat, lng, count, rng):
+    """Bootstrap tier 3, last resort (no routes AND no OSM data reachable):
+    scatter gems a short walk (150-450 m) from where the user actually is,
+    so an opened map is never empty. The walkability veto still applies
+    when answerable, and the claim log flags any misplacement (docs/13 §6)."""
+    klng = 111_320 * max(0.1, math.cos(math.radians(lat)))
+    created = 0
+    for _ in range(count * ATTEMPTS_PER_ROUTE):
+        if created >= count:
+            break
+        bearing = rng.uniform(0, 2 * math.pi)
+        dist = rng.uniform(150, 450)
+        plat = lat + dist * math.cos(bearing) / 111_320
+        plng = lng + dist * math.sin(bearing) / klng
+        if near_existing_drop(plat, plng):
+            continue
+        if walkability.is_walkable(plat, plng) is False:
+            continue
+        create_system_drop(plat, plng, rng)
+        created += 1
+    return created
+
+
 def top_up_area(lat, lng, radius_m, rng=None):
-    """Presence trigger: replenish system drops around a map query's
-    coordinates. Self-limiting — the target is one active system drop per
-    popular route in the area, capped, so repeated map opens never pile up
-    gems; collection frees a slot and the next map open refills it."""
+    """Presence trigger: the SYSTEM stocks gems around every map query —
+    users never depend on other users dropping gems. Tier 1 samples popular
+    routes (one active system gem per route, capped). An area with nothing
+    at all is bootstrapped: tier 2 drops onto real OSM walkable ways; tier 3
+    falls back to a short-walk scatter around the user. Self-limiting: once
+    the area holds any active system gems, map opens are two count queries."""
     if not settings.PRESENCE_DROPS:
         return 0
     rng = rng or random.Random()
@@ -85,15 +138,19 @@ def top_up_area(lat, lng, radius_m, rng=None):
     popular = list(Route.objects.filter(
         status="published", run_count__gte=settings.PRESENCE_DROP_MIN_RUNS,
         **box).order_by("-run_count"))
-    if not popular:
-        return 0
-    target = min(settings.PRESENCE_DROP_MAX_PER_AREA, len(popular))
     active = GemDrop.objects.filter(route__isnull=True, active=True,
                                     placed_by="system", **box).count()
     created = 0
-    for route in popular:
-        if active + created >= target:
-            break
-        if drop_gem_on_route(route, rng) is not None:
-            created += 1
+    if popular:
+        target = min(settings.PRESENCE_DROP_MAX_PER_AREA, len(popular))
+        for route in popular:
+            if active + created >= target:
+                break
+            if drop_gem_on_route(route, rng) is not None:
+                created += 1
+    if active + created == 0 and settings.PRESENCE_BOOTSTRAP:
+        cap = settings.PRESENCE_DROP_MAX_PER_AREA
+        created += drop_on_walkable_ways(lat, lng, radius_m, cap, rng)
+        if created == 0:
+            created += drop_near_center(lat, lng, cap, rng)
     return created

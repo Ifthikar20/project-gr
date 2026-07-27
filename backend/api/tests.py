@@ -31,9 +31,9 @@ def track(speed, length_m=1000):
     return samples
 
 
-# Hermetic: no real Overpass calls from tests; the walkability tests below
-# opt back in with mode="overpass" plus a mocked transport.
-@override_settings(WALKABILITY_MODE="off")
+# Hermetic: no real Overpass calls from tests; the walkability/bootstrap
+# tests below opt back in with mocked transports.
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False)
 class ApiTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -400,14 +400,37 @@ class ApiTests(TestCase):
         self.assertEqual(len(refreshed["drops"]), 1)
         self.assertNotEqual(refreshed["drops"][0]["id"], first_id)
 
-    def test_no_activity_in_region_means_no_gems_there(self):
-        self.seed_popular_route(run_count=5)          # activity: San Francisco
-        # A map open from Alaska — no routes, no runs there — spawns nothing.
-        alaska = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
-                                               "radius_m": 5000}).json()
-        self.assertEqual(alaska["drops"], [])
-        self.assertEqual(GemDrop.objects.filter(route__isnull=True,
-                                                lat__gte=60).count(), 0)
+    def test_map_open_bootstraps_gems_where_user_is(self):
+        """The SYSTEM creates gems near wherever a user opens the map — no
+        routes and no other users required. With OSM unreachable too, the
+        last-resort tier scatters them a short walk from the user."""
+        with self.settings(PRESENCE_BOOTSTRAP=True), \
+             mock.patch("api.walkability.fetch_walkable_ways", return_value=[]):
+            drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
+                                                  "radius_m": 5000}).json()["drops"]
+            self.assertEqual(len(drops), 3)              # stocked to the area cap
+            for d in drops:                              # all a short walk away
+                dy = (d["lat"] - 64.2008) * 111_320
+                dx = (d["lng"] + 149.4937) * 111_320 * 0.435   # cos(64.2°)
+                self.assertLess((dx * dx + dy * dy) ** 0.5, 600)
+            # Self-limiting: another map open adds nothing.
+            again = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
+                                                  "radius_m": 5000}).json()["drops"]
+            self.assertEqual(len(again), 3)
+
+    def test_bootstrap_prefers_real_walkable_ways(self):
+        """When OSM answers, bootstrap gems land ON walkable-way geometry,
+        not scattered around the user."""
+        step = 500 * DEG_PER_M_LAT
+        ways = [[(64.2 + i * step, -149.4937), (64.2 + (i + 1) * step, -149.4937)]
+                for i in range(8)]
+        with self.settings(PRESENCE_BOOTSTRAP=True), \
+             mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
+            drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
+                                                  "radius_m": 5000}).json()["drops"]
+        self.assertEqual(len(drops), 3)
+        for d in drops:                                  # exactly on the street line
+            self.assertAlmostEqual(d["lng"], -149.4937, places=5)
 
     def test_route_run_claims_crossed_system_drop_first_come(self):
         route = self.publish_route().json()

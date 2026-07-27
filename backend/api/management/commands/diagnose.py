@@ -52,17 +52,13 @@ class Command(BaseCommand):
               f"{'unreachable (None) — vetoes nothing, gems still spawn' if verdict is None else verdict}")
 
         w("")
-        if not routes.exists():
+        if not system.exists() and not popular.exists():
             w(self.style.WARNING(
-                "→ NO ROUTES here: seed didn't run for this area (or was cleared).\n"
-                "  Fix: ./run.sh stop && ./run.sh   (seeds at SF by default), or\n"
-                "       python manage.py seed --lat <your-lat> --lng <your-lng>\n"
-                "  Also check the Simulator's location matches these coordinates."))
-        elif not popular.exists():
-            w(self.style.WARNING(
-                "→ Routes exist but none are popular yet (need "
-                f"{settings.PRESENCE_DROP_MIN_RUNS}+ runs): system gems won't spawn.\n"
-                "  Seeded routes come pre-popular; user routes need runs."))
+                "→ No system gems or qualifying routes here YET — but bootstrap is "
+                f"{'ON' if settings.PRESENCE_BOOTSTRAP else 'OFF'}: the next map open "
+                "(GET /v1/drops) stocks this area itself — on OSM walkable ways when "
+                "reachable, else scattered a short walk from the user.\n"
+                "  Make sure the app's location matches these coordinates."))
         elif not system.exists():
             w(self.style.WARNING(
                 "→ Popular routes exist but no system gems yet: any map open "
