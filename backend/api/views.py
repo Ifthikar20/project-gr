@@ -17,7 +17,7 @@ from django.views.decorators.http import require_http_methods
 
 from . import catalog, rules, system_drops, validation, walkability
 from .geometry import RouteGeometry, polyline_decode
-from .models import GemDrop, Profile, Route, Run, StashItem, Token
+from .models import ClaimAttempt, GemDrop, Profile, Route, Run, StashItem, Token
 
 FUZZ_RADIUS_M = 150
 
@@ -404,19 +404,33 @@ def claim_crossed_standalone_drops(profile, track):
     margin_lat = rules.DROP_COLLECT_RADIUS_M / 111_320
     margin_lng = rules.DROP_COLLECT_RADIUS_M / (
         111_320 * max(0.1, math.cos(math.radians(lats[0]))))
+    # No active filter here either: a crossed-but-taken drop logs a losing
+    # ClaimAttempt so races stay observable (see collect_drops).
     candidates = (GemDrop.objects.select_for_update()
-                  .filter(route__isnull=True, active=True,
+                  .filter(route__isnull=True,
                           lat__gte=min(lats) - margin_lat, lat__lte=max(lats) + margin_lat,
-                          lng__gte=min(lngs) - margin_lng, lng__lte=max(lngs) + margin_lng)
-                  .exclude(dropped_by=profile))
+                          lng__gte=min(lngs) - margin_lng, lng__lte=max(lngs) + margin_lng))
     claimed = []
     for drop in candidates:
-        if not track_passes_near(track, drop.lat, drop.lng):
+        closest = closest_track_distance(track, drop.lat, drop.lng)
+        if closest is None or closest > rules.DROP_COLLECT_RADIUS_M:
+            continue   # never crossed — not an attempt, no log
+        if drop.dropped_by_id == profile.id:
+            log_claim(profile, drop, "route_run", "own_drop", closest)
+            continue
+        if not drop.active:
+            log_claim(profile, drop, "route_run", "already_taken", closest)
             continue
         drop.active = False
         drop.save(update_fields=["active"])
+        log_claim(profile, drop, "route_run", "awarded", closest)
         claimed.append(drop)
     return claimed
+
+
+def log_claim(profile, drop, source, outcome, closest_m):
+    ClaimAttempt.objects.create(profile=profile, gem_drop=drop, source=source,
+                                outcome=outcome, closest_m=closest_m)
 
 
 def claim_respawn(profile, drop, now):
@@ -616,17 +630,29 @@ def collect_drops(request):
     now = datetime.now(tz.utc)
     awarded = []
     for drop_id in claimed:
+        # Locked WITHOUT the active filter so a lost race is observable:
+        # the loser's transaction waits on the winner's row lock, then sees
+        # active=False and logs already_taken instead of vanishing silently.
         drop = (GemDrop.objects.select_for_update()
-                .filter(id=drop_id, route__isnull=True, active=True).first())
-        if drop is None or drop.dropped_by_id == profile.id:
+                .filter(id=drop_id, route__isnull=True).first())
+        if drop is None:
             continue
-        if not track_passes_near(track, drop.lat, drop.lng):
+        closest = closest_track_distance(track, drop.lat, drop.lng)
+        if drop.dropped_by_id == profile.id:
+            log_claim(profile, drop, "free_run", "own_drop", closest)
+            continue
+        if closest is None or closest > rules.DROP_COLLECT_RADIUS_M:
+            log_claim(profile, drop, "free_run", "too_far", closest)
+            continue
+        if not drop.active:
+            log_claim(profile, drop, "free_run", "already_taken", closest)
             continue
         drop.active = False
         drop.save(update_fields=["active"])
         StashItem.objects.create(profile=profile, gem_id=drop.gem_id,
                                  gem_drop=drop, collected_at=now,
                                  is_first_find=True)
+        log_claim(profile, drop, "free_run", "awarded", closest)
         awarded.append(drop)
     xp = sum(rules.XP_BY_RARITY[d.rarity] for d in awarded)
     if xp:
@@ -639,15 +665,24 @@ def collect_drops(request):
                          "xp_earned": xp})
 
 
-def track_passes_near(track, lat, lng):
+def closest_track_distance(track, lat, lng):
+    """Closest an accuracy-trusted GPS sample came to (lat, lng), in meters.
+    None when no sample was accurate enough to count."""
     k = 111_320.0
     klng = k * max(0.1, math.cos(math.radians(lat)))
+    best = None
     for s in track:
-        dy = (s["lat"] - lat) * k
-        dx = (s["lng"] - lng) * klng
-        if math.hypot(dx, dy) <= rules.DROP_COLLECT_RADIUS_M:
-            return True
-    return False
+        if s.get("horizontal_accuracy", 0) > rules.MAX_CLAIM_ACCURACY_M:
+            continue
+        d = math.hypot((s["lat"] - lat) * k, (s["lng"] - lng) * klng)
+        if best is None or d < best:
+            best = d
+    return best
+
+
+def track_passes_near(track, lat, lng):
+    d = closest_track_distance(track, lat, lng)
+    return d is not None and d <= rules.DROP_COLLECT_RADIUS_M
 
 
 @csrf_exempt

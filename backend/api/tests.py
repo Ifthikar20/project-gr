@@ -11,7 +11,7 @@ from django.test import Client, TestCase
 
 from . import catalog, walkability
 from .geometry import RouteGeometry, polyline_decode, polyline_encode
-from .models import GemDrop, Route
+from .models import ClaimAttempt, GemDrop, Route
 
 DEG_PER_M_LAT = 1.0 / 111_320.0
 
@@ -277,6 +277,87 @@ class ApiTests(TestCase):
             with mock.patch("urllib.request.urlopen", side_effect=OSError):
                 self.assertIsNone(walkability.is_walkable(37.0, -122.0))
         self.assertIsNone(walkability.is_walkable(37.0, -122.0))   # mode off
+
+    def test_claim_attempts_log_the_race(self):
+        """Two neighbors go for the same gem: the log shows the winner AND
+        the loser, with outcomes and how close each track came."""
+        drop = GemDrop.objects.create(
+            route=None, dropped_by=None, gem_id=catalog.gem_of("common")["id"],
+            rarity="common", lat=37.001, lng=-122.0,
+            position_along_route_m=0, respawn_rule="one_time", placed_by="system")
+        near = [{"t": 0, "lat": 37.001, "lng": -122.0,
+                 "horizontal_accuracy": 5, "speed": 3}]
+
+        def claim(handle):
+            token = self.client.post(
+                "/v1/auth/apple", data=json.dumps({"handle": handle}),
+                content_type="application/json").json()["token"]
+            return self.client.post(
+                "/v1/drops/collect",
+                data=json.dumps({"claimed": [str(drop.id)], "track": near}),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {token}").json()
+
+        self.assertEqual(len(claim("neighbor_a")["awarded_drops"]), 1)   # wins
+        self.assertEqual(claim("neighbor_b")["awarded_drops"], [])       # 3 s late
+        log = list(ClaimAttempt.objects.filter(gem_drop=drop)
+                   .order_by("created_at")
+                   .values_list("profile__handle", "outcome", "closest_m"))
+        self.assertEqual([(h, o) for h, o, _ in log],
+                         [("neighbor_a", "awarded"),
+                          ("neighbor_b", "already_taken")])
+        for _, _, closest in log:
+            self.assertLess(closest, 1.0)   # both tracks were right on it
+
+    def test_claim_attempts_log_too_far_and_bad_gps(self):
+        self.wallet_sync(2)
+        gem_id = str(catalog.gem_of("common")["id"])
+        drop = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.001,
+                                       "lng": -122.0}, auth=True).json()
+        rival = self.client.post(
+            "/v1/auth/apple", data=json.dumps({"handle": "rival"}),
+            content_type="application/json").json()["token"]
+        # Right coordinates but hopeless GPS accuracy: samples are ignored,
+        # so the claim can't prove presence — too_far, closest unknown.
+        blurry = [{"t": 0, "lat": 37.001, "lng": -122.0,
+                   "horizontal_accuracy": 200, "speed": 3}]
+        got = self.client.post(
+            "/v1/drops/collect",
+            data=json.dumps({"claimed": [drop["id"]], "track": blurry}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {rival}").json()
+        self.assertEqual(got["awarded_drops"], [])
+        attempt = ClaimAttempt.objects.get(gem_drop_id=drop["id"])
+        self.assertEqual((attempt.outcome, attempt.closest_m), ("too_far", None))
+        # Own-drop attempts are logged too.
+        near = [{"t": 0, "lat": 37.001, "lng": -122.0,
+                 "horizontal_accuracy": 5, "speed": 3}]
+        self.post("/v1/drops/collect", {"claimed": [drop["id"]], "track": near},
+                  auth=True)
+        self.assertEqual(ClaimAttempt.objects.filter(
+            gem_drop_id=drop["id"], outcome="own_drop").count(), 1)
+
+    def test_route_run_race_is_logged(self):
+        route = self.publish_route().json()
+        drop = GemDrop.objects.create(
+            route=None, dropped_by=None, gem_id=catalog.gem_of("rare")["id"],
+            rarity="rare", lat=37.0 + 500 * DEG_PER_M_LAT, lng=-122.0,
+            position_along_route_m=0, respawn_rule="one_time", placed_by="system")
+        self.complete(route["id"], track(3.0), [])                # winner
+        rival = self.client.post(
+            "/v1/auth/apple", data=json.dumps({"handle": "rival"}),
+            content_type="application/json").json()["token"]
+        self.client.post(                                          # loser
+            f"/v1/runs/{route['id']}/complete",
+            data=json.dumps({"idempotency_key": str(uuid.uuid4()),
+                             "started_at": "2026-07-23T11:00:00Z",
+                             "track": track(3.0), "claimed_collections": []}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {rival}")
+        outcomes = list(ClaimAttempt.objects.filter(gem_drop=drop)
+                        .order_by("created_at").values_list("source", "outcome"))
+        self.assertEqual(outcomes, [("route_run", "awarded"),
+                                    ("route_run", "already_taken")])
 
     def test_presence_trigger_spawns_and_replenishes_gems(self):
         self.seed_popular_route(run_count=5)

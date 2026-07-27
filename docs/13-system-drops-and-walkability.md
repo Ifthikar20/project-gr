@@ -139,7 +139,67 @@ Shared guarantees, enforced server-side in one transaction:
 5. **XP.** Crossed drops score plain rarity XP (same rule as
    `/drops/collect`); route-gem XP keeps its walk/streak multipliers.
 
-## 5. Operating it
+## 5. Auditing the race: the ClaimAttempt write-log
+
+One shared `GemDrop` table means two nearby runners can go for the same gem;
+the row lock (`select_for_update` inside the claim transaction) makes the DB
+serialize them — first commit flips `active=False`, the second transaction
+waits on the lock, then sees the flag and loses. `StashItem` records only
+the winner, so **every** claim attempt is additionally logged to
+`api_claimattempt`:
+
+| Column | Meaning |
+|---|---|
+| `profile`, `gem_drop` | who tried, for which gem |
+| `source` | `free_run` (`/drops/collect`) or `route_run` (auto-claim in `complete_run`) |
+| `outcome` | `awarded` · `already_taken` (lost the race) · `too_far` (track never provably within 25 m) · `own_drop` |
+| `closest_m` | closest an accuracy-trusted GPS sample came to the gem (NULL when no sample was trustworthy) |
+| `created_at` | when — the race's ordering evidence |
+
+GPS trust: samples with `horizontal_accuracy` worse than 50 m
+(`MAX_CLAIM_ACCURACY_M`) are ignored when matching a track to a drop — a
+200 m-accuracy fix can't prove you were within 25 m of anything, so a claim
+backed only by bad GPS logs `too_far` with `closest_m = NULL`.
+
+Answering "who was there and who got it first":
+
+```sql
+-- the full race for one gem, in commit order
+SELECT p.handle, a.source, a.outcome, a.closest_m, a.created_at
+FROM api_claimattempt a JOIN api_profile p ON p.id = a.profile_id
+WHERE a.gem_drop_id = :drop_id ORDER BY a.created_at;
+
+-- photo finishes: gems where someone lost within 60 s of the winner
+SELECT gem_drop_id, COUNT(*) FROM api_claimattempt
+WHERE outcome = 'already_taken' GROUP BY gem_drop_id;
+```
+
+Map reads (`GET /v1/drops`) are deliberately *not* logged per-row — they're
+hot-path, and a read log answers nothing the claim log doesn't; ordinary
+HTTP access logs cover "who looked where" if ever needed.
+
+## 6. Checking drop-placement accuracy (beyond OSM)
+
+Ways to verify a gem really sits somewhere reachable, cheapest first:
+
+1. **Our own claim log (free, already running).** `ClaimAttempt` doubles as
+   an accuracy signal: a drop that accumulates `too_far` attempts — or that
+   nearby runners pass for weeks without a single `awarded` — is probably
+   misplaced (private land, fenced, unreachable). Sweep candidates:
+   `active drops with age > N days and zero awarded attempts`.
+2. **Overpass verdict at creation** (§2) — flip `WALKABILITY_MODE` on;
+   optionally make system drops fail-closed (require `True`).
+3. **Reverse geocoding** — Apple Maps Server API or OSM Nominatim on the
+   drop coordinate; a result typed as a building/residential address rather
+   than a road/park is a red flag worth queueing for review.
+4. **Second-provider routing check** — the Apple Maps Server API trick
+   (route *to* the point with `transportType=Walking`; reject if the route
+   can't terminate within the collect radius); Mapbox map-matching once the
+   Mapbox swap lands.
+5. **User reports** (docs/10 moderation) — the real-world backstop:
+   deactivate the row, blocklist the zone.
+
+## 7. Operating it
 
 Nothing to schedule for normal operation — the presence trigger keeps every
 active area stocked on its own (`PRESENCE_DROPS = True`). Run `drop_gems`

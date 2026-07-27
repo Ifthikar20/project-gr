@@ -44,6 +44,9 @@ MINT_THRESHOLD_KM = {"common": 2.0, "uncommon": 5.0, "rare": 15.0, "epic": 40.0}
 
 # Standalone drop collection: proximity radius shared with route collection.
 DROP_COLLECT_RADIUS_M = COLLECTION_RADIUS_M
+# GPS samples worse than this are ignored when matching a track to a drop —
+# a 200 m-accuracy fix can't prove you were within 25 m of anything.
+MAX_CLAIM_ACCURACY_M = 50.0
 
 # Creator placement budget (Swift: PlacementBudget)
 METERS_PER_SLOT = 250

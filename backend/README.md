@@ -13,7 +13,7 @@ python manage.py migrate
 python manage.py seed --lat 37.7749 --lng -122.4194   # demo routes + competitors
 python manage.py drop_gems                             # optional global backstop (docs/13)
 python manage.py runserver 0.0.0.0:8000
-python manage.py test                                  # 22 tests
+python manage.py test                                  # 25 tests
 ```
 
 ## Point the iOS app at it
