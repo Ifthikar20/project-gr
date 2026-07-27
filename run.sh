@@ -56,6 +56,9 @@ except ImportError:
 try:
     urllib.request.urlopen("https://overpass-api.de", timeout=8, context=ctx)
     print(f"-- HTTPS:   OK via {src}")
+except urllib.error.HTTPError as exc:
+    # An HTTP status (even 4xx) means TLS + connection succeeded.
+    print(f"-- HTTPS:   OK via {src} (server said {exc.code}, connection fine)")
 except Exception as exc:
     print(f"-- HTTPS:   FAILING via {src}: {exc!r}")
     print("            -> Overpass unreachable: no seeded routes; gems fall back to near-user scatter")
