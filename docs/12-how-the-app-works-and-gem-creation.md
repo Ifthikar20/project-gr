@@ -103,8 +103,9 @@ The 3-step creation flow in
 (draw → place gems → publish):
 
 1. **Draw.** The user taps waypoints (or drops a destination pin); each
-   segment snaps to walkable paths via `MKDirections` with a straight-line
-   fallback. Routes must be ≥ 1 km.
+   segment snaps to walkable paths via `MKDirections`. When routing fails,
+   the straight-line fallback is recorded as an *unverified stretch* and
+   gems can't be placed on it (docs/13 §2). Routes must be ≥ 1 km.
 2. **Place gems.** Each map tap is projected onto the route
    (`geometry.project`) and validated client-side against the placement
    budget (docs/02, `CreationModel.placeGem`):

@@ -7,7 +7,7 @@ import uuid
 from unittest import mock
 
 from django.core.management import call_command
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 
 from . import catalog, walkability
 from .geometry import RouteGeometry, polyline_decode, polyline_encode
@@ -31,6 +31,9 @@ def track(speed, length_m=1000):
     return samples
 
 
+# Hermetic: no real Overpass calls from tests; the walkability tests below
+# opt back in with mode="overpass" plus a mocked transport.
+@override_settings(WALKABILITY_MODE="off")
 class ApiTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -253,6 +256,25 @@ class ApiTests(TestCase):
             call_command("drop_gems", seed=7, stdout=io.StringIO())
         self.assertEqual(
             GemDrop.objects.filter(route__isnull=True, placed_by="system").count(), 0)
+
+    def test_system_drops_fail_closed_when_check_enabled(self):
+        """With the walkability check ON, system gems require an explicit
+        True: an unanswerable check (None) places nothing; user drops stay
+        fail-open."""
+        self.seed_popular_route()
+        system = GemDrop.objects.filter(route__isnull=True, placed_by="system")
+        with self.settings(WALKABILITY_MODE="overpass"):
+            with mock.patch("api.walkability.is_walkable", return_value=None):
+                call_command("drop_gems", seed=7, stdout=io.StringIO())
+                self.assertEqual(system.count(), 0)          # fail closed
+                self.wallet_sync(2)                          # user drop: fail open
+                ok = self.post("/v1/drops",
+                               {"gem_id": str(catalog.gem_of("common")["id"]),
+                                "lat": 37.0, "lng": -122.0}, auth=True)
+                self.assertEqual(ok.status_code, 200)
+            with mock.patch("api.walkability.is_walkable", return_value=True):
+                call_command("drop_gems", seed=7, stdout=io.StringIO())
+                self.assertEqual(system.count(), 1)          # confirmed → drops
 
     def test_drop_rejected_on_unwalkable_coordinate(self):
         self.wallet_sync(2)

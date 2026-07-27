@@ -1,4 +1,5 @@
 """GemRun API settings — dev defaults; harden before any real deployment."""
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -36,10 +37,13 @@ TIME_ZONE = "UTC"
 USE_TZ = True
 
 # Walkability downstream call (api/walkability.py, docs/13).
+#   "overpass" — query OpenStreetMap's Overpass API for walkable ways.
+#                System drops FAIL CLOSED in this mode (require True);
+#                user drops fail open (only a definite False rejects).
 #   "off"      — no external call; is_walkable() returns None (callers trust
 #                route polylines, which are snapped to walking directions).
-#   "overpass" — query OpenStreetMap's Overpass API for walkable ways.
-WALKABILITY_MODE = "off"
+# Env-overridable so offline dev/CI can flip it without a code change.
+WALKABILITY_MODE = os.environ.get("WALKABILITY_MODE", "overpass")
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 WALKABILITY_RADIUS_M = 25      # matches the gem collection radius
 WALKABILITY_TIMEOUT_S = 5

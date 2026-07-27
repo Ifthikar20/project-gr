@@ -429,21 +429,32 @@ func region(for coords: [Coordinate]) -> MKCoordinateRegion {
 }
 
 /// Snap consecutive waypoints to walkable paths via MKDirections (docs/03 §4).
-/// Falls back to a straight segment when routing fails.
+/// Falls back to a straight segment when routing fails — callers that place
+/// gems must use `snapVerified` and treat `snapped == false` segments as
+/// unconfirmed (they may cross private land; docs/13 §2).
 public enum PathSnapper {
-    public static func snap(from a: Coordinate, to b: Coordinate) async -> [Coordinate] {
+    /// The snapped path plus whether MKDirections actually confirmed it as a
+    /// walking route (`false` = straight-line fallback, NOT a walkable path).
+    public static func snapVerified(from a: Coordinate,
+                                    to b: Coordinate) async -> (path: [Coordinate],
+                                                                snapped: Bool) {
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: a.cl))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: b.cl))
         request.transportType = .walking
         do {
             let response = try await MKDirections(request: request).calculate()
-            guard let poly = response.routes.first?.polyline else { return [a, b] }
+            guard let poly = response.routes.first?.polyline else { return ([a, b], false) }
             var coords = [CLLocationCoordinate2D](repeating: .init(), count: poly.pointCount)
             poly.getCoordinates(&coords, range: NSRange(location: 0, length: poly.pointCount))
-            return coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }
+            return (coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }, true)
         } catch {
-            return [a, b]
+            return ([a, b], false)
         }
+    }
+
+    /// Path-only convenience for previews, where verification doesn't matter.
+    public static func snap(from a: Coordinate, to b: Coordinate) async -> [Coordinate] {
+        await snapVerified(from: a, to: b).path
     }
 }

@@ -43,6 +43,10 @@ final class CreationModel {
     var planMode: PlanMode = .draw
     var waypoints: [Coordinate] = []
     var pathCoords: [Coordinate] = []
+    /// Along-route stretches where MKDirections could NOT confirm a walking
+    /// path (straight-line fallback). Gems are refused here — an unverified
+    /// segment may cross private land (docs/13 §2).
+    var unsnappedRangesM: [ClosedRange<Double>] = []
     var placedDrops: [GemDrop] = []
     var selectedRarity: Rarity = .common
     var name = ""
@@ -120,9 +124,11 @@ final class CreationModel {
         }
         isPlanning = true
         defer { isPlanning = false }
-        let segment = await PathSnapper.snap(from: start, to: destination)
+        let result = await PathSnapper.snapVerified(from: start, to: destination)
         waypoints = [start, destination]
-        pathCoords = segment
+        pathCoords = result.path
+        unsnappedRangesM = result.snapped
+            ? [] : [0...RouteGeometry(coordinates: result.path).totalLengthM]
     }
 
     func addWaypoint(_ c: Coordinate) {
@@ -130,14 +136,20 @@ final class CreationModel {
         waypoints.append(c)
         guard let previous else {
             pathCoords = [c]
+            unsnappedRangesM = []
             return
         }
         guard !snapping else { return }
         snapping = true
         Task {
-            // Snap to walkable paths via MKDirections; straight-line fallback.
-            let segment = await PathSnapper.snap(from: previous, to: c)
-            pathCoords.append(contentsOf: segment.dropFirst())
+            // Snap to walkable paths via MKDirections; a straight-line
+            // fallback is recorded as an unverified stretch (no gems there).
+            let result = await PathSnapper.snapVerified(from: previous, to: c)
+            let startM = geometry.totalLengthM
+            pathCoords.append(contentsOf: result.path.dropFirst())
+            if !result.snapped {
+                unsnappedRangesM.append(startM...geometry.totalLengthM)
+            }
             snapping = false
         }
     }
@@ -172,14 +184,21 @@ final class CreationModel {
         defer { snapping = false }
         guard let first = waypoints.first else {
             pathCoords = []
+            unsnappedRangesM = []
             return
         }
         var rebuilt = [first]
+        var ranges: [ClosedRange<Double>] = []
         for (a, b) in zip(waypoints, waypoints.dropFirst()) {
-            let segment = await PathSnapper.snap(from: a, to: b)
-            rebuilt.append(contentsOf: segment.dropFirst())
+            let result = await PathSnapper.snapVerified(from: a, to: b)
+            let startM = RouteGeometry(coordinates: rebuilt).totalLengthM
+            rebuilt.append(contentsOf: result.path.dropFirst())
+            if !result.snapped {
+                ranges.append(startM...RouteGeometry(coordinates: rebuilt).totalLengthM)
+            }
         }
         pathCoords = rebuilt
+        unsnappedRangesM = ranges
     }
 
     /// Budget + spacing + rarity-position rules (docs/02), with kind rejections.
@@ -203,6 +222,10 @@ final class CreationModel {
             return
         }
         let alongM = projection.alongRouteM
+        if unsnappedRangesM.contains(where: { $0.contains(alongM) }) {
+            placementError = "This stretch isn't a confirmed walking path — place the gem on a snapped section."
+            return
+        }
         if placedDrops.contains(where: {
             abs(Double($0.positionAlongRouteM) - alongM) < Double(PlacementBudget.minGemSpacingM)
         }) {

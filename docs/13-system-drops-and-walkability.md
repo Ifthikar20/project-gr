@@ -82,12 +82,19 @@ indirectly through routing. So walkability is layered:
 |---|---|---|
 | `True` | walkable way within radius | drop / accept |
 | `False` | Overpass answered: nothing walkable (highway median, private land, water) | **skip / reject 422 `not_walkable`** |
-| `None` | check disabled or Overpass unreachable | trust the route snap; user drops proceed |
+| `None` | check disabled or Overpass unreachable | system drops **fail closed** when the mode is on (a gem can wait); user drops fail open |
 
-Configuration (`gemrun/settings.py`): `WALKABILITY_MODE` (`"off"` default,
-`"overpass"` to enable), `OVERPASS_URL`, `WALKABILITY_RADIUS_M` (25, matches
-the collection radius), `WALKABILITY_TIMEOUT_S`. The same check also gates
-user standalone drops in `POST /v1/drops`.
+Configuration (`gemrun/settings.py`): `WALKABILITY_MODE` — default
+`"overpass"` (ON), overridable via the `WALKABILITY_MODE` env var (`"off"`
+for offline dev/CI; the test suite forces `"off"` and mocks the transport) —
+plus `OVERPASS_URL`, `WALKABILITY_RADIUS_M` (25, matches the collection
+radius), `WALKABILITY_TIMEOUT_S`. The same check gates user standalone drops
+in `POST /v1/drops`.
+
+The client closes the remaining leak at the source: `PathSnapper.snapVerified`
+reports whether MKDirections actually confirmed each segment, the creation
+flow records straight-line-fallback stretches (`unsnappedRangesM`), and gem
+placement on an unverified stretch is refused with an inline error.
 
 A future alternative provider is the Apple Maps Server API
 (`transportType=Walking`, 25k free calls/day): validate a point by routing
