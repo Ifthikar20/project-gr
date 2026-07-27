@@ -21,10 +21,12 @@ from .models import GemDrop, Route
 
 RARITIES = ["common", "uncommon", "rare", "epic"]   # legendary: never
 WEIGHTS = [40, 30, 20, 10]
-# Dedicated trails and promenades — gems here skew emerald-and-up; plain
-# sidewalks (footway) keep the common-heavy default mix.
-PRIME_WALKWAYS = {"path", "pedestrian", "steps"}
-PRIME_WEIGHTS = [15, 45, 27, 13]
+# Rarer loot follows proven foot traffic, not scenery: gems on popular
+# routes (already gated by PRESENCE_DROP_MIN_RUNS) roll this richer mix,
+# while off-route sidewalk fills keep the common-heavy default. The OSM way
+# class (trail vs sidewalk) deliberately carries no bonus — we stock where
+# people already walk, we don't lure them somewhere "nicer".
+HIGH_TRAFFIC_WEIGHTS = [15, 45, 27, 13]
 ATTEMPTS_PER_ROUTE = 8
 # Gems are a walk, not a drive: every presence-triggered gem must land
 # within this distance of the map-open point, regardless of query radius.
@@ -57,7 +59,10 @@ def drop_gem_on_route(route, rng, near=None):
     """Sample a point on the route's (walking-snapped) polyline, verify
     spacing + walkability, and write one system GemDrop. None if no
     candidate survived. near=(lat, lng) also requires the point to sit
-    within NEAR_LIMIT_M of the map-open coordinates."""
+    within NEAR_LIMIT_M of the map-open coordinates.
+
+    Routes are the highest-traffic surface we can prove (run_count gate),
+    so their gems roll the richer HIGH_TRAFFIC_WEIGHTS mix."""
     geom = RouteGeometry(polyline_decode(route.polyline))
     if geom.total_length_m <= 0:
         return None
@@ -79,7 +84,7 @@ def drop_gem_on_route(route, rng, near=None):
         # public API (docs/13 §2).
         if walkability.is_walkable(lat, lng) is False:
             continue
-        return create_system_drop(lat, lng, rng)
+        return create_system_drop(lat, lng, rng, weights=HIGH_TRAFFIC_WEIGHTS)
     return None
 
 
@@ -104,9 +109,10 @@ def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
     Everything is anchored to NEAR_LIMIT_M: ways are fetched only within
     that circle, near ways are weighted higher still, and any sampled point
     that interpolates past the limit (long ways!) is rejected — gems are a
-    short walk, never a drive. Dedicated trails get the rarer-skewed mix."""
+    short walk, never a drive. All fills roll the default rarity mix: the
+    way class (trail vs sidewalk) is a safety filter, not a loot signal."""
     ways = walkability.fetch_walkable_ways(
-        lat, lng, min(radius_m, NEAR_LIMIT_M), with_tags=True,
+        lat, lng, min(radius_m, NEAR_LIMIT_M),
         highways=walkability.PEDESTRIAN_HIGHWAYS)
     if not ways:
         return 0
@@ -115,12 +121,12 @@ def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
     way_weights = [
         (250 / (250 + min(math.hypot((p[0] - lat) * k, (p[1] - lng) * klng)
                           for p in coords))) ** 2
-        for coords, _ in ways]
+        for coords in ways]
     created = 0
     for _ in range(count * ATTEMPTS_PER_ROUTE):
         if created >= count:
             break
-        coords, highway = rng.choices(ways, weights=way_weights)[0]
+        coords = rng.choices(ways, weights=way_weights)[0]
         i = rng.randrange(len(coords) - 1)
         t = rng.random()
         plat = coords[i][0] + t * (coords[i + 1][0] - coords[i][0])
@@ -129,8 +135,7 @@ def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
             continue
         if near_existing_drop(plat, plng):
             continue
-        rarity_weights = PRIME_WEIGHTS if highway in PRIME_WALKWAYS else WEIGHTS
-        create_system_drop(plat, plng, rng, weights=rarity_weights)
+        create_system_drop(plat, plng, rng)
         created += 1
     return created
 

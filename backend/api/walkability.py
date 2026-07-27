@@ -98,15 +98,13 @@ def query_overpass(query, timeout):
     return None
 
 
-def fetch_walkable_ways(lat, lng, radius_m=2500, with_tags=False,
-                        highways=WALKABLE_HIGHWAYS):
+def fetch_walkable_ways(lat, lng, radius_m=2500, highways=WALKABLE_HIGHWAYS):
     """Geometry of walkable ways around a point, as lists of (lat, lng) —
     the real 'walkable path list' used by the seed command to build
-    street-following demo routes. An explicit data fetch, so it ignores
-    WALKABILITY_MODE; returns [] when no Overpass mirror is reachable.
+    street-following demo routes and by system_drops to place gems. An
+    explicit data fetch, so it ignores WALKABILITY_MODE; returns [] when no
+    Overpass mirror is reachable.
 
-    with_tags=True returns (coords, highway_value) tuples instead, so
-    callers can tell dedicated pedestrian paths from ordinary streets.
     Pass highways=PEDESTRIAN_HIGHWAYS to exclude roads/driveways/tracks."""
     query = WAYS_QUERY_TEMPLATE.format(
         timeout=int(settings.WALKABILITY_TIMEOUT_S) * 2, radius=int(radius_m),
@@ -124,11 +122,7 @@ def fetch_walkable_ways(lat, lng, radius_m=2500, with_tags=False,
         first, last = geom[0], geom[-1]
         if abs(first["lat"] - last["lat"]) < 1e-6 and abs(first["lon"] - last["lon"]) < 1e-6:
             continue
-        coords = [(p["lat"], p["lon"]) for p in geom]
-        if with_tags:
-            ways.append((coords, (el.get("tags") or {}).get("highway", "")))
-        else:
-            ways.append(coords)
+        ways.append([(p["lat"], p["lon"]) for p in geom])
     return ways
 
 

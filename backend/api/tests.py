@@ -3,13 +3,14 @@ GameKitCoreTests: a straight 1 km route heading north, tracks at known paces.
 """
 import io
 import json
+import random
 import uuid
 from unittest import mock
 
 from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
 
-from . import catalog, walkability
+from . import catalog, system_drops, walkability
 from .geometry import RouteGeometry, polyline_decode, polyline_encode
 from .models import ClaimAttempt, GemDrop, Route
 
@@ -437,8 +438,7 @@ class ApiTests(TestCase):
         """When OSM answers, bootstrap gems land ON walkable-way geometry,
         not scattered around the user."""
         step = 500 * DEG_PER_M_LAT
-        ways = [([(64.2 + i * step, -149.4937), (64.2 + (i + 1) * step, -149.4937)],
-                 "footway")
+        ways = [[(64.2 + i * step, -149.4937), (64.2 + (i + 1) * step, -149.4937)]
                 for i in range(8)]
         with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
@@ -452,13 +452,37 @@ class ApiTests(TestCase):
         """Gems are a walk, not a drive: ways farther than NEAR_LIMIT_M from
         the map-open point never receive gems, whatever the query radius."""
         far = 2_000 * DEG_PER_M_LAT
-        ways = [([(64.2008 + far, -149.4937), (64.2008 + far * 2, -149.4937)],
-                 "footway")]
+        ways = [[(64.2008 + far, -149.4937), (64.2008 + far * 2, -149.4937)]]
         with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
         self.assertEqual(drops, [])
+
+    def test_rarity_bonus_follows_route_traffic_not_way_class(self):
+        """Rarer loot tracks proven foot traffic, not scenery: gems on
+        popular routes roll HIGH_TRAFFIC_WEIGHTS, while off-route sidewalk
+        fills roll the default mix whatever the OSM way class — the system
+        stocks where people already walk instead of luring them onto
+        "nicer" trails."""
+        route_id = self.seed_popular_route(run_count=5)
+        route = Route.objects.get(id=route_id)
+        with mock.patch("api.system_drops.create_system_drop") as spawn:
+            system_drops.drop_gem_on_route(route, random.Random(1),
+                                           near=(37.0, -122.0))
+        self.assertEqual(spawn.call_args.kwargs.get("weights"),
+                         system_drops.HIGH_TRAFFIC_WEIGHTS)
+
+        step = 500 * DEG_PER_M_LAT
+        trail = [[(37.0 + i * step, -122.0), (37.0 + (i + 1) * step, -122.0)]
+                 for i in range(4)]
+        with mock.patch("api.system_drops.create_system_drop") as spawn, \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=trail):
+            made = system_drops.drop_on_walkable_ways(37.0, -122.0, 5000, 1,
+                                                      random.Random(1))
+        self.assertEqual(made, 1)
+        self.assertIsNone(spawn.call_args.kwargs.get("weights"))
 
     def test_route_run_claims_crossed_system_drop_first_come(self):
         route = self.publish_route().json()

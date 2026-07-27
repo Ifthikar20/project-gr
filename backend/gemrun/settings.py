@@ -58,8 +58,9 @@ WALKABILITY_TIMEOUT_S = 5
 PRESENCE_DROPS = True
 PRESENCE_DROP_MAX_PER_AREA = 40  # active system drops per queried area, capped
 # Empty-area bootstrap: when a map opens somewhere with zero system gems and
-# no qualifying routes, the system still stocks the area — gems on nearby OSM
-# walkable ways, falling back to a short-walk scatter around the user.
+# no qualifying routes, the system still stocks the area — gems sampled on
+# nearby OSM walkable ways only. No scatter fallback: with no trusted
+# geometry the area stays empty (empty beats misplaced).
 PRESENCE_BOOTSTRAP = True
 # A route needs this many runs to count as popular. Env-overridable so local
 # dev can set 0 (run.sh does) and see gems on any published route immediately.

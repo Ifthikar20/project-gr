@@ -55,8 +55,11 @@ the presence trigger and the command rank published routes by `run_count`
 and only consider routes at or above the min-runs gate (default 3). A
 candidate point is sampled at a random position along a qualifying route's
 polyline, so system gems land exactly where our users demonstrably run.
-Existing-drop spacing is enforced (100 m, the doc-02 rule) and rarity is
-weighted (common 60 / uncommon 25 / rare 12 / epic 3 — legendary never).
+Existing-drop spacing is enforced (100 m, the doc-02 rule) and rarity
+follows the traffic: gems on these proven routes roll the richer
+`HIGH_TRAFFIC_WEIGHTS` (common 15 / uncommon 45 / rare 27 / epic 13 —
+legendary never), while off-route sidewalk fills keep the default
+40/30/20/10 whatever the OSM way class.
 
 ### The global backstop command
 

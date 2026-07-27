@@ -8,6 +8,7 @@ import GameKitCore
 import MapKit
 import SwiftData
 import SwiftUI
+import UIKit
 
 /// Map home (docs/03 §2): routes, standalone gem drops left by other
 /// runners, drop mode (place a wallet gem anywhere with a pin-drop
@@ -48,6 +49,13 @@ public struct ExploreRootView: View {
     // for the POI lookup that gates a drop.
     @State private var dropError: String?
     @State private var isValidatingDrop = false
+    /// First-open gate: the map is never shown unstocked. An opaque cover
+    /// sits over it from tab-open until the first gem fetch lands —
+    /// location permission → GPS fix → GET /v1/drops (which stocks the
+    /// area server-side) → reveal, pins already in place.
+    enum FirstLoad { case locating, stocking, failed, ready }
+    @State private var firstLoad: FirstLoad = .locating
+    @Environment(\.openURL) private var openURL
 
     public init() {}
 
@@ -103,6 +111,26 @@ public struct ExploreRootView: View {
                     }
                 }
                 .padding(.bottom, 8)
+
+                if firstLoad != .ready {
+                    firstLoadCover
+                        .transition(.opacity)
+                        .zIndex(1)
+                }
+            }
+            .overlay(alignment: .top) {
+                // Honest empty state: fail-closed spawning means an area
+                // with no trusted walkable geometry legitimately has zero
+                // gems — say so instead of showing a silently bare map.
+                if firstLoad == .ready && nearbyDrops.isEmpty {
+                    Text("No gems in this area yet — check back soon")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(DS.Colors.ink)
+                        .airbnbCard(padding: 12)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .transition(.opacity)
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $detailRoute) { route in
@@ -151,6 +179,83 @@ public struct ExploreRootView: View {
                 session.pendingDeepLinkRouteID = nil
             }
         }
+    }
+
+    /// Opaque snow cover shown instead of an ever-empty map. Three shapes:
+    /// a denied-permission call-to-action (gems are location-based, so the
+    /// map is useless without it), a spinner while locating/stocking, and
+    /// a retry screen when the first fetch fails. The map + tiles keep
+    /// loading underneath, so the reveal is instant once pins are in hand.
+    private var firstLoadCover: some View {
+        VStack(spacing: 14) {
+            Spacer()
+            if live.isDenied {
+                Image(systemName: "location.slash")
+                    .font(.system(size: 44))
+                    .foregroundStyle(DS.Colors.pulse)
+                Text("Turn on location")
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                Text("Gems spawn on real sidewalks and trails around you — GemRun needs your location to stock the map.")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        openURL(url)
+                    }
+                } label: {
+                    Text("Open Settings")
+                        .font(.headline.bold())
+                        .foregroundStyle(DS.Colors.snowCard)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 14)
+                        .background(DS.Colors.pulse, in: Capsule())
+                }
+                .padding(.top, 6)
+            } else if firstLoad == .failed {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.system(size: 44))
+                    .foregroundStyle(DS.Colors.pulse)
+                Text("Couldn't load gems")
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                Text("Check your connection and try again.")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                Button {
+                    Task { await loadNearby() }
+                } label: {
+                    Text("Retry")
+                        .font(.headline.bold())
+                        .foregroundStyle(DS.Colors.snowCard)
+                        .padding(.horizontal, 34)
+                        .padding(.vertical, 14)
+                        .background(DS.Colors.pulse, in: Capsule())
+                }
+                .padding(.top, 6)
+            } else {
+                ProgressView()
+                    .tint(DS.Colors.pulse)
+                    .scaleEffect(1.4)
+                    .padding(.bottom, 4)
+                Text(firstLoad == .locating ? "Finding you…" : "Stocking gems near you…")
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                Text(firstLoad == .locating
+                     ? "Gems spawn where you are — waiting for a GPS fix."
+                     : "Placing gems on sidewalks and trails around you.")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.Colors.snow)
+        .ignoresSafeArea()
     }
 
     /// The primary "just go run" action. Always tappable — free runs work
@@ -510,10 +615,14 @@ public struct ExploreRootView: View {
                                 lng: last.coordinate.longitude)
         } else {
             print("[Explore] skipping fetch — no GPS fix yet")
+            // Back to "Finding you…" — the first-fix onChange watcher will
+            // re-enter here the moment GPS lands.
+            if firstLoad != .ready { firstLoad = .locating }
             return
         }
         isLoadingNearby = true
         defer { isLoadingNearby = false }
+        if firstLoad != .ready { firstLoad = .stocking }
         lastFetchCenter = center
         print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
 
@@ -548,9 +657,18 @@ public struct ExploreRootView: View {
             let drops = try await API.shared.nearbyDrops(
                 lat: center.lat, lng: center.lng, radiusM: 8_000)
             print("[Explore] drops: \(drops.count)")
-            withAnimation { nearbyDrops = drops }
+            // Reveal the map only now — pins land in the same frame, so an
+            // unstocked map is never on screen.
+            withAnimation {
+                nearbyDrops = drops
+                firstLoad = .ready
+            }
         } catch {
             print("[Explore] nearbyDrops FAILED: \(error)")
+            // Keep the cover up with a Retry — a bare map with zero gems
+            // must never stand in for a failed fetch. Refreshes after the
+            // first reveal keep the stale pins instead.
+            if firstLoad != .ready { firstLoad = .failed }
         }
         // Recommendations key off the fresh drop list — regenerate here so
         // the carousel updates in the same pass as everything else.
@@ -715,6 +833,9 @@ struct DropGemSheet: View {
 final class LiveLocation: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     var coordinate: Coordinate?
+    /// True once the user has denied (or MDM has restricted) location —
+    /// the Explore first-load cover switches to its Settings prompt.
+    var isDenied = false
 
     override init() {
         super.init()
@@ -727,6 +848,8 @@ final class LiveLocation: NSObject, CLLocationManagerDelegate {
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
+        isDenied = manager.authorizationStatus == .denied
+            || manager.authorizationStatus == .restricted
         manager.startUpdatingLocation()
         // Deliver the last cached fix immediately so the emoji shows up
         // without waiting for the next GPS callback.
@@ -745,9 +868,10 @@ final class LiveLocation: NSObject, CLLocationManagerDelegate {
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
         Task { @MainActor in
-            if manager.authorizationStatus == .authorizedWhenInUse
-                || manager.authorizationStatus == .authorizedAlways {
+            self.isDenied = status == .denied || status == .restricted
+            if status == .authorizedWhenInUse || status == .authorizedAlways {
                 manager.startUpdatingLocation()
             }
         }
