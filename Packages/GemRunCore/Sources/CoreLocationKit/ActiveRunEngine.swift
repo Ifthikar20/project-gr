@@ -19,6 +19,9 @@ public final class ActiveRunEngine {
     public private(set) var distanceM: Double = 0
     public private(set) var currentSpeed: Double = 0
     public private(set) var lastSample: TrackSample?
+    /// Every accepted position, in order — the breadcrumb trail the run map
+    /// draws behind the runner ("the steps we add as we actually move").
+    public private(set) var traveledPath: [Coordinate] = []
     public private(set) var collectedEvents: [CollectionEngine.Event] = []
     /// UI hook: fired on each collection for haptics/animation.
     public var onCollect: ((CollectionEngine.Event) -> Void)?
@@ -90,6 +93,7 @@ public final class ActiveRunEngine {
         geometry = nil
         collectionEngine = nil
         track = []
+        traveledPath = []
         collectedEvents = []
         distanceM = 0
         pausedAccumulator = 0
@@ -133,6 +137,7 @@ public final class ActiveRunEngine {
         self.geometry = geometry
         self.collectionEngine = CollectionEngine(geometry: geometry, drops: route.gemDrops)
         self.track = []
+        self.traveledPath = []
         self.collectedEvents = []
         self.distanceM = 0
         self.pausedAccumulator = 0
@@ -214,6 +219,7 @@ public final class ActiveRunEngine {
         }
         lastSample = sample
         track.append(sample)
+        traveledPath.append(sample.coordinate)
         if !isFreeRun {
             RunBuffer.append(sample)
         }

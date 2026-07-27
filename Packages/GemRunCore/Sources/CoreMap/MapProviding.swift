@@ -334,17 +334,23 @@ public struct ActiveRunMapView: View {
     let freeDrops: [GemDrop]
     let runnerPosition: Coordinate?
     let collectedDropIDs: Set<UUID>
+    /// Breadcrumb of positions actually traveled this run, drawn behind
+    /// the runner so every step taken is visible on the map.
+    let traveledPath: [Coordinate]
 
-    /// Remembers the previous sample so we can compute bearing frame-to-frame.
+    /// Anchor of the last heading update — kept until the runner moves far
+    /// enough from it, so short per-sample steps still accumulate into
+    /// live rotation instead of freezing the camera north-up.
     @State private var previousRunner: Coordinate?
     @State private var heading: CLLocationDirection = 0
 
     public init(route: Route?, freeDrops: [GemDrop] = [], runnerPosition: Coordinate?,
-                collectedDropIDs: Set<UUID>) {
+                collectedDropIDs: Set<UUID>, traveledPath: [Coordinate] = []) {
         self.route = route
         self.freeDrops = freeDrops
         self.runnerPosition = runnerPosition
         self.collectedDropIDs = collectedDropIDs
+        self.traveledPath = traveledPath
     }
 
     private var drops: [GemDrop] {
@@ -356,6 +362,12 @@ public struct ActiveRunMapView: View {
             if let route {
                 MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
                     .stroke(MapPalette.pulse, lineWidth: 4)
+            }
+            // The trail of steps actually taken this run.
+            if traveledPath.count > 1 {
+                MapPolyline(coordinates: traveledPath.map(\.cl))
+                    .stroke(MapPalette.ink.opacity(0.55),
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
             }
             ForEach(drops) { drop in
                 Annotation("", coordinate: drop.coordinate.cl) {
@@ -386,29 +398,39 @@ public struct ActiveRunMapView: View {
         .onChange(of: runnerPosition?.lng) { _, _ in updateHeading() }
     }
 
-    /// Bearing from the previous sample to the current one, in degrees clockwise
-    /// from north. Ignores GPS jitter below ~5 m so the camera doesn't spin.
+    /// Live direction: bearing from the last heading anchor to the current
+    /// position, clockwise from north. The anchor only advances once the
+    /// runner is > 5 m from it — per-second samples at running pace move
+    /// ~3 m, so anchoring per-sample froze the heading; accumulating from
+    /// a fixed anchor keeps the camera rotating like turn-by-turn nav
+    /// while still ignoring GPS jitter.
     private func updateHeading() {
         guard let curr = runnerPosition else { return }
-        defer { previousRunner = curr }
-        guard let prev = previousRunner else { return }
+        guard let prev = previousRunner else {
+            previousRunner = curr
+            return
+        }
         let mPerDegLat = 111_320.0
         let dy = (curr.lat - prev.lat) * mPerDegLat
         let dx = (curr.lng - prev.lng) * mPerDegLat * cos(curr.lat * .pi / 180)
         guard (dx * dx + dy * dy).squareRoot() > 5 else { return }
         let bearing = atan2(dx, dy) * 180 / .pi
         heading = (bearing + 360).truncatingRemainder(dividingBy: 360)
+        previousRunner = curr
     }
 
     private var camera: MapCameraPosition {
         if let runner = runnerPosition {
-            // Google-Maps-nav feel: low altitude, tilted, rotated to travel dir.
+            // Apple-Maps-nav feel: low altitude, tilted, rotated to travel dir.
             .camera(MapCamera(centerCoordinate: runner.cl,
                               distance: 350, heading: heading, pitch: 60))
-        } else if let route {
-            .region(region(for: PolylineCodec.decode(route.polyline)))
         } else {
-            .userLocation(fallback: .automatic)
+            // Before the first GPS sample: start FROM THE RUNNER'S position
+            // (route-region only as the no-location fallback), so a run
+            // always opens where you're standing.
+            .userLocation(fallback: route.map {
+                .region(region(for: PolylineCodec.decode($0.polyline)))
+            } ?? .automatic)
         }
     }
 }

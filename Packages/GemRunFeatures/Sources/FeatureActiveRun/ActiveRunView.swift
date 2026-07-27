@@ -66,7 +66,8 @@ public struct ActiveRunView: View {
                 ActiveRunMapView(route: route,
                                  freeDrops: route == nil ? session.freeRunDrops : [],
                                  runnerPosition: engine.lastSample?.coordinate,
-                                 collectedDropIDs: Set(engine.collectedEvents.map(\.drop.id)))
+                                 collectedDropIDs: Set(engine.collectedEvents.map(\.drop.id)),
+                                 traveledPath: engine.traveledPath)
                 if let event = burst {
                     CollectionBurst(rarity: event.drop.rarity)
                 }
