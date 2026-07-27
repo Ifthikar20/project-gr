@@ -516,6 +516,21 @@ class ApiTests(TestCase):
         self.assertFalse(GemDrop.objects.filter(route__isnull=True,
                                                 dropped_by__isnull=True).exists())
 
+    def test_dev_fallback_survives_duplicate_profiles(self):
+        """The app fires routes+drops concurrently; a get_or_create race once
+        left two dev-fallback profiles and every request 500'd. Unauthed
+        requests must keep working with duplicates present."""
+        from .models import Profile
+        for _ in range(2):
+            Profile.objects.create(handle="runner", auth_provider="guest",
+                                   external_user_id="dev-fallback")
+        response = self.client.get("/v1/routes", {"lat": 37.0, "lng": -122.0,
+                                                  "radius_m": 5000})
+        self.assertEqual(response.status_code, 200)
+        drops = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                              "radius_m": 5000})
+        self.assertEqual(drops.status_code, 200)
+
     def test_catalog_matches_client_uuids(self):
         gems = self.client.get("/v1/gems/catalog").json()["gems"]
         self.assertEqual(len(gems), 8)

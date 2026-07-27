@@ -52,10 +52,16 @@ def profile_from(request):
             return token.profile
     if settings.ALLOW_ALL_ACCOUNTS:
         # Dev flag (mirrors iOS AuthFlags.allowAllAccounts): unauthenticated
-        # calls act as a shared dev profile instead of failing.
-        profile, _ = Profile.objects.get_or_create(
-            auth_provider="guest", external_user_id="dev-fallback",
-            defaults={"handle": "runner"})
+        # calls act as a shared dev profile instead of failing. NOT
+        # get_or_create: the app fires routes+drops concurrently, and two
+        # racing creates once left duplicates that 500'd every request —
+        # always take the oldest, tolerate strays.
+        profile = (Profile.objects.filter(auth_provider="guest",
+                                          external_user_id="dev-fallback")
+                   .order_by("created_at").first())
+        if profile is None:
+            profile = Profile.objects.create(handle="runner", auth_provider="guest",
+                                             external_user_id="dev-fallback")
         return profile
     return None
 
