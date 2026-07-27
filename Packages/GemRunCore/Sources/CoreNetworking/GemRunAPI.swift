@@ -66,6 +66,11 @@ public struct RunSession: Codable, Sendable {
     public let runID: UUID
     public let exactDrops: [GemDrop]
 
+    enum CodingKeys: String, CodingKey {
+        case exactDrops
+        case runID = "runId"
+    }
+
     public init(runID: UUID, exactDrops: [GemDrop]) {
         self.runID = runID
         self.exactDrops = exactDrops

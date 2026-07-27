@@ -28,8 +28,13 @@ public struct ExploreRootView: View {
     @State private var destinationPath: [Coordinate] = []
     @State private var isPlanningPath = false
     @State private var planError: String?
-    // Live GPS fix drives the runner emoji on the map + park seeding.
+    // Live GPS fix drives the runner emoji on the map + refetch-on-move.
     @State private var live = LiveLocation()
+    /// Center of the last nearby-fetch, so a first real GPS fix (or a big
+    /// move) far from it triggers a refetch.
+    @State private var lastFetchCenter: Coordinate?
+    @State private var isLoadingNearby = false
+    @Environment(\.scenePhase) private var scenePhase
     // Drop-mode validation state: last denial reason, and "checking…" flag
     // for the POI lookup that gates a drop.
     @State private var dropError: String?
@@ -92,6 +97,22 @@ public struct ExploreRootView: View {
             }
             // Gems come exclusively from the backend (GET /v1/drops in
             // loadNearby) — no client-side phantom seeding.
+            .onChange(of: live.coordinate) { _, fix in
+                // First fetch can run before a GPS fix exists (falls back to
+                // the demo city). Re-fetch once a real fix arrives far from
+                // the last query center, or after a big move.
+                guard let fix else { return }
+                if let last = lastFetchCenter,
+                   RouteGeometry.planarDistance(from: last, to: fix) <= 1_500 {
+                    return
+                }
+                Task { await loadNearby() }
+            }
+            // Returning to the app refreshes the world: collected gems
+            // vanish, new spawns appear — no relaunch needed.
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await loadNearby() } }
+            }
             .onChange(of: session.pendingDeepLinkRouteID) { _, id in
                 guard let id else { return }
                 if let stored = storedRoutes.first(where: { $0.id == id }) {
@@ -401,18 +422,33 @@ public struct ExploreRootView: View {
     /// SwiftData cache, drops render directly (they change hands too fast
     /// to cache).
     private func loadNearby() async {
+        guard !isLoadingNearby else { return }
+        isLoadingNearby = true
+        defer { isLoadingNearby = false }
         let manager = CLLocationManager()
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
-        let center = manager.location.map {
-            Coordinate(lat: $0.coordinate.latitude, lng: $0.coordinate.longitude)
-        } ?? Coordinate(lat: 37.7749, lng: -122.4194)
+        // Prefer the live fix; fall back to last-known, then the demo city.
+        let center = live.coordinate
+            ?? manager.location.map {
+                Coordinate(lat: $0.coordinate.latitude, lng: $0.coordinate.longitude)
+            }
+            ?? Coordinate(lat: 37.7749, lng: -122.4194)
+        lastFetchCenter = center
+        print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
 
-        if let fetched = try? await API.shared.nearbyRoutes(
-            lat: center.lat, lng: center.lng, radiusM: 5_000) {
-            let cachedIDs = Set(storedRoutes.map(\.id))
-            for route in fetched where !cachedIDs.contains(route.id) {
+        do {
+            let fetched = try await API.shared.nearbyRoutes(
+                lat: center.lat, lng: center.lng, radiusM: 5_000)
+            print("[Explore] routes: \(fetched.count)")
+            // Refresh, not just insert: re-encoding cached rows picks up
+            // server-side changes AND migrates gem blobs stored under the
+            // old (pre-CodingKeys) key spelling.
+            let cachedByID = Dictionary(uniqueKeysWithValues:
+                                            storedRoutes.map { ($0.id, $0) })
+            for route in fetched {
+                if let existing = cachedByID[route.id] { context.delete(existing) }
                 context.insert(StoredRoute(route: route))
             }
             // The backend is authoritative for this area: cached routes it no
@@ -429,10 +465,16 @@ public struct ExploreRootView: View {
                 }
             }
             try? context.save()
+        } catch {
+            print("[Explore] nearbyRoutes FAILED: \(error)")
         }
-        if let drops = try? await API.shared.nearbyDrops(
-            lat: center.lat, lng: center.lng, radiusM: 5_000) {
+        do {
+            let drops = try await API.shared.nearbyDrops(
+                lat: center.lat, lng: center.lng, radiusM: 5_000)
+            print("[Explore] drops: \(drops.count)")
             withAnimation { nearbyDrops = drops }
+        } catch {
+            print("[Explore] nearbyDrops FAILED: \(error)")
         }
     }
 }

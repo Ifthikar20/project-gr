@@ -26,6 +26,7 @@ let package = Package(
         .target(name: "CoreMap", dependencies: ["CoreModels"]),
         // Pure game logic — no UI/IO. The most heavily tested module.
         .target(name: "GameKitCore", dependencies: ["CoreModels"]),
-        .testTarget(name: "GameKitCoreTests", dependencies: ["GameKitCore"]),
+        .testTarget(name: "GameKitCoreTests",
+                    dependencies: ["GameKitCore", "CoreModels"]),
     ]
 )
