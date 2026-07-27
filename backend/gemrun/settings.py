@@ -44,7 +44,11 @@ USE_TZ = True
 #                route polylines, which are snapped to walking directions).
 # Env-overridable so offline dev/CI can flip it without a code change.
 WALKABILITY_MODE = os.environ.get("WALKABILITY_MODE", "overpass")
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Tried in order until one answers — the main instance rate-limits hard.
+OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
 WALKABILITY_RADIUS_M = 25      # matches the gem collection radius
 WALKABILITY_TIMEOUT_S = 5
 
@@ -53,6 +57,8 @@ WALKABILITY_TIMEOUT_S = 5
 # activity is the capture point, so regions nobody uses never get gems.
 PRESENCE_DROPS = True
 PRESENCE_DROP_MAX_PER_AREA = 3   # active system drops per queried area, capped
-PRESENCE_DROP_MIN_RUNS = 3       # a route needs this many runs to count as popular
+# A route needs this many runs to count as popular. Env-overridable so local
+# dev can set 0 (run.sh does) and see gems on any published route immediately.
+PRESENCE_DROP_MIN_RUNS = int(os.environ.get("PRESENCE_DROP_MIN_RUNS", 3))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

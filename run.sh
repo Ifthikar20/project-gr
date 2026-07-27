@@ -44,7 +44,10 @@ start_backend() {
     if [ "${SEED_DEMO:-1}" = "1" ]; then
         python manage.py seed
     fi
-    nohup python manage.py runserver "0.0.0.0:${API_PORT}" \
+    # Dev gate: any published route spawns system gems immediately (no
+    # 3-run popularity wait). Override: PRESENCE_DROP_MIN_RUNS=3 ./run.sh
+    PRESENCE_DROP_MIN_RUNS="${PRESENCE_DROP_MIN_RUNS:-0}" \
+        nohup python manage.py runserver "0.0.0.0:${API_PORT}" \
         > .server.log 2>&1 &
     echo $! > .server.pid
     cd ..
