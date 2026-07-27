@@ -13,20 +13,20 @@ python manage.py migrate
 python manage.py seed --lat 37.7749 --lng -122.4194   # demo routes + competitors
 python manage.py drop_gems                             # optional global backstop (docs/13)
 python manage.py runserver 0.0.0.0:8000
-python manage.py test                                  # 25 tests
+python manage.py test                                  # 28 tests
 ```
 
 ## Point the iOS app at it
 
-In `Packages/GemRunCore/Sources/CoreNetworking/GemRunAPI.swift`:
+Nothing to hardcode — `AppConfig.apiBaseURL` resolves at launch:
 
-```swift
-public static let apiBaseURL: URL? = URL(string: "http://127.0.0.1:8000")
-```
+1. `GEMRUN_API_URL` env var (`./run.sh` passes the local server automatically;
+   `"mock"` forces the in-app mock)
+2. `GemRunAPIBaseURL` Info.plist key
+3. Simulator debug builds default to `http://127.0.0.1:8000`
 
-(Simulator reaches your Mac's localhost directly; a physical device needs your
-Mac's LAN IP. `NSAllowsLocalNetworking` is already set in project.yml for
-dev-time plain HTTP.)
+A physical device needs your Mac's LAN IP via 1 or 2.
+`NSAllowsLocalNetworking` is already set in project.yml for dev-time HTTP.
 
 ## What's implemented
 

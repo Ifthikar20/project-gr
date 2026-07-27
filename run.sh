@@ -7,9 +7,9 @@
 #   ./run.sh app          build + launch only the iOS app
 #   ./run.sh stop         stop the background Django API
 #
-# The app talks to its built-in mock API by default. To point it at the local
-# Django server, set AppConfig.apiBaseURL to http://127.0.0.1:8000 in
-# Packages/GemRunCore/Sources/CoreNetworking/GemRunAPI.swift and re-run.
+# Simulator builds read LIVE data from the local Django API automatically
+# (AppConfig resolves GEMRUN_API_URL → Info.plist → simulator default).
+# Force the in-app mock instead with:  GEMRUN_API_URL=mock ./run.sh app
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -119,13 +119,16 @@ run_app() {
     xcrun simctl boot "$UDID" 2>/dev/null || true
     open -a Simulator
     xcrun simctl install "$UDID" "$APP_PATH"
-    xcrun simctl launch "$UDID" com.gemrun.GemRun
+    # SIMCTL_CHILD_* forwards the env var into the app process: the UI reads
+    # live data from the local Django API unless GEMRUN_API_URL says otherwise.
+    SIMCTL_CHILD_GEMRUN_API_URL="${GEMRUN_API_URL:-http://127.0.0.1:${API_PORT}}" \
+        xcrun simctl launch "$UDID" com.gemrun.GemRun
 
     echo
-    echo "GemRun is running. Tips:"
+    echo "GemRun is running against ${GEMRUN_API_URL:-http://127.0.0.1:${API_PORT}}. Tips:"
     echo "  - Simulate a location: Simulator menu > Features > Location"
-    echo "  - Watch API calls in the Xcode console ([MockAPI] lines)"
-    echo "  - Using the local backend? Set AppConfig.apiBaseURL and re-run."
+    echo "  - In-app mock instead of the backend:  GEMRUN_API_URL=mock ./run.sh app"
+    echo "  - Reset demo data:  ./run.sh stop && (cd backend && .venv/bin/python manage.py seed --reset)"
 }
 
 case "$MODE" in

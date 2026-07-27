@@ -4,7 +4,7 @@ The UI talks to a single protocol — `GemRunAPI` in `Packages/GemRunCore/Source
 
 | Implementation | When active | What it is |
 |---|---|---|
-| `MockGemRunAPI` | `AppConfig.apiBaseURL == nil` (**default today**) | In-app dummy server: in-memory actor, ~150 ms simulated latency, seeded routes, fake competitors, authoritative run validation, respawn dedupe |
+| `MockGemRunAPI` | `AppConfig.apiBaseURL == nil` — device builds with nothing configured, or `GEMRUN_API_URL=mock` (Simulator debug builds default to the LIVE local Django server) | In-app dummy server: in-memory actor, ~150 ms simulated latency, seeded routes, fake competitors, authoritative run validation, respawn dedupe |
 | `HTTPGemRunAPI` | `AppConfig.apiBaseURL` set | URLSession client hitting the same `/v1` paths — this is what the **Python/Django** backend implements later |
 
 **The swap is one line:** set `AppConfig.apiBaseURL` to the Django server's URL. No UI code changes.

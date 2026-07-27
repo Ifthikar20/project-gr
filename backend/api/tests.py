@@ -432,6 +432,36 @@ class ApiTests(TestCase):
         self.assertEqual(second["awarded_drops"], [])
         self.assertEqual(second["xp_earned"], 0)
 
+    def test_seed_builds_street_routes_from_osm_ways(self):
+        """Demo routes chain real walkable-way geometry into out-and-backs
+        starting at the given coordinate — no geometric circles."""
+        # Synthetic street: a straight chain of 500 m walkable segments
+        # heading north along lng=-122 (as Overpass would return them).
+        step = 500 * DEG_PER_M_LAT
+        ways = [[(37.0 + i * step, -122.0), (37.0 + (i + 1) * step, -122.0)]
+                for i in range(24)]
+        with mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=ways):
+            call_command("seed", lat=37.0, lng=-122.0, stdout=io.StringIO())
+        routes = Route.objects.filter(creator__isnull=True)
+        self.assertEqual(routes.count(), 3)
+        for route in routes:
+            coords = polyline_decode(route.polyline)
+            # Follows the street exactly — every point on lng -122.
+            self.assertTrue(all(abs(lng + 122.0) < 1e-4 for _, lng in coords))
+            # Out-and-back: ends where it started.
+            self.assertAlmostEqual(coords[0][0], coords[-1][0], places=4)
+            self.assertEqual(route.run_count, 3)          # competitor times
+        # The first route starts AT the requested coordinate.
+        first = min(routes, key=lambda r: r.distance_m)
+        self.assertLess(abs(polyline_decode(first.polyline)[0][0] - 37.0)
+                        * 111_320, 50)
+
+    def test_seed_without_street_data_seeds_nothing(self):
+        with mock.patch("api.walkability.fetch_walkable_ways", return_value=[]):
+            call_command("seed", lat=64.2, lng=-149.5, stdout=io.StringIO())
+        self.assertEqual(Route.objects.filter(creator__isnull=True).count(), 0)
+
     def test_catalog_matches_client_uuids(self):
         gems = self.client.get("/v1/gems/catalog").json()["gems"]
         self.assertEqual(len(gems), 8)
