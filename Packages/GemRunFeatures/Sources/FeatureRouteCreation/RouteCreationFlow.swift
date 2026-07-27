@@ -160,23 +160,6 @@ final class CreationModel {
         Task { await rebuildPath() }
     }
 
-    /// Loop-close helper (docs/03 §4): offered when the last waypoint is near
-    /// the start; snaps a final segment back to the first waypoint.
-    var canCloseLoop: Bool {
-        guard waypoints.count >= 3, let first = waypoints.first,
-              let last = waypoints.last else { return false }
-        let k = 111_320.0
-        let dy = (first.lat - last.lat) * k
-        let dx = (first.lng - last.lng) * k * cos(first.lat * .pi / 180)
-        let gap = (dx * dx + dy * dy).squareRoot()
-        return gap > 5 && gap < 120
-    }
-
-    func closeLoop() {
-        guard canCloseLoop, let first = waypoints.first else { return }
-        addWaypoint(first)
-    }
-
     /// Full re-snap of the path through all remaining waypoints.
     private func rebuildPath() async {
         guard !snapping else { return }

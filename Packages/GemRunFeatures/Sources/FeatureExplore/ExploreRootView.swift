@@ -20,6 +20,8 @@ public struct ExploreRootView: View {
     @State private var selectedID: UUID?
     @State private var detailRoute: Route?
     @State private var nearbyDrops: [GemDrop] = []
+    /// Gem pin the user tapped — presents the what-is-this-gem card.
+    @State private var infoDrop: GemDrop?
     @State private var isDropMode = false
     @State private var pendingDropSpot: TappedSpot?
     // Destination mode: tap a spot to build a run from here → there.
@@ -34,6 +36,13 @@ public struct ExploreRootView: View {
     /// move) far from it triggers a refetch.
     @State private var lastFetchCenter: Coordinate?
     @State private var isLoadingNearby = false
+    /// User-toggleable: fold the recommended-routes carousel to see the map.
+    @State private var isRoutesCollapsed = false
+    /// Auto-planned routes from the user's location through nearby gems —
+    /// generated client-side by RouteRecommender; never persisted.
+    @State private var recommendedRoutes: [Route] = []
+    @State private var lastRecommendCenter: Coordinate?
+    @State private var isRecommending = false
     @Environment(\.scenePhase) private var scenePhase
     // Drop-mode validation state: last denial reason, and "checking…" flag
     // for the POI lookup that gates a drop.
@@ -43,9 +52,23 @@ public struct ExploreRootView: View {
     public init() {}
 
     private var routes: [Route] {
-        storedRoutes
+        let published = storedRoutes
             .filter { $0.statusRaw == RouteStatus.published.rawValue }
             .map { $0.toRoute() }
+        // Only recommend routes near the user — otherwise a route from a city
+        // the user visited weeks ago keeps showing up here.
+        let nearby: [Route]
+        if let here = live.coordinate {
+            nearby = published.filter { route in
+                guard let start = PolylineCodec.decode(route.polyline).first else { return false }
+                return RouteGeometry.planarDistance(from: here, to: start) <= 8_000
+            }
+        } else {
+            nearby = published
+        }
+        // Auto-planned routes come first — they always start where the user
+        // is standing, so they're the most directly actionable.
+        return recommendedRoutes + nearby
     }
 
     public var body: some View {
@@ -59,7 +82,8 @@ public struct ExploreRootView: View {
                     destinationPin: destination,
                     userCoordinate: live.coordinate,
                     onSelect: { detailRoute = $0 },
-                    onTapCoordinate: mapTapHandler
+                    onTapCoordinate: mapTapHandler,
+                    onSelectDrop: { infoDrop = $0 }
                 )
                 .ignoresSafeArea()
 
@@ -84,6 +108,10 @@ public struct ExploreRootView: View {
             .sheet(item: $detailRoute) { route in
                 RouteDetailView(route: route)
             }
+            .sheet(item: $infoDrop) { drop in
+                GemInfoSheet(drop: drop)
+                    .presentationDetents([.height(320)])
+            }
             .sheet(item: $pendingDropSpot) { spot in
                 DropGemSheet(coordinate: spot.coordinate) { newDrop in
                     withAnimation { nearbyDrops.append(newDrop) }
@@ -92,8 +120,10 @@ public struct ExploreRootView: View {
                 .presentationDetents([.height(320)])
             }
             .task {
+                // Start GPS but DON'T fetch yet — a demo-city fallback would
+                // recommend routes from the wrong place. loadNearby() runs
+                // when the first real fix arrives via onChange below.
                 live.start()
-                await loadNearby()
             }
             // Gems come exclusively from the backend (GET /v1/drops in
             // loadNearby) — no client-side phantom seeding.
@@ -393,20 +423,62 @@ public struct ExploreRootView: View {
     }
 
     /// Suggested routes near the user — cards for the routes the backend
-    /// returned, horizontally scrollable. Tap = detail sheet.
+    /// returned, horizontally scrollable. Header row folds the carousel so
+    /// the map isn't covered when you just want to look at gems.
     private var routeCards: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 14) {
-                ForEach(routes) { route in
-                    RouteCard(route: route)
-                        .onTapGesture {
-                            selectedID = route.id
-                            detailRoute = route
-                        }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("\(routes.count) route\(routes.count == 1 ? "" : "s") nearby")
+                    .font(.footnote.bold())
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                Button {
+                    Task { await regenerateRecommendations(force: true) }
+                } label: {
+                    if isRecommending {
+                        ProgressView().scaleEffect(0.7).padding(.horizontal, 4)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.footnote.bold())
+                            .foregroundStyle(DS.Colors.ink)
+                            .padding(6)
+                    }
                 }
+                .disabled(isRecommending)
+                .accessibilityLabel("Refresh recommendations")
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isRoutesCollapsed.toggle()
+                    }
+                } label: {
+                    Image(systemName: isRoutesCollapsed ? "chevron.up" : "chevron.down")
+                        .font(.footnote.bold())
+                        .foregroundStyle(DS.Colors.ink)
+                        .padding(6)
+                }
+                .accessibilityLabel(isRoutesCollapsed ? "Show routes" : "Hide routes")
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6)
+            .background(DS.Colors.snow.opacity(0.92), in: Capsule())
             .padding(.horizontal, 16)
-            .padding(.bottom, 6)
+
+            if !isRoutesCollapsed {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(routes) { route in
+                            RouteCard(route: route)
+                                .onTapGesture {
+                                    selectedID = route.id
+                                    detailRoute = route
+                                }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
     }
 
@@ -423,24 +495,31 @@ public struct ExploreRootView: View {
     /// to cache).
     private func loadNearby() async {
         guard !isLoadingNearby else { return }
-        isLoadingNearby = true
-        defer { isLoadingNearby = false }
         let manager = CLLocationManager()
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
-        // Prefer the live fix; fall back to last-known, then the demo city.
-        let center = live.coordinate
-            ?? manager.location.map {
-                Coordinate(lat: $0.coordinate.latitude, lng: $0.coordinate.longitude)
-            }
-            ?? Coordinate(lat: 37.7749, lng: -122.4194)
+        // Recommendations are proximity-based, so a fetch without a real
+        // location shows the wrong routes. Skip until GPS lands; the
+        // onChange(of: live.coordinate) watcher retries on first fix.
+        let center: Coordinate
+        if let fix = live.coordinate {
+            center = fix
+        } else if let last = manager.location {
+            center = Coordinate(lat: last.coordinate.latitude,
+                                lng: last.coordinate.longitude)
+        } else {
+            print("[Explore] skipping fetch — no GPS fix yet")
+            return
+        }
+        isLoadingNearby = true
+        defer { isLoadingNearby = false }
         lastFetchCenter = center
         print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
 
         do {
             let fetched = try await API.shared.nearbyRoutes(
-                lat: center.lat, lng: center.lng, radiusM: 5_000)
+                lat: center.lat, lng: center.lng, radiusM: 8_000)
             print("[Explore] routes: \(fetched.count)")
             // Refresh, not just insert: re-encoding cached rows picks up
             // server-side changes AND migrates gem blobs stored under the
@@ -451,16 +530,13 @@ public struct ExploreRootView: View {
                 if let existing = cachedByID[route.id] { context.delete(existing) }
                 context.insert(StoredRoute(route: route))
             }
-            // The backend is authoritative for this area: cached routes it no
-            // longer returns were deleted/archived server-side — evict them so
-            // stale routes can't haunt the map. (Mock mode stays additive: the
-            // mock forgets published routes on relaunch; the backend doesn't.)
+            // Backend is authoritative: anything it doesn't return is gone
+            // (deleted server-side, or leftover from a prior mock-mode run).
+            // No distance guard — a SF-coord mock route stranded in a Dallas
+            // user's cache should NOT keep appearing on their map.
             if AppConfig.apiBaseURL != nil {
                 let fetchedIDs = Set(fetched.map(\.id))
                 for stored in storedRoutes where !fetchedIDs.contains(stored.id) {
-                    guard let start = PolylineCodec.decode(stored.polyline).first,
-                          RouteGeometry.planarDistance(from: center, to: start) <= 5_000
-                    else { continue }
                     context.delete(stored)
                 }
             }
@@ -470,12 +546,32 @@ public struct ExploreRootView: View {
         }
         do {
             let drops = try await API.shared.nearbyDrops(
-                lat: center.lat, lng: center.lng, radiusM: 5_000)
+                lat: center.lat, lng: center.lng, radiusM: 8_000)
             print("[Explore] drops: \(drops.count)")
             withAnimation { nearbyDrops = drops }
         } catch {
             print("[Explore] nearbyDrops FAILED: \(error)")
         }
+        // Recommendations key off the fresh drop list — regenerate here so
+        // the carousel updates in the same pass as everything else.
+        await regenerateRecommendations(force: false)
+    }
+
+    /// Client-side route synthesis: 4 walking routes starting at the user's
+    /// live location, visiting different combinations of nearby gems. Debounced
+    /// to moves > 100 m; `force=true` skips the debounce (refresh button).
+    private func regenerateRecommendations(force: Bool) async {
+        guard !isRecommending, let here = live.coordinate else { return }
+        if !force, let last = lastRecommendCenter,
+           RouteGeometry.planarDistance(from: last, to: here) < 100 {
+            return
+        }
+        isRecommending = true
+        defer { isRecommending = false }
+        lastRecommendCenter = here
+        let planned = await RouteRecommender.recommend(from: here, drops: nearbyDrops)
+        withAnimation { recommendedRoutes = planned }
+        print("[Explore] recommended: \(planned.count)")
     }
 }
 

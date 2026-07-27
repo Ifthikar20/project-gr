@@ -65,6 +65,7 @@ public struct ActiveRunView: View {
             ZStack {
                 ActiveRunMapView(route: route,
                                  freeDrops: route == nil ? session.freeRunDrops : [],
+                                 plannedPath: route == nil ? session.freeRunPlannedPath : [],
                                  runnerPosition: engine.lastSample?.coordinate,
                                  collectedDropIDs: Set(engine.collectedEvents.map(\.drop.id)),
                                  traveledPath: engine.traveledPath)
@@ -101,7 +102,9 @@ public struct ActiveRunView: View {
                             .rotationEffect(.degrees(bearing))
                             .animation(.easeInOut(duration: 0.4), value: bearing)
                     }
-                    Text("\(next.drop.rarity.rawValue.capitalized) · \(Int(next.distanceM)) m")
+                    // Apple-Maps-style "Xm · ~Y:ZZ" for the next gem.
+                    Text(nextGemLabel(distanceM: next.distanceM,
+                                      rarity: next.drop.rarity))
                         .font(.footnote.bold())
                         .foregroundStyle(DS.Colors.ink)
                 }
@@ -115,6 +118,7 @@ public struct ActiveRunView: View {
                 HStack(spacing: 24) {
                     stat(format(seconds: Int(engine.elapsed)), "Time")
                     stat(String(format: "%.2f", engine.distanceM / 1_000), "km")
+                    stat("\(engine.liveSteps)", "Steps")
                     stat(engine.currentPaceSPerKm > 0
                          ? format(seconds: engine.currentPaceSPerKm) : "–:––", "min/km",
                          accent: true)
@@ -149,6 +153,16 @@ public struct ActiveRunView: View {
         }
     }
 
+    /// "Rare · 240 m · ~2:15" once we have a pace; falls back to "Rare · 240 m"
+    /// on the first ~50 m before pace stabilizes.
+    private func nextGemLabel(distanceM: Double, rarity: Rarity) -> String {
+        let base = "\(rarity.rawValue.capitalized) · \(Int(distanceM)) m"
+        let pace = engine.currentPaceSPerKm
+        guard pace > 0 else { return base }
+        let etaSec = Int(distanceM / 1_000 * Double(pace))
+        return "\(base) · ~\(format(seconds: etaSec))"
+    }
+
     private func stat(_ value: String, _ label: String, accent: Bool = false) -> some View {
         VStack(spacing: 2) {
             Text(value)
@@ -162,14 +176,19 @@ public struct ActiveRunView: View {
     }
 
     private func finish() {
+        // Live pedometer count is the fallback: Health flushes step samples
+        // in batches, so the read can come back 0 right at run end.
+        let pedometerSteps = engine.liveSteps
         if route == nil {
             guard let free = engine.stopFree() else { return }
             logBattery(duration: free.durationS)
             // POST /v1/drops/collect — server confirms the track passed each drop.
             Task {
-                let completion = await session.recordFreeCompletion(
+                var completion = await session.recordFreeCompletion(
                     track: free.track, collected: free.collected,
                     durationS: free.durationS, distanceM: free.distanceM)
+                completion.steps = await runSteps(completion,
+                                                  fallback: pedometerSteps)
                 summary = completion
                 await HealthKitWriter.save(completion)
             }
@@ -180,10 +199,20 @@ public struct ActiveRunView: View {
         // Async: submits to POST /v1/runs/{id}/complete and builds the summary
         // from the authoritative verdict (mock API today, Django later).
         Task {
-            let completion = await session.recordCompletion(result)
+            var completion = await session.recordCompletion(result)
+            completion.steps = await runSteps(completion, fallback: pedometerSteps)
             summary = completion
             await HealthKitWriter.save(completion)
         }
+    }
+
+    private func runSteps(_ completion: RunCompletionSummary,
+                          fallback: Int) async -> Int {
+        let fromHealth = await HealthKitWriter.steps(
+            from: completion.startedAt,
+            to: completion.startedAt.addingTimeInterval(
+                TimeInterval(completion.durationS)))
+        return fromHealth > 0 ? fromHealth : fallback
     }
 
     private func logBattery(duration durationS: Int) {

@@ -1,3 +1,9 @@
 #include "Base.xcconfig"
+// Device backend URL — written by `./run.sh device` (Mac's current LAN IP).
+// Absent = simulator default / mock (see AppConfig.resolveBaseURL).
+#include? "DevAPI.xcconfig"
 
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+// Default: empty. DevAPI.xcconfig overrides this for on-device builds so the
+// app talks to the Django server on the Mac. Info.plist reads $(GEMRUN_API_URL).
+GEMRUN_API_URL =

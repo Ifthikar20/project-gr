@@ -197,6 +197,10 @@ def publish_route(request):
     # exactly-1 km client route can decode a few meters short.
     if distance_m < 980:
         return problem(422, "Routes must be at least 1 km")
+    # Routes must be open-ended walking paths — no loops, rings, retraces.
+    if geom.distance(coords[0], coords[-1]) < 100:
+        return problem(422, "Routes must be open-ended paths, not loops",
+                       code="loop_rejected")
 
     drops = data.get("gem_drops") or []
     errors = validate_placement(drops, distance_m, geom)

@@ -28,6 +28,8 @@ targets:
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
         TARGETED_DEVICE_FAMILY: 1
+        DEVELOPMENT_TEAM: 6SP7VHC6XC
+        CODE_SIGN_STYLE: Automatic
     entitlements:
       path: App/GemRun.entitlements
       properties:
@@ -51,12 +53,18 @@ targets:
         NSHealthShareUsageDescription: >-
           GemRun reads your total walking and running distance to turn the
           kilometers you've run into gems you can drop for other runners.
+        NSMotionUsageDescription: >-
+          GemRun uses your step data during a run so distance and steps only
+          count when you're actually moving — not from GPS drift.
         CFBundleURLTypes:
           - CFBundleURLName: com.gemrun.app
             CFBundleURLSchemes: [gemrun]
         # Dev only: allows plain-HTTP calls to the local Django backend.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # Backend base URL. Debug builds get this from Configs/DevAPI.xcconfig
+        # (script-written LAN IP). Empty = env-var fallback / mock.
+        GemRunAPIBaseURL: $(GEMRUN_API_URL)
     dependencies:
       - package: GemRunCore
         products: [CoreModels, DesignSystem, CoreMap, CorePersistence, CoreLocationKit]

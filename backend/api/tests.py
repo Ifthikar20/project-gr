@@ -245,9 +245,11 @@ class ApiTests(TestCase):
         # On the route's path: fixture route runs due north on lng -122.
         self.assertAlmostEqual(drop.lng, -122.0, places=4)
         self.assertTrue(37.0 <= drop.lat <= 37.0 + 1000 * DEG_PER_M_LAT)
-        # Visible in the master-table geo query.
-        nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
-                                               "radius_m": 5000}).json()
+        # Visible in the master-table geo query (presence trigger off so the
+        # map open doesn't top up beyond the command's own drop).
+        with self.settings(PRESENCE_DROPS=False):
+            nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                   "radius_m": 5000}).json()
         self.assertEqual(len(nearby["drops"]), 1)
 
     def test_drop_gems_skips_unwalkable_points(self):
@@ -389,61 +391,56 @@ class ApiTests(TestCase):
 
     def test_stock_gems_spawns_at_startup_and_reports(self):
         self.seed_popular_route(run_count=5)
-        out = io.StringIO()
-        call_command("stock_gems", lat=37.0, lng=-122.0, stdout=out)
-        self.assertIn("Stocked 1 new system gem(s)", out.getvalue())
-        self.assertIn("1 standalone active", out.getvalue())
-        # Second start: already stocked, says so, no pile-up.
-        again = io.StringIO()
-        call_command("stock_gems", lat=37.0, lng=-122.0, stdout=again)
-        self.assertIn("No new gems needed", again.getvalue())
+        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+            out = io.StringIO()
+            call_command("stock_gems", lat=37.0, lng=-122.0, stdout=out)
+            self.assertIn("Stocked 1 new system gem(s)", out.getvalue())
+            self.assertIn("1 standalone active", out.getvalue())
+            # Second start: already stocked to the cap, says so, no pile-up.
+            again = io.StringIO()
+            call_command("stock_gems", lat=37.0, lng=-122.0, stdout=again)
+            self.assertIn("No new gems needed", again.getvalue())
         self.assertEqual(GemDrop.objects.filter(route__isnull=True,
                                                 placed_by="system").count(), 1)
 
     def test_presence_trigger_spawns_and_replenishes_gems(self):
         self.seed_popular_route(run_count=5)
-        # Opening the map IS the trigger: the query's own coordinates get
-        # topped up (1 popular route → target 1 system drop).
-        nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
-                                               "radius_m": 5000}).json()
-        self.assertEqual(len(nearby["drops"]), 1)
-        first_id = nearby["drops"][0]["id"]
-        # Self-limiting: another map open never piles up more gems.
-        again = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
-                                              "radius_m": 5000}).json()
-        self.assertEqual([d["id"] for d in again["drops"]], [first_id])
-        # Once collected, the next map open replenishes with a NEW gem.
-        GemDrop.objects.filter(id=first_id).update(active=False)
-        refreshed = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+            # Opening the map IS the trigger: the query's own coordinates get
+            # topped up (1 popular route → target 1 system drop).
+            nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                   "radius_m": 5000}).json()
+            self.assertEqual(len(nearby["drops"]), 1)
+            first_id = nearby["drops"][0]["id"]
+            # Self-limiting: another map open never piles past the area cap.
+            again = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
                                                   "radius_m": 5000}).json()
-        self.assertEqual(len(refreshed["drops"]), 1)
-        self.assertNotEqual(refreshed["drops"][0]["id"], first_id)
+            self.assertEqual([d["id"] for d in again["drops"]], [first_id])
+            # Once collected, the next map open replenishes with a NEW gem.
+            GemDrop.objects.filter(id=first_id).update(active=False)
+            refreshed = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                      "radius_m": 5000}).json()
+            self.assertEqual(len(refreshed["drops"]), 1)
+            self.assertNotEqual(refreshed["drops"][0]["id"], first_id)
 
-    def test_map_open_bootstraps_gems_where_user_is(self):
-        """The SYSTEM creates gems near wherever a user opens the map — no
-        routes and no other users required. With OSM unreachable too, the
-        last-resort tier scatters them a short walk from the user."""
+    def test_map_open_without_walkable_geometry_spawns_nothing(self):
+        """Fail closed: with no routes and OSM unreachable there is no
+        trusted walkable geometry, so the bootstrap places NOTHING —
+        empty map beats gems scattered onto private land."""
         with self.settings(PRESENCE_BOOTSTRAP=True), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=[]):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
-            self.assertEqual(len(drops), 3)              # stocked to the area cap
-            for d in drops:                              # all a short walk away
-                dy = (d["lat"] - 64.2008) * 111_320
-                dx = (d["lng"] + 149.4937) * 111_320 * 0.435   # cos(64.2°)
-                self.assertLess((dx * dx + dy * dy) ** 0.5, 600)
-            # Self-limiting: another map open adds nothing.
-            again = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
-                                                  "radius_m": 5000}).json()["drops"]
-            self.assertEqual(len(again), 3)
+            self.assertEqual(drops, [])
 
     def test_bootstrap_prefers_real_walkable_ways(self):
         """When OSM answers, bootstrap gems land ON walkable-way geometry,
         not scattered around the user."""
         step = 500 * DEG_PER_M_LAT
-        ways = [[(64.2 + i * step, -149.4937), (64.2 + (i + 1) * step, -149.4937)]
+        ways = [([(64.2 + i * step, -149.4937), (64.2 + (i + 1) * step, -149.4937)],
+                 "footway")
                 for i in range(8)]
-        with self.settings(PRESENCE_BOOTSTRAP=True), \
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
@@ -475,8 +472,8 @@ class ApiTests(TestCase):
         self.assertEqual(second["xp_earned"], 0)
 
     def test_seed_builds_street_routes_from_osm_ways(self):
-        """Demo routes chain real walkable-way geometry into out-and-backs
-        starting at the given coordinate — no geometric circles."""
+        """Demo routes chain real walkable-way geometry into open-ended
+        one-way paths starting at the given coordinate — no loops."""
         # Synthetic street: a straight chain of 500 m walkable segments
         # heading north along lng=-122 (as Overpass would return them).
         step = 500 * DEG_PER_M_LAT
@@ -491,8 +488,8 @@ class ApiTests(TestCase):
             coords = polyline_decode(route.polyline)
             # Follows the street exactly — every point on lng -122.
             self.assertTrue(all(abs(lng + 122.0) < 1e-4 for _, lng in coords))
-            # Out-and-back: ends where it started.
-            self.assertAlmostEqual(coords[0][0], coords[-1][0], places=4)
+            # Open-ended: ends well away from where it started (no loop).
+            self.assertGreater(abs(coords[-1][0] - coords[0][0]) * 111_320, 100)
             self.assertEqual(route.run_count, 3)          # competitor times
         # The first route starts AT the requested coordinate.
         first = min(routes, key=lambda r: r.distance_m)
@@ -533,7 +530,9 @@ class ApiTests(TestCase):
 
     def test_catalog_matches_client_uuids(self):
         gems = self.client.get("/v1/gems/catalog").json()["gems"]
-        self.assertEqual(len(gems), 8)
+        self.assertEqual(len(gems), 26)
+        ids = [g["id"] for g in gems]
         # Swift GemCatalog uses UUID(uuid: (0,...,0,10)) for Trail Quartz.
-        self.assertIn("00000000-0000-0000-0000-00000000000a",
-                      [g["id"] for g in gems])
+        self.assertIn("00000000-0000-0000-0000-00000000000a", ids)
+        # Ancient Relics start at int 40 (0x28 = Bone).
+        self.assertIn("00000000-0000-0000-0000-000000000028", ids)

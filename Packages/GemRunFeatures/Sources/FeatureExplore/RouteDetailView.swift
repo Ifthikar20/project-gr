@@ -186,7 +186,16 @@ struct RouteDetailView: View {
             Spacer()
             Button {
                 dismiss()
-                session.activeRoute = route
+                // Auto-planned routes ("GemRun/auto") aren't stored on the
+                // backend — a POST /v1/runs/{id}/complete would 404. Run them
+                // as a free run with the drops preloaded so collection goes
+                // through the standalone-drops endpoint.
+                if route.creatorHandle == "GemRun/auto" {
+                    session.startFreeRun(drops: route.gemDrops,
+                                         plannedPath: PolylineCodec.decode(route.polyline))
+                } else {
+                    session.activeRoute = route
+                }
             } label: {
                 Text("Start Run")
                     .font(DS.Typography.heading)

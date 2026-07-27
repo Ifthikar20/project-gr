@@ -90,20 +90,36 @@ def query_overpass(query, timeout):
     return None
 
 
-def fetch_walkable_ways(lat, lng, radius_m=2500):
+def fetch_walkable_ways(lat, lng, radius_m=2500, with_tags=False):
     """Geometry of walkable ways around a point, as lists of (lat, lng) —
     the real 'walkable path list' used by the seed command to build
     street-following demo routes. An explicit data fetch, so it ignores
-    WALKABILITY_MODE; returns [] when no Overpass mirror is reachable."""
+    WALKABILITY_MODE; returns [] when no Overpass mirror is reachable.
+
+    with_tags=True returns (coords, highway_value) tuples instead, so
+    callers can tell dedicated pedestrian paths from ordinary streets."""
     query = WAYS_QUERY_TEMPLATE.format(
         timeout=int(settings.WALKABILITY_TIMEOUT_S) * 2, radius=int(radius_m),
         lat=lat, lng=lng, highways=WALKABLE_HIGHWAYS)
     payload = query_overpass(query, timeout=settings.WALKABILITY_TIMEOUT_S * 2)
     if payload is None:
         return []
-    return [[(p["lat"], p["lon"]) for p in el["geometry"]]
-            for el in payload.get("elements", [])
-            if len(el.get("geometry") or []) >= 2]
+    # Drop closed-ring ways (park loops, roundabouts) — they show as
+    # circles on the map and violate the "walking paths only" rule.
+    ways = []
+    for el in payload.get("elements", []):
+        geom = el.get("geometry") or []
+        if len(geom) < 2:
+            continue
+        first, last = geom[0], geom[-1]
+        if abs(first["lat"] - last["lat"]) < 1e-6 and abs(first["lon"] - last["lon"]) < 1e-6:
+            continue
+        coords = [(p["lat"], p["lon"]) for p in geom]
+        if with_tags:
+            ways.append((coords, (el.get("tags") or {}).get("highway", "")))
+        else:
+            ways.append(coords)
+    return ways
 
 
 def is_walkable(lat, lng, radius_m=None):

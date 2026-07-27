@@ -20,7 +20,13 @@ from .geometry import RouteGeometry, polyline_decode
 from .models import GemDrop, Route
 
 RARITIES = ["common", "uncommon", "rare", "epic"]   # legendary: never
-WEIGHTS = [60, 25, 12, 3]
+WEIGHTS = [40, 30, 20, 10]
+# Dedicated pedestrian infrastructure — trails, park paths, promenades.
+# Gems dropped here skew emerald-and-up; ordinary residential/service
+# streets keep the common-heavy default mix.
+PRIME_WALKWAYS = {"footway", "pedestrian", "path", "cycleway", "bridleway",
+                  "steps", "track"}
+PRIME_WEIGHTS = [15, 45, 27, 13]
 ATTEMPTS_PER_ROUTE = 8
 
 
@@ -69,11 +75,11 @@ def drop_gem_on_route(route, rng):
     return None
 
 
-def create_system_drop(lat, lng, rng):
-    rarity = rng.choices(RARITIES, weights=WEIGHTS)[0]
+def create_system_drop(lat, lng, rng, weights=None):
+    rarity = rng.choices(RARITIES, weights=weights or WEIGHTS)[0]
     drop = GemDrop.objects.create(
         route=None, dropped_by=None,
-        gem_id=catalog.gem_of(rarity)["id"], rarity=rarity,
+        gem_id=catalog.random_gem_of(rarity, rng)["id"], rarity=rarity,
         lat=lat, lng=lng, position_along_route_m=0,
         respawn_rule="one_time", placed_by="system")
     log.info("spawned %s gem at (%.5f, %.5f)", rarity, lat, lng)
@@ -81,59 +87,49 @@ def create_system_drop(lat, lng, rng):
 
 
 def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
-    """Bootstrap tier 2: sample points directly on real OSM walkable ways
-    near the map query — the system stocks gems even where no routes exist
-    yet. The way geometry IS the walkable-path list, so no per-point check
-    is needed."""
-    ways = walkability.fetch_walkable_ways(lat, lng, min(radius_m, 1500))
+    """Sample points directly on real OSM walkable ways near the map query.
+    The way geometry IS the walkable-path list, so linear interpolation
+    between adjacent way nodes stays on the path. This is the ONLY off-route
+    placement — we never guess-and-check with random scatter, because a
+    rate-limited Overpass check fails open and lands gems on private land.
+
+    Way selection is distance-weighted toward the user so most gems are a
+    short walk away (a way 200 m out is ~30x likelier than one 4 km out),
+    and dedicated pedestrian ways get the rarer-skewed gem mix."""
+    ways = walkability.fetch_walkable_ways(lat, lng, min(radius_m, 4000),
+                                           with_tags=True)
     if not ways:
         return 0
+    k = 111_320.0
+    klng = k * max(0.1, math.cos(math.radians(lat)))
+    way_weights = [
+        (600 / (600 + min(math.hypot((p[0] - lat) * k, (p[1] - lng) * klng)
+                          for p in coords))) ** 2
+        for coords, _ in ways]
     created = 0
     for _ in range(count * ATTEMPTS_PER_ROUTE):
         if created >= count:
             break
-        way = rng.choice(ways)
-        i = rng.randrange(len(way) - 1)
+        coords, highway = rng.choices(ways, weights=way_weights)[0]
+        i = rng.randrange(len(coords) - 1)
         t = rng.random()
-        plat = way[i][0] + t * (way[i + 1][0] - way[i][0])
-        plng = way[i][1] + t * (way[i + 1][1] - way[i][1])
+        plat = coords[i][0] + t * (coords[i + 1][0] - coords[i][0])
+        plng = coords[i][1] + t * (coords[i + 1][1] - coords[i][1])
         if near_existing_drop(plat, plng):
             continue
-        create_system_drop(plat, plng, rng)
-        created += 1
-    return created
-
-
-def drop_near_center(lat, lng, count, rng):
-    """Bootstrap tier 3, last resort (no routes AND no OSM data reachable):
-    scatter gems a short walk (150-450 m) from where the user actually is,
-    so an opened map is never empty. The walkability veto still applies
-    when answerable, and the claim log flags any misplacement (docs/13 §6)."""
-    klng = 111_320 * max(0.1, math.cos(math.radians(lat)))
-    created = 0
-    for _ in range(count * ATTEMPTS_PER_ROUTE):
-        if created >= count:
-            break
-        bearing = rng.uniform(0, 2 * math.pi)
-        dist = rng.uniform(150, 450)
-        plat = lat + dist * math.cos(bearing) / 111_320
-        plng = lng + dist * math.sin(bearing) / klng
-        if near_existing_drop(plat, plng):
-            continue
-        if walkability.is_walkable(plat, plng) is False:
-            continue
-        create_system_drop(plat, plng, rng)
+        rarity_weights = PRIME_WEIGHTS if highway in PRIME_WALKWAYS else WEIGHTS
+        create_system_drop(plat, plng, rng, weights=rarity_weights)
         created += 1
     return created
 
 
 def top_up_area(lat, lng, radius_m, rng=None):
-    """Presence trigger: the SYSTEM stocks gems around every map query —
-    users never depend on other users dropping gems. Tier 1 samples popular
-    routes (one active system gem per route, capped). An area with nothing
-    at all is bootstrapped: tier 2 drops onto real OSM walkable ways; tier 3
-    falls back to a short-walk scatter around the user. Self-limiting: once
-    the area holds any active system gems, map opens are two count queries."""
+    """Presence trigger: stock gems around every map query up to
+    PRESENCE_DROP_MAX_PER_AREA, ONLY on walkable geometry. Tier 1: one gem
+    per popular route (route polylines are already walking-snapped). Tier 2:
+    sample points on real OSM walkable ways. No random scatter — a
+    rate-limited walkability check fails open and lands gems on private
+    property, so empty is preferred over misplaced."""
     if not settings.PRESENCE_DROPS:
         return 0
     rng = rng or random.Random()
@@ -145,22 +141,28 @@ def top_up_area(lat, lng, radius_m, rng=None):
         **box).order_by("-run_count"))
     active = GemDrop.objects.filter(route__isnull=True, active=True,
                                     placed_by="system", **box).count()
+    cap = settings.PRESENCE_DROP_MAX_PER_AREA
     created = 0
-    if popular:
-        target = min(settings.PRESENCE_DROP_MAX_PER_AREA, len(popular))
-        for route in popular:
-            if active + created >= target:
-                break
-            if drop_gem_on_route(route, rng) is not None:
-                created += 1
-    if active + created == 0 and settings.PRESENCE_BOOTSTRAP:
-        cap = settings.PRESENCE_DROP_MAX_PER_AREA
-        log.info("bootstrap: empty area (%.4f, %.4f) — trying OSM walkable ways",
-                 lat, lng)
-        created += drop_on_walkable_ways(lat, lng, radius_m, cap, rng)
-        if created == 0:
-            log.info("bootstrap: no OSM data — scattering near the user")
-            created += drop_near_center(lat, lng, cap, rng)
+
+    def remaining():
+        return max(0, cap - active - created)
+
+    for route in popular:
+        if remaining() == 0:
+            break
+        if drop_gem_on_route(route, rng) is not None:
+            created += 1
+
+    if remaining() > 0 and settings.PRESENCE_BOOTSTRAP:
+        log.info("stocking: %d slot(s) left after routes — sampling OSM walkable ways",
+                 remaining())
+        created += drop_on_walkable_ways(lat, lng, radius_m, remaining(), rng)
+
+    if remaining() > 0:
+        log.info("stocking: %d slot(s) left empty — no walkable geometry available "
+                 "(Overpass unreachable or no ways nearby); leaving slots open rather "
+                 "than scattering onto private land", remaining())
+
     if created:
         log.info("presence trigger: %d gem(s) spawned for map open at (%.4f, %.4f)",
                  created, lat, lng)

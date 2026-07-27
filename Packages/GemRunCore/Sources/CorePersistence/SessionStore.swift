@@ -30,6 +30,9 @@ public struct RunCompletionSummary: Sendable {
     public let splitsS: [Int]
     public let leaderboardRank: Int?
     public let routeName: String
+    /// Filled in after completion from an Apple Health step-count read;
+    /// stays 0 when Health is unavailable or hasn't flushed samples yet.
+    public var steps: Int = 0
 }
 
 /// App-wide session (docs/07): profile + optimistic XP/streak state, the two
@@ -57,6 +60,9 @@ public final class SessionStore {
     /// Presents the free-run cover (collect standalone drops, no route).
     public var isFreeRunning = false
     public var freeRunDrops: [GemDrop] = []
+    /// The planned walking line for free runs started from a recommended
+    /// route (client-side, not stored on the backend) — drawn on the run map.
+    public var freeRunPlannedPath: [Coordinate] = []
 
     /// Reads lifetime run km from Health and mints via the API.
     public func refreshWallet() async {
@@ -73,8 +79,9 @@ public final class SessionStore {
         }
     }
 
-    public func startFreeRun(drops: [GemDrop]) {
+    public func startFreeRun(drops: [GemDrop], plannedPath: [Coordinate] = []) {
         freeRunDrops = drops
+        freeRunPlannedPath = plannedPath
         isFreeRunning = true
     }
 

@@ -2,11 +2,33 @@ import CoreModels
 import CorePersistence
 import HealthKit
 
-/// Writes a finished run/walk to Health as an HKWorkout (docs/07 — write-only,
-/// no reads in MVP). Fails silently when Health is unavailable or the user
-/// declines; requires the HealthKit entitlement + Info.plist purpose strings
-/// (configured in project.yml — remove both there if signing complains).
+/// Writes a finished run/walk to Health as an HKWorkout, and reads back the
+/// step count for the run window. Fails silently when Health is unavailable
+/// or the user declines; requires the HealthKit entitlement + Info.plist
+/// purpose strings (configured in project.yml — remove both there if signing
+/// complains).
 enum HealthKitWriter {
+    /// Steps recorded in Health during the run window. 0 when Health is
+    /// unavailable/declined — and possibly for a minute or two right after
+    /// a run, since the motion coprocessor flushes step samples in batches.
+    static func steps(from start: Date, to end: Date) async -> Int {
+        guard HKHealthStore.isHealthDataAvailable() else { return 0 }
+        let store = HKHealthStore()
+        let type = HKQuantityType(.stepCount)
+        _ = try? await store.requestAuthorization(toShare: [], read: [type])
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsQuery(
+                quantityType: type,
+                quantitySamplePredicate: HKQuery.predicateForSamples(
+                    withStart: start, end: end),
+                options: .cumulativeSum) { _, stats, _ in
+                let count = stats?.sumQuantity()?.doubleValue(for: .count()) ?? 0
+                continuation.resume(returning: Int(count))
+            }
+            store.execute(query)
+        }
+    }
+
     static func save(_ summary: RunCompletionSummary) async {
         guard HKHealthStore.isHealthDataAvailable(),
               summary.status != .invalid, summary.durationS > 60 else { return }

@@ -1,9 +1,10 @@
 """Cold-start seeding (docs/02): demo routes that START at the given
 coordinate and follow REAL streets — walkable-way geometry fetched from
-OpenStreetMap (walkability.fetch_walkable_ways), chained into out-and-back
-loops. Never geometric circles: if no street data is reachable, nothing is
-seeded (an empty map is honest; a fake one isn't). Competitor profiles get
-plausible times so leaderboards read as a live city.
+OpenStreetMap (walkability.fetch_walkable_ways), chained into OPEN-ENDED
+walking paths (never loops, rings, or retraced out-and-backs). If no street
+data is reachable, nothing is seeded (an empty map is honest; a fake one
+isn't). Competitor profiles get plausible times so leaderboards read as a
+live city.
 
     python manage.py seed --lat 37.7749 --lng -122.4194
     python manage.py seed --reset          # wipe system demo data first
@@ -19,11 +20,11 @@ from datetime import datetime, timedelta, timezone as tz
 
 COMPETITORS = [("maya.runs", 7), ("dev_collects", 4), ("sam_routes", 11)]
 
-# (name, target out-and-back distance m, gems as (rarity, fraction-along))
+# (name, target one-way distance m, gems as (rarity, fraction-along))
 SPECS = [
-    ("First Light Loop", 2_000,
+    ("First Light Trail", 2_000,
      [("common", 0.15), ("common", 0.5), ("uncommon", 0.85)]),
-    ("Gem Hunter's Circuit", 5_000,
+    ("Gem Hunter's Path", 5_000,
      [("common", 0.1), ("uncommon", 0.35), ("rare", 0.55), ("uncommon", 0.8)]),
     ("Ridge Endurance Run", 9_500,
      [("common", 0.1), ("rare", 0.45), ("epic", 0.7),
@@ -36,9 +37,9 @@ def node_key(pt):
 
 
 def street_route(center, target_m, ways, used):
-    """Chain walkable ways into an out-and-back starting as close to
-    `center` as the street network allows: walk out to ~half the target
-    along connected ways, then retrace home. Returns the coordinate list,
+    """Chain walkable ways into an OPEN-ENDED path starting as close to
+    `center` as the street network allows: walk out ~target_m along
+    connected ways and stop where we land. Returns the coordinate list,
     or None when the reachable network is too short."""
     adjacency = {}
     for i, way in enumerate(ways):
@@ -51,7 +52,7 @@ def street_route(center, target_m, ways, used):
     ruler = RouteGeometry([center])
     node = min(adjacency, key=lambda n: ruler.distance(center, n))
     coords, total = [], 0.0
-    while total < target_m / 2:
+    while total < target_m:
         options = [(i, rev) for i, rev in adjacency.get(node, []) if i not in used]
         if not options:
             break
@@ -61,9 +62,12 @@ def street_route(center, target_m, ways, used):
         used.add(idx)
         total = RouteGeometry(coords).total_length_m
         node = node_key(coords[-1])
-    if total < max(400.0, target_m * 0.2):
+    if total < max(400.0, target_m * 0.4):
         return None
-    return coords + list(reversed(coords))[1:]          # retrace back home
+    # Reject anything that came back close to its start (chained rings).
+    if RouteGeometry([coords[0]]).distance(coords[0], coords[-1]) < 100:
+        return None
+    return coords
 
 
 class Command(BaseCommand):

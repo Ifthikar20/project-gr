@@ -157,6 +157,9 @@ struct RunSummaryView: View {
             stat(formatDuration(summary.durationS), "Time")
             stat(String(format: "%.2f km", Double(summary.distanceM) / 1_000), "Distance")
             stat(summary.paceSPerKm > 0 ? formatDuration(summary.paceSPerKm) : "–", "Pace")
+            if summary.steps > 0 {
+                stat("\(summary.steps)", "Steps")
+            }
             if let rank = summary.leaderboardRank {
                 stat("#\(rank)", "Route rank")
             }
