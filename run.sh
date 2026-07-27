@@ -38,8 +38,12 @@ start_backend() {
     source .venv/bin/activate
     pip install -q -r requirements.txt
     python manage.py migrate --no-input | tail -1
-    # No auto-seeded demo routes: the map shows only routes users create.
-    # Opt into demo data explicitly:  python manage.py seed --lat .. --lng ..
+    # Suggested demo routes: STREET-FOLLOWING (chained from real OSM walkable
+    # ways, never circles), starting at the seed coordinate. Seeds nothing if
+    # Overpass is unreachable; skips if already seeded. Opt out: SEED_DEMO=0.
+    if [ "${SEED_DEMO:-1}" = "1" ]; then
+        python manage.py seed
+    fi
     nohup python manage.py runserver "0.0.0.0:${API_PORT}" \
         > .server.log 2>&1 &
     echo $! > .server.pid

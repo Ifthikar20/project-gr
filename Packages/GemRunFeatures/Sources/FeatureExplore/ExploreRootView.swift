@@ -30,7 +30,6 @@ public struct ExploreRootView: View {
     @State private var planError: String?
     // Live GPS fix drives the runner emoji on the map + park seeding.
     @State private var live = LiveLocation()
-    @State private var seededParksForCenter: Coordinate?
     // Drop-mode validation state: last denial reason, and "checking…" flag
     // for the POI lookup that gates a drop.
     @State private var dropError: String?
@@ -65,6 +64,8 @@ public struct ExploreRootView: View {
                         destinationBanner
                     } else if routes.isEmpty {
                         emptyBanner
+                    } else {
+                        routeCards
                     }
                     if isDestinationMode {
                         startDestinationButton
@@ -89,18 +90,8 @@ public struct ExploreRootView: View {
                 live.start()
                 await loadNearby()
             }
-            .onChange(of: live.coordinate) { _, new in
-                // As soon as we have a real fix (or it drifts far from the last
-                // seed center), place gems at safe public POIs nearby — parks,
-                // gas stations, cafes, libraries, transit hubs, post offices —
-                // and skip anything near parking or private buildings.
-                guard let new else { return }
-                if let seed = seededParksForCenter,
-                   RouteGeometry.planarDistance(from: seed, to: new) < 1_500 {
-                    return
-                }
-                Task { await seedSafeZoneDrops(around: new) }
-            }
+            // Gems come exclusively from the backend (GET /v1/drops in
+            // loadNearby) — no client-side phantom seeding.
             .onChange(of: session.pendingDeepLinkRouteID) { _, id in
                 guard let id else { return }
                 if let stored = storedRoutes.first(where: { $0.id == id }) {
@@ -380,6 +371,24 @@ public struct ExploreRootView: View {
         session.activeRoute = route
     }
 
+    /// Suggested routes near the user — cards for the routes the backend
+    /// returned, horizontally scrollable. Tap = detail sheet.
+    private var routeCards: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                ForEach(routes) { route in
+                    RouteCard(route: route)
+                        .onTapGesture {
+                            selectedID = route.id
+                            detailRoute = route
+                        }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 6)
+        }
+    }
+
     private var emptyBanner: some View {
         Text("No routes here yet — be the first to create one")
             .font(.footnote)
@@ -432,6 +441,43 @@ public struct ExploreRootView: View {
 struct TappedSpot: Identifiable {
     let coordinate: Coordinate
     var id: String { "\(coordinate.lat),\(coordinate.lng)" }
+}
+
+/// Airbnb listing-card anatomy: image on top (map preview), then title,
+/// meta line, and the rarity row.
+@MainActor
+struct RouteCard: View {
+    let route: Route
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RoutePreviewMap(route: route)
+                .frame(height: 110)
+                .allowsHitTesting(false)
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16,
+                                                  topTrailingRadius: 16))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(route.name)
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                    .lineLimit(1)
+                Text(String(format: "%.1f km · %d m climb · %@",
+                            Double(route.distanceM) / 1_000, route.elevationGainM,
+                            route.difficulty.rawValue.capitalized))
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                RarityDots(counts: rarityCounts)
+            }
+            .padding(12)
+        }
+        .frame(width: 250, alignment: .leading)
+        .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: DS.Colors.ink.opacity(0.1), radius: 12, y: 3)
+    }
+
+    private var rarityCounts: [Rarity: Int] {
+        Dictionary(grouping: route.gemDrops, by: \.rarity).mapValues(\.count)
+    }
 }
 
 /// Pick a wallet gem for the tapped location (docs: earn-by-running wallet).
@@ -566,76 +612,6 @@ final class LiveLocation: NSObject, CLLocationManagerDelegate {
                 || manager.authorizationStatus == .authorizedAlways {
                 manager.startUpdatingLocation()
             }
-        }
-    }
-}
-
-extension ExploreRootView {
-    /// Query safe, public POIs around the user (parks, gas stations, cafes,
-    /// libraries, museums, transit, post offices, bakeries, restaurants) and
-    /// drop one gem at each. Explicitly excludes parking lots and skips any
-    /// POI whose name hints at "private" / "residence" / "apartment".
-    /// Rarity is weighted by category — parks and museums lean rarer, cafes
-    /// and bakeries stay common — and the specific gem type is picked at
-    /// random from the catalog so runners see rubies, emeralds, topaz, etc.
-    func seedSafeZoneDrops(around center: Coordinate) async {
-        let safeCategories: [(MKPointOfInterestCategory, [Rarity])] = [
-            (.park,             [.uncommon, .rare, .epic]),
-            (.publicTransport,  [.common, .uncommon]),
-            (.gasStation,       [.common, .uncommon]),
-            (.library,          [.uncommon, .rare]),
-            (.museum,           [.rare, .epic]),
-            (.cafe,             [.common, .common, .uncommon]),
-            (.bakery,           [.common, .uncommon]),
-            (.restaurant,       [.common, .uncommon]),
-            (.postOffice,       [.common]),
-        ]
-
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = "cafe park library gas station"
-        request.region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: center.lat, longitude: center.lng),
-            latitudinalMeters: 4_000, longitudinalMeters: 4_000)
-        request.pointOfInterestFilter = MKPointOfInterestFilter(
-            including: safeCategories.map(\.0))
-
-        guard let response = try? await MKLocalSearch(request: request).start() else { return }
-
-        // Private-building name hints we always skip, even if the POI matches
-        // an allowed category (e.g. "Private Parking Lot Cafe").
-        let banned = ["private", "residence", "apartment", "parking"]
-        var made: [GemDrop] = []
-        for item in response.mapItems.prefix(15) {
-            let name = (item.name ?? item.placemark.name ?? "").lowercased()
-            if banned.contains(where: name.contains) { continue }
-            guard let category = item.pointOfInterestCategory,
-                  let entry = safeCategories.first(where: { $0.0 == category })
-            else { continue }
-            let rarity = entry.1.randomElement() ?? .common
-            let g = GemCatalog.randomGem(of: rarity)
-            // ~30 m jitter so the pin sits near the POI, not on its label.
-            let jitter = { Double.random(in: -0.0004...0.0004) }
-            let c = item.placemark.coordinate
-            made.append(GemDrop(
-                id: UUID(),
-                gemID: g.id,
-                rarity: rarity,
-                lat: c.latitude + jitter(),
-                lng: c.longitude + jitter(),
-                positionAlongRouteM: 0,
-                respawnRule: .oneTime,
-                placedBy: .creator))
-        }
-
-        guard !made.isEmpty else { return }
-        withAnimation {
-            let existing = nearbyDrops
-            let novel = made.filter { new in
-                !existing.contains { RouteGeometry.planarDistance(
-                    from: $0.coordinate, to: new.coordinate) < 40 }
-            }
-            nearbyDrops.append(contentsOf: novel)
-            seededParksForCenter = center
         }
     }
 }
