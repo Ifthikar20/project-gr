@@ -448,6 +448,19 @@ public struct ExploreRootView: View {
             for route in fetched where !cachedIDs.contains(route.id) {
                 context.insert(StoredRoute(route: route))
             }
+            // The backend is authoritative for this area: cached routes it no
+            // longer returns were deleted/archived server-side — evict them so
+            // stale routes can't haunt the map. (Mock mode stays additive: the
+            // mock forgets published routes on relaunch; the backend doesn't.)
+            if AppConfig.apiBaseURL != nil {
+                let fetchedIDs = Set(fetched.map(\.id))
+                for stored in storedRoutes where !fetchedIDs.contains(stored.id) {
+                    guard let start = PolylineCodec.decode(stored.polyline).first,
+                          RouteGeometry.planarDistance(from: center, to: start) <= 5_000
+                    else { continue }
+                    context.delete(stored)
+                }
+            }
             try? context.save()
         }
         if let drops = try? await API.shared.nearbyDrops(
