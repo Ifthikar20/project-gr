@@ -267,7 +267,7 @@ public actor MockGemRunAPI: GemRunAPI {
         return track.contains { s in
             let dy = (s.lat - lat) * k
             let dx = (s.lng - lng) * klng
-            return (dx * dx + dy * dy).squareRoot() <= CollectionRules.collectionRadiusM
+            return (dx * dx + dy * dy).squareRoot() <= CollectionRules.dropCollectRadiusM
         }
     }
 

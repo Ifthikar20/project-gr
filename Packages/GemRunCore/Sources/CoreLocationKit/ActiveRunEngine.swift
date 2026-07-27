@@ -226,12 +226,12 @@ public final class ActiveRunEngine {
                 onCollect?(event)
             }
         } else if isFreeRun {
-            // Proximity-only collection: 25 m threshold + exit hysteresis.
+            // Proximity-only collection: 100 ft threshold + exit hysteresis.
             let collectedIDs = Set(collectedEvents.map(\.drop.id))
             for drop in freeDrops where !collectedIDs.contains(drop.id) {
                 let dist = RouteGeometry.planarDistance(from: sample.coordinate,
                                                         to: drop.coordinate)
-                guard dist <= CollectionRules.collectionRadiusM else { continue }
+                guard dist <= CollectionRules.dropCollectRadiusM else { continue }
                 if let last = lastFreeCollection,
                    RouteGeometry.planarDistance(from: sample.coordinate, to: last)
                        <= CollectionRules.hysteresisExitRadiusM { continue }

@@ -13,7 +13,7 @@ popularity signal          walkability check           master table            f
 ┌─────────────────┐   ┌───────────────────────┐   ┌──────────────────┐   ┌──────────────────────┐
 │ published routes │ → │ point sampled from a  │ → │ GemDrop row       │ → │ first user whose     │
 │ ranked by        │   │ walking-snapped route │   │ route=NULL        │   │ track passes within  │
-│ run_count        │   │ polyline; re-checked  │   │ placed_by=system  │   │ 25 m claims it —     │
+│ run_count        │   │ polyline; re-checked  │   │ placed_by=system  │   │ 100 ft claims it —     │
 │ (min-runs gate)  │   │ via OSM Overpass when │   │ respawn=one_time  │   │ row deactivated      │
 │                  │   │ enabled               │   │ active=True       │   │ atomically           │
 └─────────────────┘   └───────────────────────┘   └──────────────────┘   └──────────────────────┘
@@ -120,7 +120,7 @@ Two ways a runner's track can cross the coordinates; both award exactly once:
 - **Free run** — `POST /v1/drops/collect` with the claimed ids + GPS track.
 - **Route run** — `POST /v1/runs/{route_id}/complete` now *also* scans the
   master table: any active standalone drop within the track's bounding box
-  whose coordinates the track passed within 25 m is claimed automatically
+  whose coordinates the track passed within 100 ft (30.5 m) is claimed automatically
   (`claim_crossed_standalone_drops` in `views.py`), no client claim needed.
 
 Shared guarantees, enforced server-side in one transaction:
@@ -129,7 +129,7 @@ Shared guarantees, enforced server-side in one transaction:
    transaction to commit deactivates the row; every later claimant sees
    `active=False` and gets nothing.
 2. **Track-verified.** The GPS track must actually pass within
-   `DROP_COLLECT_RADIUS_M` (25 m) of the stored coordinates
+   `DROP_COLLECT_RADIUS_M` (30.5 m = 100 ft) of the stored coordinates
    (`track_passes_near`); on route runs the whole track already went through
    the anti-spoof validator first — an invalid run claims nothing.
 3. **Never your own.** Drops where `dropped_by == claimant` are excluded
@@ -152,13 +152,13 @@ the winner, so **every** claim attempt is additionally logged to
 |---|---|
 | `profile`, `gem_drop` | who tried, for which gem |
 | `source` | `free_run` (`/drops/collect`) or `route_run` (auto-claim in `complete_run`) |
-| `outcome` | `awarded` · `already_taken` (lost the race) · `too_far` (track never provably within 25 m) · `own_drop` |
+| `outcome` | `awarded` · `already_taken` (lost the race) · `too_far` (track never provably within 100 ft) · `own_drop` |
 | `closest_m` | closest an accuracy-trusted GPS sample came to the gem (NULL when no sample was trustworthy) |
 | `created_at` | when — the race's ordering evidence |
 
 GPS trust: samples with `horizontal_accuracy` worse than 50 m
 (`MAX_CLAIM_ACCURACY_M`) are ignored when matching a track to a drop — a
-200 m-accuracy fix can't prove you were within 25 m of anything, so a claim
+200 m-accuracy fix can't prove you were within 100 ft of anything, so a claim
 backed only by bad GPS logs `too_far` with `closest_m = NULL`.
 
 Answering "who was there and who got it first":
