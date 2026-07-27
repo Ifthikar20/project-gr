@@ -52,10 +52,20 @@ out geom 400;
 """
 
 
+# Circuit breaker: after every mirror fails (usually per-IP rate limiting —
+# Overpass is keyless, throttling is its only currency), skip further calls
+# for a cooldown instead of stalling each request ~10s on doomed retries.
+_down_until = 0.0
+CIRCUIT_COOLDOWN_S = 120
+
+
 def query_overpass(query, timeout):
     """POST a query to the first Overpass mirror that answers. The main
     public instance rate-limits aggressively, so single-endpoint calls
     failed often; None when every mirror fails."""
+    global _down_until
+    if time.monotonic() < _down_until:
+        return None            # circuit open — recent total failure
     for url in settings.OVERPASS_URLS:
         request = urllib.request.Request(
             url, data=urllib.parse.urlencode({"data": query}).encode(),
@@ -73,8 +83,10 @@ def query_overpass(query, timeout):
             # rate limits all look like "unreachable" without this line.
             log.warning("overpass: %s failed after %.1fs: %r",
                         url, time.monotonic() - started, exc)
-    log.warning("overpass: all %d mirror(s) failed — walkability unanswerable",
-                len(settings.OVERPASS_URLS))
+    _down_until = time.monotonic() + CIRCUIT_COOLDOWN_S
+    log.warning("overpass: all %d mirror(s) failed (rate limit?) — pausing "
+                "checks for %ds; spawning proceeds on trusted placements",
+                len(settings.OVERPASS_URLS), CIRCUIT_COOLDOWN_S)
     return None
 
 

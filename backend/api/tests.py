@@ -287,6 +287,7 @@ class ApiTests(TestCase):
         self.assertEqual(denied.json()["code"], "not_walkable")
 
     def test_overpass_walkability_call(self):
+        walkability._down_until = 0.0          # reset circuit breaker
         hit = io.BytesIO(json.dumps({"elements": [{"type": "way", "id": 1}]}).encode())
         miss = io.BytesIO(json.dumps({"elements": []}).encode())
         with self.settings(WALKABILITY_MODE="overpass"):
@@ -298,6 +299,11 @@ class ApiTests(TestCase):
                 self.assertIs(walkability.is_walkable(37.0, -122.0), False)
             with mock.patch("urllib.request.urlopen", side_effect=OSError):
                 self.assertIsNone(walkability.is_walkable(37.0, -122.0))
+            # Total failure opens the circuit: next call skips the network.
+            with mock.patch("urllib.request.urlopen") as skipped:
+                self.assertIsNone(walkability.is_walkable(37.0, -122.0))
+                skipped.assert_not_called()
+            walkability._down_until = 0.0      # don't leak into other tests
         self.assertIsNone(walkability.is_walkable(37.0, -122.0))   # mode off
 
     def test_claim_attempts_log_the_race(self):
