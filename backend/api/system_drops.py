@@ -21,13 +21,14 @@ from .models import GemDrop, Route
 
 RARITIES = ["common", "uncommon", "rare", "epic"]   # legendary: never
 WEIGHTS = [40, 30, 20, 10]
-# Dedicated pedestrian infrastructure — trails, park paths, promenades.
-# Gems dropped here skew emerald-and-up; ordinary residential/service
-# streets keep the common-heavy default mix.
-PRIME_WALKWAYS = {"footway", "pedestrian", "path", "cycleway", "bridleway",
-                  "steps", "track"}
+# Dedicated trails and promenades — gems here skew emerald-and-up; plain
+# sidewalks (footway) keep the common-heavy default mix.
+PRIME_WALKWAYS = {"path", "pedestrian", "steps"}
 PRIME_WEIGHTS = [15, 45, 27, 13]
 ATTEMPTS_PER_ROUTE = 8
+# Gems are a walk, not a drive: every presence-triggered gem must land
+# within this distance of the map-open point, regardless of query radius.
+NEAR_LIMIT_M = 800
 
 
 def bbox_deltas(lat, radius_m):
@@ -52,15 +53,22 @@ def near_existing_drop(lat, lng):
     return False
 
 
-def drop_gem_on_route(route, rng):
+def drop_gem_on_route(route, rng, near=None):
     """Sample a point on the route's (walking-snapped) polyline, verify
     spacing + walkability, and write one system GemDrop. None if no
-    candidate survived."""
+    candidate survived. near=(lat, lng) also requires the point to sit
+    within NEAR_LIMIT_M of the map-open coordinates."""
     geom = RouteGeometry(polyline_decode(route.polyline))
     if geom.total_length_m <= 0:
         return None
     for _ in range(ATTEMPTS_PER_ROUTE):
         lat, lng = geom.coordinate_at(rng.uniform(0, geom.total_length_m))
+        if near is not None:
+            k = 111_320.0
+            klng = k * max(0.1, math.cos(math.radians(near[0])))
+            if math.hypot((lat - near[0]) * k,
+                          (lng - near[1]) * klng) > NEAR_LIMIT_M:
+                continue
         if near_existing_drop(lat, lng):
             continue
         # Only an explicit "not walkable" vetoes the point. None (check off
@@ -93,17 +101,19 @@ def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
     placement — we never guess-and-check with random scatter, because a
     rate-limited Overpass check fails open and lands gems on private land.
 
-    Way selection is distance-weighted toward the user so most gems are a
-    short walk away (a way 200 m out is ~30x likelier than one 4 km out),
-    and dedicated pedestrian ways get the rarer-skewed gem mix."""
-    ways = walkability.fetch_walkable_ways(lat, lng, min(radius_m, 4000),
-                                           with_tags=True)
+    Everything is anchored to NEAR_LIMIT_M: ways are fetched only within
+    that circle, near ways are weighted higher still, and any sampled point
+    that interpolates past the limit (long ways!) is rejected — gems are a
+    short walk, never a drive. Dedicated trails get the rarer-skewed mix."""
+    ways = walkability.fetch_walkable_ways(
+        lat, lng, min(radius_m, NEAR_LIMIT_M), with_tags=True,
+        highways=walkability.PEDESTRIAN_HIGHWAYS)
     if not ways:
         return 0
     k = 111_320.0
     klng = k * max(0.1, math.cos(math.radians(lat)))
     way_weights = [
-        (600 / (600 + min(math.hypot((p[0] - lat) * k, (p[1] - lng) * klng)
+        (250 / (250 + min(math.hypot((p[0] - lat) * k, (p[1] - lng) * klng)
                           for p in coords))) ** 2
         for coords, _ in ways]
     created = 0
@@ -115,6 +125,8 @@ def drop_on_walkable_ways(lat, lng, radius_m, count, rng):
         t = rng.random()
         plat = coords[i][0] + t * (coords[i + 1][0] - coords[i][0])
         plng = coords[i][1] + t * (coords[i + 1][1] - coords[i][1])
+        if math.hypot((plat - lat) * k, (plng - lng) * klng) > NEAR_LIMIT_M:
+            continue
         if near_existing_drop(plat, plng):
             continue
         rarity_weights = PRIME_WEIGHTS if highway in PRIME_WALKWAYS else WEIGHTS
@@ -150,7 +162,7 @@ def top_up_area(lat, lng, radius_m, rng=None):
     for route in popular:
         if remaining() == 0:
             break
-        if drop_gem_on_route(route, rng) is not None:
+        if drop_gem_on_route(route, rng, near=(lat, lng)) is not None:
             created += 1
 
     if remaining() > 0 and settings.PRESENCE_BOOTSTRAP:

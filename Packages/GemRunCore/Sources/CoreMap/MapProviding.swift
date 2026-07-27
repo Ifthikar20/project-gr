@@ -117,6 +117,32 @@ public struct DropPin: View {
     }
 }
 
+/// One-shot sparkle burst shown at a gem's map location the moment it's
+/// captured mid-run: six sparkles fly outward and fade over ~1.2 s.
+struct SparkleBurst: View {
+    @State private var animate = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<6, id: \.self) { i in
+                Text("✨")
+                    .font(.system(size: 13))
+                    .offset(x: animate ? 24 * cos(Double(i) * .pi / 3) : 0,
+                            y: animate ? 24 * sin(Double(i) * .pi / 3) : 0)
+                    .scaleEffect(animate ? 1.3 : 0.4)
+                    .opacity(animate ? 0 : 1)
+            }
+            Text("✨")
+                .font(.title2)
+                .scaleEffect(animate ? 2.0 : 0.6)
+                .opacity(animate ? 0 : 1)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.2)) { animate = true }
+        }
+    }
+}
+
 /// Explore home map: user location, route polylines, and standalone gem
 /// drops other runners left behind (docs/03 §2). When `onTapCoordinate` is
 /// set (drop mode), map taps come back as coordinates.
@@ -432,6 +458,9 @@ public struct ActiveRunMapView: View {
     /// The map's current rotation, so the emoji's rotation stays accurate
     /// even after the user pans/rotates the map by hand.
     @State private var cameraHeadingDeg: Double = 0
+    /// Drops currently playing their capture sparkle (cleared ~1.6 s after
+    /// the collection lands, leaving the muted checkmark behind).
+    @State private var sparklingDropIDs: Set<UUID> = []
 
     public init(route: Route?, freeDrops: [GemDrop] = [],
                 plannedPath: [Coordinate] = [], runnerPosition: Coordinate?,
@@ -469,7 +498,9 @@ public struct ActiveRunMapView: View {
                 }
                 ForEach(drops) { drop in
                     Annotation("", coordinate: drop.coordinate.cl) {
-                        if collectedDropIDs.contains(drop.id) {
+                        if sparklingDropIDs.contains(drop.id) {
+                            SparkleBurst()
+                        } else if collectedDropIDs.contains(drop.id) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.footnote)
                                 .foregroundStyle(MapPalette.ink.opacity(0.35))
@@ -506,6 +537,15 @@ public struct ActiveRunMapView: View {
                 }
             }
             .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            .onChange(of: collectedDropIDs) { old, new in
+                let fresh = new.subtracting(old)
+                guard !fresh.isEmpty else { return }
+                sparklingDropIDs.formUnion(fresh)
+                Task {
+                    try? await Task.sleep(for: .seconds(1.6))
+                    sparklingDropIDs.subtract(fresh)
+                }
+            }
             .onChange(of: runnerPosition?.lat) { _, _ in
                 updateHeading()
                 pushCameraIfFollowing()

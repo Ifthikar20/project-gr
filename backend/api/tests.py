@@ -448,6 +448,18 @@ class ApiTests(TestCase):
         for d in drops:                                  # exactly on the street line
             self.assertAlmostEqual(d["lng"], -149.4937, places=5)
 
+    def test_bootstrap_never_places_beyond_near_limit(self):
+        """Gems are a walk, not a drive: ways farther than NEAR_LIMIT_M from
+        the map-open point never receive gems, whatever the query radius."""
+        far = 2_000 * DEG_PER_M_LAT
+        ways = [([(64.2008 + far, -149.4937), (64.2008 + far * 2, -149.4937)],
+                 "footway")]
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
+             mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
+            drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
+                                                  "radius_m": 5000}).json()["drops"]
+        self.assertEqual(drops, [])
+
     def test_route_run_claims_crossed_system_drop_first_come(self):
         route = self.publish_route().json()
         drop = GemDrop.objects.create(

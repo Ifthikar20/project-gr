@@ -56,7 +56,7 @@ WALKABILITY_TIMEOUT_S = 5
 # GET /v1/drops map query tops up gems around ITS OWN coordinates — user
 # activity is the capture point, so regions nobody uses never get gems.
 PRESENCE_DROPS = True
-PRESENCE_DROP_MAX_PER_AREA = 25  # active system drops per queried area, capped
+PRESENCE_DROP_MAX_PER_AREA = 40  # active system drops per queried area, capped
 # Empty-area bootstrap: when a map opens somewhere with zero system gems and
 # no qualifying routes, the system still stocks the area — gems on nearby OSM
 # walkable ways, falling back to a short-walk scatter around the user.

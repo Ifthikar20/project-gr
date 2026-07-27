@@ -32,6 +32,14 @@ except ImportError:      # certifi missing → default trust store
 WALKABLE_HIGHWAYS = ("footway|path|pedestrian|steps|track|living_street|"
                      "residential|service|cycleway|bridleway|unclassified")
 
+# Strict subset for PLACING gems: sidewalks and dedicated walking/running
+# trails ONLY. "service" (driveways), "track" (farm/private dirt tracks),
+# "cycleway"/"bridleway" (bike/horse infrastructure that often parallels
+# private land), and "living_street"/"residential" (road centerlines) all
+# produced gems that read as sitting on private property. In OSM, sidewalks
+# are highway=footway and trails are highway=path.
+PEDESTRIAN_HIGHWAYS = "footway|pedestrian|path|steps"
+
 QUERY_TEMPLATE = """
 [out:json][timeout:{timeout}];
 way(around:{radius},{lat:.6f},{lng:.6f})
@@ -90,17 +98,19 @@ def query_overpass(query, timeout):
     return None
 
 
-def fetch_walkable_ways(lat, lng, radius_m=2500, with_tags=False):
+def fetch_walkable_ways(lat, lng, radius_m=2500, with_tags=False,
+                        highways=WALKABLE_HIGHWAYS):
     """Geometry of walkable ways around a point, as lists of (lat, lng) —
     the real 'walkable path list' used by the seed command to build
     street-following demo routes. An explicit data fetch, so it ignores
     WALKABILITY_MODE; returns [] when no Overpass mirror is reachable.
 
     with_tags=True returns (coords, highway_value) tuples instead, so
-    callers can tell dedicated pedestrian paths from ordinary streets."""
+    callers can tell dedicated pedestrian paths from ordinary streets.
+    Pass highways=PEDESTRIAN_HIGHWAYS to exclude roads/driveways/tracks."""
     query = WAYS_QUERY_TEMPLATE.format(
         timeout=int(settings.WALKABILITY_TIMEOUT_S) * 2, radius=int(radius_m),
-        lat=lat, lng=lng, highways=WALKABLE_HIGHWAYS)
+        lat=lat, lng=lng, highways=highways)
     payload = query_overpass(query, timeout=settings.WALKABILITY_TIMEOUT_S * 2)
     if payload is None:
         return []

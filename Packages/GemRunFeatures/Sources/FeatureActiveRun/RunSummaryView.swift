@@ -152,16 +152,28 @@ struct RunSummaryView: View {
         .padding(.horizontal, 20)
     }
 
+    /// Rough energy estimate from distance alone (no body-weight profile
+    /// yet): ~1.03 kcal/kg/km running, ~0.53 walking, 70 kg assumed.
+    private var approxCalories: Int {
+        let km = Double(summary.distanceM) / 1_000
+        return Int(km * 70 * (summary.isWalk ? 0.53 : 1.03))
+    }
+
     private var statsCard: some View {
-        HStack(spacing: 24) {
-            stat(formatDuration(summary.durationS), "Time")
-            stat(String(format: "%.2f km", Double(summary.distanceM) / 1_000), "Distance")
-            stat(summary.paceSPerKm > 0 ? formatDuration(summary.paceSPerKm) : "–", "Pace")
-            if summary.steps > 0 {
-                stat("\(summary.steps)", "Steps")
+        VStack(spacing: 16) {
+            HStack(spacing: 24) {
+                stat(formatDuration(summary.durationS), "Time")
+                stat(String(format: "%.2f km", Double(summary.distanceM) / 1_000), "Distance")
+                stat(summary.paceSPerKm > 0 ? formatDuration(summary.paceSPerKm) : "–", "Pace")
             }
-            if let rank = summary.leaderboardRank {
-                stat("#\(rank)", "Route rank")
+            HStack(spacing: 24) {
+                if summary.steps > 0 {
+                    stat("\(summary.steps)", "Steps")
+                }
+                stat("~\(approxCalories)", "Calories")
+                if let rank = summary.leaderboardRank {
+                    stat("#\(rank)", "Route rank")
+                }
             }
         }
         .frame(maxWidth: .infinity)
