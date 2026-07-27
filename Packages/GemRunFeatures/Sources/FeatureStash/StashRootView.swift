@@ -73,7 +73,7 @@ public struct StashRootView: View {
                 }
             }
             if session.wallet.values.reduce(0, +) == 0 {
-                Text("Empty — every 2 km you run earns a gem to drop. Sync with Apple Health to collect what you've already earned.")
+                Text("Empty — every 1.2 miles you run earns a gem to drop. Sync with Apple Health to collect what you've already earned.")
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
             } else {

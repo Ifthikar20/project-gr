@@ -19,6 +19,11 @@ public struct ActiveRunView: View {
     @State private var burst: CollectionEngine.Event?
     @State private var summary: RunCompletionSummary?
     @State private var batteryAtStart: Float = -1
+    /// Collect ceremony: the captured gem flies from mid-map into the
+    /// stash chip, which bounces as it "catches" the gem.
+    @State private var flight: CollectionEngine.Event?
+    @State private var flightLanded = false
+    @State private var stashBounce = false
 
     public init(route: Route?) {
         self.route = route
@@ -43,6 +48,25 @@ public struct ActiveRunView: View {
                 Task {
                     try? await Task.sleep(for: .seconds(1.5))
                     if burst == event { burst = nil }
+                }
+                // Into-the-stash flight: launch shortly after the burst so
+                // the two read as one ceremony, then bounce the chip.
+                flight = event
+                flightLanded = false
+                Task {
+                    try? await Task.sleep(for: .seconds(0.35))
+                    guard flight == event else { return }
+                    withAnimation(.easeIn(duration: 0.6)) { flightLanded = true }
+                    try? await Task.sleep(for: .seconds(0.6))
+                    guard flight == event else { return }
+                    flight = nil
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+                        stashBounce = true
+                    }
+                    try? await Task.sleep(for: .seconds(0.3))
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        stashBounce = false
+                    }
                 }
             }
             // Battery budget instrumentation (docs/04): delta logged at stop.
@@ -72,6 +96,41 @@ public struct ActiveRunView: View {
                 if let event = burst {
                     CollectionBurst(rarity: event.drop.rarity)
                 }
+                // Stash chip: this run's haul, top-leading (the map's
+                // recenter control owns top-trailing). Bounces when a
+                // flying gem lands in it.
+                HStack(spacing: 6) {
+                    Image(systemName: "diamond.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(DS.Colors.pulse)
+                    Text("\(engine.collectedEvents.count)")
+                        .font(.footnote.bold())
+                        .monospacedDigit()
+                        .foregroundStyle(DS.Colors.ink)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
+                .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+                .scaleEffect(stashBounce ? 1.3 : 1)
+                .frame(maxWidth: .infinity, maxHeight: .infinity,
+                       alignment: .topLeading)
+                .padding([.top, .leading], 12)
+                .allowsHitTesting(false)
+                // The gem in flight: map center → stash chip.
+                GeometryReader { geo in
+                    if let flight {
+                        Text(MapPalette.emoji(forGemID: flight.drop.gemID))
+                            .font(.system(size: 44))
+                            .position(flightLanded
+                                ? CGPoint(x: 52, y: 30)
+                                : CGPoint(x: geo.size.width / 2,
+                                          y: geo.size.height * 0.42))
+                            .scaleEffect(flightLanded ? 0.3 : 1.15)
+                            .opacity(flightLanded ? 0.2 : 1)
+                    }
+                }
+                .allowsHitTesting(false)
                 if engine.phase == .paused {
                     Text("Paused — resume moving")
                         .font(.footnote.bold())
@@ -117,11 +176,12 @@ public struct ActiveRunView: View {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 24) {
                     stat(format(seconds: Int(engine.elapsed)), "Time")
-                    stat(String(format: "%.2f", engine.distanceM / 1_000), "km")
+                    stat(UnitFormat.milesText(fromMeters: engine.distanceM), "mi")
                     stat("\(engine.liveSteps)", "Steps")
                     stat(engine.currentPaceSPerKm > 0
-                         ? format(seconds: engine.currentPaceSPerKm) : "–:––", "min/km",
-                         accent: true)
+                         ? format(seconds: UnitFormat.paceSecPerMile(
+                            fromSecPerKm: engine.currentPaceSPerKm)) : "–:––",
+                         "min/mi", accent: true)
                 }
             }
 
@@ -153,10 +213,11 @@ public struct ActiveRunView: View {
         }
     }
 
-    /// "Rare · 240 m · ~2:15" once we have a pace; falls back to "Rare · 240 m"
-    /// on the first ~50 m before pace stabilizes.
+    /// "Rare · 240 ft · ~2:15" once we have a pace; falls back to
+    /// "Rare · 240 ft" on the first stretch before pace stabilizes.
+    /// (ETA math is unit-invariant: meters × s-per-km cancels the same.)
     private func nextGemLabel(distanceM: Double, rarity: Rarity) -> String {
-        let base = "\(rarity.rawValue.capitalized) · \(Int(distanceM)) m"
+        let base = "\(rarity.rawValue.capitalized) · \(UnitFormat.shortDistance(fromMeters: distanceM))"
         let pace = engine.currentPaceSPerKm
         guard pace > 0 else { return base }
         let etaSec = Int(distanceM / 1_000 * Double(pace))

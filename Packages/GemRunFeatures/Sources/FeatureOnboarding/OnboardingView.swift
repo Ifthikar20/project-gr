@@ -22,7 +22,7 @@ public struct OnboardingView: View {
         ("map.fill", "Routes are treasure maps",
          "Every route near you has gems hidden along it — some in plain sight, some you'll have to find."),
         ("figure.run", "Run to collect",
-         "Pass within 25 meters of a gem and it's yours. Your phone buzzes; you never break stride."),
+         "Pass within 100 feet of a gem and it's yours. Your phone buzzes; you never break stride."),
         ("diamond.fill", "Leave something behind",
          "Draw your own routes and place gems for the next runner. Rare ones belong on the hard hills."),
     ]

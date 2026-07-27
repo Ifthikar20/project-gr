@@ -14,10 +14,65 @@ extension RunCompletionSummary {
     }
 }
 
+/// The shape of the run: the completed path drawn as a clean pulse stroke,
+/// normalized into whatever frame it's given (planar-scaled so it isn't
+/// squashed, start dot in ink, finish dot in pulse). Pure Path drawing, so
+/// ImageRenderer exports it identically on the share card.
+struct RouteShapeView: View {
+    let coords: [Coordinate]
+
+    var body: some View {
+        GeometryReader { geo in
+            let pts = normalized(into: geo.size)
+            if pts.count > 1 {
+                Path { p in
+                    p.move(to: pts[0])
+                    for pt in pts.dropFirst() { p.addLine(to: pt) }
+                }
+                .stroke(DS.Colors.pulse,
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round,
+                                           lineJoin: .round))
+                Circle()
+                    .fill(DS.Colors.ink)
+                    .frame(width: 7, height: 7)
+                    .position(pts[0])
+                Circle()
+                    .fill(DS.Colors.pulse)
+                    .overlay(Circle().stroke(DS.Colors.snowCard, lineWidth: 1.5))
+                    .frame(width: 9, height: 9)
+                    .position(pts[pts.count - 1])
+            }
+        }
+    }
+
+    private func normalized(into size: CGSize) -> [CGPoint] {
+        guard coords.count > 1,
+              let minLat = coords.map(\.lat).min(),
+              let maxLat = coords.map(\.lat).max(),
+              let minLng = coords.map(\.lng).min(),
+              let maxLng = coords.map(\.lng).max() else { return [] }
+        // Planar meters so a north-south run isn't drawn squashed.
+        let kLat = 111_320.0
+        let kLng = kLat * cos((minLat + maxLat) / 2 * .pi / 180)
+        let spanX = max(1, (maxLng - minLng) * kLng)
+        let spanY = max(1, (maxLat - minLat) * kLat)
+        let inset = 0.12 * min(size.width, size.height)
+        let scale = min((size.width - 2 * inset) / spanX,
+                        (size.height - 2 * inset) / spanY)
+        let offsetX = (size.width - spanX * scale) / 2
+        let offsetY = (size.height - spanY * scale) / 2
+        return coords.map { c in
+            CGPoint(x: offsetX + (c.lng - minLng) * kLng * scale,
+                    y: size.height - offsetY - (c.lat - minLat) * kLat * scale)
+        }
+    }
+}
+
 /// The run card (docs/03 §8), Daybreak Pulse: a single flippable card.
-/// Front = the run's numbers, from steps to calories to collected gems.
-/// Back = the finds themselves — each gem's emoji, rarity, set, and its
-/// real-material blurb. Tap (or the corner button) flips with a 3D spring.
+/// Front = the run's numbers, from steps to calories to collected gems,
+/// plus the shape of the path you completed. Back = the finds themselves —
+/// each gem's emoji, rarity, set, and its real-material blurb. Tap (or the
+/// corner button) flips with a 3D spring.
 struct RunCardView: View {
     let summary: RunCompletionSummary
     /// Sequential-reveal counter owned by RunSummaryView's ceremony timer:
@@ -58,6 +113,11 @@ struct RunCardView: View {
         }
     }
 
+    private var pathCoords: [Coordinate] {
+        guard let polyline = summary.pathPolyline else { return [] }
+        return PolylineCodec.decode(polyline)
+    }
+
     // MARK: front — the numbers
 
     private var front: some View {
@@ -86,14 +146,25 @@ struct RunCardView: View {
 
             Spacer(minLength: 8)
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(String(format: "%.2f", Double(summary.distanceM) / 1_000))
-                    .font(DS.Typography.statLarge)
-                    .foregroundStyle(DS.Colors.ink)
-                    .monospacedDigit()
-                Text("km")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.inkSecondary)
+            HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(UnitFormat.milesText(fromMeters: Double(summary.distanceM)))
+                        .font(DS.Typography.statLarge)
+                        .foregroundStyle(DS.Colors.ink)
+                        .monospacedDigit()
+                    Text("mi")
+                        .font(DS.Typography.heading)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+                Spacer()
+                if pathCoords.count > 1 {
+                    RouteShapeView(coords: pathCoords)
+                        .frame(width: 86, height: 86)
+                        .background(DS.Colors.snow,
+                                    in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14)
+                            .stroke(DS.Colors.hairline, lineWidth: 1))
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -103,7 +174,8 @@ struct RunCardView: View {
             HStack(spacing: 0) {
                 frontStat(formatDuration(summary.durationS), "Time")
                 frontStat(summary.paceSPerKm > 0
-                          ? formatDuration(summary.paceSPerKm) : "–", "Pace")
+                          ? formatDuration(UnitFormat.paceSecPerMile(
+                            fromSecPerKm: summary.paceSPerKm)) : "–", "Pace /mi")
                 frontStat(summary.steps > 0 ? "\(summary.steps)" : "–", "Steps")
             }
             .padding(.vertical, 12)

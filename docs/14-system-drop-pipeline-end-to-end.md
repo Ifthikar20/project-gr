@@ -208,10 +208,11 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 
 ## 6. Collection closes the loop
 
-- **During a route run**: `CollectionEngine` awards at ≤ 25 m
+- **During a route run**: `CollectionEngine` awards at ≤ 100 ft / 30.5 m
   (`collectionRadiusM`) with progress + hysteresis rules.
-- **During a free run**: pure proximity, ≤ 30.5 m (`dropCollectRadiusM`)
-  ≈ 100 ft, so "50 ft away" always collects.
+- **During a free run**: pure proximity, the same ≤ 100 ft / 30.5 m
+  (`dropCollectRadiusM`) — one capture distance everywhere, mirrored by
+  the server's `COLLECTION_RADIUS_M` / `DROP_COLLECT_RADIUS_M`.
 - Server side, `POST /v1/drops/collect` (or route completion crossing a
   standalone drop) validates the GPS track, awards **first-come**, and
   deactivates the row atomically. `respawn_rule="one_time"` means the row

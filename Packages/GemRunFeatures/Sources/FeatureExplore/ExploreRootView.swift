@@ -462,7 +462,7 @@ public struct ExploreRootView: View {
     }
 
     private func distanceLabel(_ m: Int) -> String {
-        m < 1_000 ? "\(m) m" : String(format: "%.1f km", Double(m) / 1_000)
+        UnitFormat.shortDistance(fromMeters: Double(m))
     }
 
     /// The map's tap callback: drop mode routes taps through DropValidator
@@ -799,8 +799,9 @@ struct RouteCard: View {
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                     .lineLimit(1)
-                Text(String(format: "%.1f km · %d m climb · %@",
-                            Double(route.distanceM) / 1_000, route.elevationGainM,
+                Text(String(format: "%.1f mi · %d ft climb · %@",
+                            UnitFormat.miles(fromMeters: Double(route.distanceM)),
+                            UnitFormat.feet(fromMeters: Double(route.elevationGainM)),
                             route.difficulty.rawValue.capitalized))
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
@@ -849,7 +850,7 @@ struct DropGemSheet: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             } else {
-                Text("First runner to pass within 25 m takes it.")
+                Text("First runner to pass within 100 ft takes it.")
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
                 HStack(spacing: 12) {

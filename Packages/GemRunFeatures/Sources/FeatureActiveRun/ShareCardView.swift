@@ -33,26 +33,41 @@ struct ShareCardView: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(String(format: "%.2f", Double(summary.distanceM) / 1_000))
-                    .font(DS.Typography.statLarge)
-                    .foregroundStyle(DS.Colors.ink)
-                    .monospacedDigit()
-                Text("km")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.inkSecondary)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(UnitFormat.milesText(fromMeters: Double(summary.distanceM)))
+                            .font(DS.Typography.statLarge)
+                            .foregroundStyle(DS.Colors.ink)
+                            .monospacedDigit()
+                        Text("mi")
+                            .font(DS.Typography.heading)
+                            .foregroundStyle(DS.Colors.inkSecondary)
+                    }
+                    if !summary.gems.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(summary.gems.prefix(6)) { gem in
+                                Text(MapPalette.emoji(forGemID: gem.gemID))
+                                    .font(.system(size: 24))
+                            }
+                            if summary.gems.count > 6 {
+                                Text("+\(summary.gems.count - 6)")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(DS.Colors.inkSecondary)
+                            }
+                        }
+                    }
+                }
                 Spacer()
-                if !summary.gems.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(summary.gems.prefix(6)) { gem in
-                            Text(MapPalette.emoji(forGemID: gem.gemID))
-                                .font(.system(size: 26))
-                        }
-                        if summary.gems.count > 6 {
-                            Text("+\(summary.gems.count - 6)")
-                                .font(.caption.bold())
-                                .foregroundStyle(DS.Colors.inkSecondary)
-                        }
+                if let polyline = summary.pathPolyline {
+                    let coords = PolylineCodec.decode(polyline)
+                    if coords.count > 1 {
+                        RouteShapeView(coords: coords)
+                            .frame(width: 96, height: 96)
+                            .background(DS.Colors.snow,
+                                        in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14)
+                                .stroke(DS.Colors.hairline, lineWidth: 1))
                     }
                 }
             }
@@ -61,7 +76,9 @@ struct ShareCardView: View {
 
             HStack(spacing: 0) {
                 cardStat(time(summary.durationS), "time")
-                cardStat(summary.paceSPerKm > 0 ? time(summary.paceSPerKm) : "–", "pace")
+                cardStat(summary.paceSPerKm > 0
+                         ? time(UnitFormat.paceSecPerMile(
+                            fromSecPerKm: summary.paceSPerKm)) : "–", "pace /mi")
                 if summary.steps > 0 {
                     cardStat("\(summary.steps)", "steps")
                 }

@@ -225,7 +225,7 @@ final class CreationModel {
         // (docs/02) approximates to: Epics only on routes ≥ 8 km. Server
         // validates against real elevation in Phase F.
         if selectedRarity == .epic, distanceM < 8_000 {
-            placementError = "Epics need a hard route — at least 8 km for now."
+            placementError = "Epics need a hard route — at least 5 miles for now."
             return
         }
         let snapped = geometry.coordinate(atDistance: alongM)

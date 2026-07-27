@@ -59,8 +59,9 @@ struct DrawStepView: View {
             }
             .disabled(model.waypoints.isEmpty)
             Spacer()
-            Text(String(format: "%.2f km · %d points",
-                        Double(model.distanceM) / 1_000, model.waypoints.count))
+            Text(String(format: "%.2f mi · %d points",
+                        UnitFormat.miles(fromMeters: Double(model.distanceM)),
+                        model.waypoints.count))
                 .font(.footnote)
                 .foregroundStyle(DS.Colors.inkSecondary)
         }
@@ -104,8 +105,8 @@ struct DrawStepView: View {
                         .font(.caption)
                         .foregroundStyle(DS.Colors.inkSecondary)
                 } else {
-                    Text(String(format: "%.2f km to your pin",
-                                Double(model.distanceM) / 1_000))
+                    Text(String(format: "%.2f mi to your pin",
+                                UnitFormat.miles(fromMeters: Double(model.distanceM))))
                         .font(.caption.bold())
                         .foregroundStyle(DS.Colors.ink)
                 }
@@ -230,7 +231,7 @@ struct PublishStepView: View {
             }
             Section {
                 LabeledContent("Distance",
-                               value: String(format: "%.2f km", Double(model.distanceM) / 1_000))
+                               value: UnitFormat.milesLabel(fromMeters: Double(model.distanceM), decimals: 2))
                 LabeledContent("Difficulty", value: model.difficulty.rawValue.capitalized)
                 LabeledContent("Gems", value: "\(model.placedDrops.count)")
                 LabeledContent("Visibility", value: "Public")

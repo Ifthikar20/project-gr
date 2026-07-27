@@ -77,7 +77,7 @@ public struct ProfileRootView: View {
                     .foregroundStyle(shields > 0 ? DS.Colors.ink : DS.Colors.inkSecondary)
             }
             .listRowBackground(DS.Colors.snowCard)
-            Text(String(format: "XP multiplier %.1f× — any run of 1 km+ keeps the flame alive.",
+            Text(String(format: "XP multiplier %.1f× — any run over 0.6 mi keeps the flame alive.",
                         session.streakMultiplier))
                 .font(.caption)
                 .foregroundStyle(DS.Colors.inkSecondary)
@@ -87,9 +87,10 @@ public struct ProfileRootView: View {
 
     private var statsSection: some View {
         Section("Lifetime") {
-            let km = Double(runs.map(\.distanceM).reduce(0, +)) / 1_000
+            let mi = UnitFormat.miles(
+                fromMeters: Double(runs.map(\.distanceM).reduce(0, +)))
             HStack {
-                stat(String(format: "%.1f", km), "km")
+                stat(String(format: "%.1f", mi), "mi")
                 stat("\(runs.count)", "runs")
                 stat("\(stash.count)", "gems")
                 stat("\(myRoutes.count)", "routes made")
@@ -111,8 +112,9 @@ public struct ProfileRootView: View {
                     VStack(alignment: .leading) {
                         Text(route.name)
                             .foregroundStyle(DS.Colors.ink)
-                        Text(String(format: "%.1f km · %d runs",
-                                    Double(route.distanceM) / 1_000, route.runCount))
+                        Text(String(format: "%.1f mi · %d runs",
+                                    UnitFormat.miles(fromMeters: Double(route.distanceM)),
+                                    route.runCount))
                             .font(.caption)
                             .foregroundStyle(DS.Colors.inkSecondary)
                     }

@@ -129,7 +129,7 @@ struct RunSummaryView: View {
                     let fastest = summary.splitsS.min() ?? 0
                     ForEach(Array(summary.splitsS.enumerated()), id: \.offset) { i, split in
                         HStack {
-                            Text("km \(i + 1)")
+                            Text("mi \(i + 1)")
                                 .foregroundStyle(DS.Colors.inkSecondary)
                                 .frame(width: 52, alignment: .leading)
                             Text(formatDuration(split))

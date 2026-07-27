@@ -85,7 +85,7 @@ struct RouteDetailView: View {
 
     private var statsRow: some View {
         HStack(spacing: 0) {
-            stat(String(format: "%.1f km", Double(route.distanceM) / 1_000), "Distance")
+            stat(UnitFormat.milesLabel(fromMeters: Double(route.distanceM)), "Distance")
             stat("\(route.elevationGainM) m", "Climb")
             stat(route.difficulty.rawValue.capitalized, "Difficulty")
             stat("\(route.runCount)", "Runs")
@@ -176,7 +176,7 @@ struct RouteDetailView: View {
     private var bottomBar: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(String(format: "%.1f km", Double(route.distanceM) / 1_000))
+                Text(UnitFormat.milesLabel(fromMeters: Double(route.distanceM)))
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                 Text(route.difficulty.rawValue.capitalized)

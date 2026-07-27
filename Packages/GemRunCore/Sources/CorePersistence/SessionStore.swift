@@ -33,6 +33,9 @@ public struct RunCompletionSummary: Sendable {
     public let splitsS: [Int]
     public let leaderboardRank: Int?
     public let routeName: String
+    /// Encoded shape of the run for the summary card: the route's polyline
+    /// on a route run, the actual traveled track on a free run.
+    public var pathPolyline: String? = nil
     /// Filled in after completion from an Apple Health step-count read;
     /// stays 0 when Health is unavailable or hasn't flushed samples yet.
     public var steps: Int = 0
@@ -126,7 +129,9 @@ public final class SessionStore {
             multiplier: 1.0, isWalk: false, status: .valid,
             startedAt: Date().addingTimeInterval(-TimeInterval(durationS)),
             durationS: durationS, distanceM: distanceM, paceSPerKm: pace,
-            splitsS: [], leaderboardRank: nil, routeName: "Free run")
+            splitsS: [], leaderboardRank: nil, routeName: "Free run",
+            pathPolyline: track.count > 1
+                ? PolylineCodec.encode(track.map(\.coordinate)) : nil)
     }
 
     private var context: ModelContext?
@@ -260,7 +265,8 @@ public final class SessionStore {
             startedAt: result.startedAt, durationS: v.durationS, distanceM: v.distanceM,
             paceSPerKm: v.paceSPerKm, splitsS: v.splitsS,
             leaderboardRank: verdict?.leaderboardRank ?? nil,
-            routeName: result.route.name)
+            routeName: result.route.name,
+            pathPolyline: result.route.polyline)
     }
 
     /// Returns the name of a set completed by this run, if any (bonus already

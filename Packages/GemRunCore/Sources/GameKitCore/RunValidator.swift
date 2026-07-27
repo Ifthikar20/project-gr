@@ -33,7 +33,8 @@ public enum RunValidator {
         public let isWalk: Bool
         public let onRouteRatio: Double
         public let coverageRatio: Double
-        /// Seconds per completed kilometer, in order (summary splits table).
+        /// Seconds per completed mile, in order (summary splits table —
+        /// the app displays imperial units; models stay metric).
         public let splitsS: [Int]
     }
 
@@ -50,7 +51,7 @@ public enum RunValidator {
         var teleportRunS: TimeInterval = 0
         var flags: [String] = []
         var splitsS: [Int] = []
-        var nextSplitM = 1_000.0
+        var nextSplitM = UnitFormat.metersPerMile
         var lastSplitT = track[0].t
 
         for (i, sample) in track.enumerated() {
@@ -67,7 +68,7 @@ public enum RunValidator {
                 while distanceM >= nextSplitM {
                     splitsS.append(Int(sample.t - lastSplitT))
                     lastSplitT = sample.t
-                    nextSplitM += 1_000
+                    nextSplitM += UnitFormat.metersPerMile
                 }
                 if d / dt > CollectionRules.teleportSpeed {
                     teleportRunS += dt
