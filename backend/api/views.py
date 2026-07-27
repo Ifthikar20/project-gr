@@ -15,7 +15,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from . import catalog, rules, validation
+from . import catalog, rules, validation, walkability
 from .geometry import RouteGeometry, polyline_decode
 from .models import GemDrop, Profile, Route, Run, StashItem, Token
 
@@ -340,11 +340,19 @@ def complete_run(request, route_id):
     else:
         revoked = [str(c) for c in claimed]
 
+    # Standalone drops (system or runner-left) whose coordinates this track
+    # crossed: claimed here too, first-come-first-served (docs/13).
+    crossed = []
+    if verdict_v["status"] != "invalid":
+        crossed = claim_crossed_standalone_drops(profile, track)
+
     streak_extended = update_streak(profile, verdict_v)
     xp = 0
     if verdict_v["status"] != "invalid":
         xp = validation.xp_for([d.rarity for d in awarded], verdict_v["is_walk"],
                                profile.streak_count)
+        # Crossed standalone drops score plain rarity XP (same as /drops/collect).
+        xp += sum(rules.XP_BY_RARITY[d.rarity] for d in crossed)
         profile.xp += xp
         while profile.xp >= rules.xp_to_advance(profile.level):
             profile.xp -= rules.xp_to_advance(profile.level)
@@ -364,6 +372,9 @@ def complete_run(request, route_id):
                     and not StashItem.objects.filter(gem_drop=drop).exists())
         StashItem.objects.create(profile=profile, gem_id=drop.gem_id, gem_drop=drop,
                                  run=run, collected_at=now, is_first_find=is_first)
+    for drop in crossed:
+        StashItem.objects.create(profile=profile, gem_id=drop.gem_id, gem_drop=drop,
+                                 run=run, collected_at=now, is_first_find=True)
 
     rank = None
     if verdict_v["status"] == "valid" and not verdict_v["is_walk"]:
@@ -373,12 +384,39 @@ def complete_run(request, route_id):
         rank = faster + 1
 
     payload = {"status": verdict_v["status"],
-               "awarded_drops": [drop_json(d, exact=True) for d in awarded],
+               "awarded_drops": [drop_json(d, exact=True) for d in awarded + crossed],
                "revoked": revoked, "xp_earned": xp, "leaderboard_rank": rank,
                "streak_extended": streak_extended}
     run.verdict = payload
     run.save(update_fields=["verdict"])
     return JsonResponse(payload)
+
+
+def claim_crossed_standalone_drops(profile, track):
+    """Active standalone drops from the master table whose coordinates the
+    track passed within the collect radius. One-time: the row is atomically
+    deactivated so exactly one runner ever gets each drop; never your own.
+    Runs inside complete_run's transaction (select_for_update)."""
+    if not track:
+        return []
+    lats = [s["lat"] for s in track]
+    lngs = [s["lng"] for s in track]
+    margin_lat = rules.DROP_COLLECT_RADIUS_M / 111_320
+    margin_lng = rules.DROP_COLLECT_RADIUS_M / (
+        111_320 * max(0.1, math.cos(math.radians(lats[0]))))
+    candidates = (GemDrop.objects.select_for_update()
+                  .filter(route__isnull=True, active=True,
+                          lat__gte=min(lats) - margin_lat, lat__lte=max(lats) + margin_lat,
+                          lng__gte=min(lngs) - margin_lng, lng__lte=max(lngs) + margin_lng)
+                  .exclude(dropped_by=profile))
+    claimed = []
+    for drop in candidates:
+        if not track_passes_near(track, drop.lat, drop.lng):
+            continue
+        drop.active = False
+        drop.save(update_fields=["active"])
+        claimed.append(drop)
+    return claimed
 
 
 def claim_respawn(profile, drop, now):
@@ -539,6 +577,11 @@ def drops(request):
         lat, lng = float(data["lat"]), float(data["lng"])
     except (KeyError, TypeError, ValueError):
         return problem(400, "lat and lng are required")
+    # Walkability downstream call (docs/13): only a definite "not walkable"
+    # rejects — None (check off/unreachable) keeps drops flowing.
+    if walkability.is_walkable(lat, lng) is False:
+        return problem(422, "Gems can only be dropped on walkable paths",
+                       code="not_walkable")
     wallet[rarity] = int(wallet[rarity]) - 1
     profile.wallet = wallet
     profile.save(update_fields=["wallet"])

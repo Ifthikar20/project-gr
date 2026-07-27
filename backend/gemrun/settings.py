@@ -35,4 +35,13 @@ DATABASES = {
 TIME_ZONE = "UTC"
 USE_TZ = True
 
+# Walkability downstream call (api/walkability.py, docs/13).
+#   "off"      — no external call; is_walkable() returns None (callers trust
+#                route polylines, which are snapped to walking directions).
+#   "overpass" — query OpenStreetMap's Overpass API for walkable ways.
+WALKABILITY_MODE = "off"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+WALKABILITY_RADIUS_M = 25      # matches the gem collection radius
+WALKABILITY_TIMEOUT_S = 5
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

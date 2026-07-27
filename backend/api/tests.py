@@ -1,13 +1,17 @@
 """End-to-end API tests using the same fixture vectors as the Swift
 GameKitCoreTests: a straight 1 km route heading north, tracks at known paces.
 """
+import io
 import json
 import uuid
+from unittest import mock
 
+from django.core.management import call_command
 from django.test import Client, TestCase
 
-from . import catalog
+from . import catalog, walkability
 from .geometry import RouteGeometry, polyline_decode, polyline_encode
+from .models import GemDrop, Route
 
 DEG_PER_M_LAT = 1.0 / 111_320.0
 
@@ -216,6 +220,86 @@ class ApiTests(TestCase):
                                content_type="application/json",
                                HTTP_AUTHORIZATION=f"Bearer {other_token}").json()
         self.assertEqual(far["awarded_drops"], [])
+
+    # ---- system drops on popular walkable paths (docs/13)
+
+    def seed_popular_route(self, run_count=5):
+        route_id = self.publish_route().json()["id"]
+        Route.objects.filter(id=route_id).update(run_count=run_count)
+        return route_id
+
+    def test_drop_gems_targets_popular_routes_only(self):
+        self.seed_popular_route(run_count=5)
+        self.publish_route()                      # run_count 0 — not popular
+        call_command("drop_gems", max_drops=2, min_runs=3, seed=7,
+                     stdout=io.StringIO())
+        drops = GemDrop.objects.filter(route__isnull=True, placed_by="system")
+        self.assertEqual(drops.count(), 1)        # 1 popular route → 1 drop
+        drop = drops.get()
+        self.assertEqual(drop.respawn_rule, "one_time")
+        self.assertIsNone(drop.dropped_by)
+        self.assertNotEqual(drop.rarity, "legendary")
+        # On the route's path: fixture route runs due north on lng -122.
+        self.assertAlmostEqual(drop.lng, -122.0, places=4)
+        self.assertTrue(37.0 <= drop.lat <= 37.0 + 1000 * DEG_PER_M_LAT)
+        # Visible in the master-table geo query.
+        nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                               "radius_m": 5000}).json()
+        self.assertEqual(len(nearby["drops"]), 1)
+
+    def test_drop_gems_skips_unwalkable_points(self):
+        self.seed_popular_route()
+        with mock.patch("api.walkability.is_walkable", return_value=False):
+            call_command("drop_gems", seed=7, stdout=io.StringIO())
+        self.assertEqual(
+            GemDrop.objects.filter(route__isnull=True, placed_by="system").count(), 0)
+
+    def test_drop_rejected_on_unwalkable_coordinate(self):
+        self.wallet_sync(2)
+        gem_id = str(catalog.gem_of("common")["id"])
+        with mock.patch("api.views.walkability.is_walkable", return_value=False):
+            denied = self.post("/v1/drops",
+                               {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
+                               auth=True)
+        self.assertEqual(denied.status_code, 422)
+        self.assertEqual(denied.json()["code"], "not_walkable")
+
+    def test_overpass_walkability_call(self):
+        hit = io.BytesIO(json.dumps({"elements": [{"type": "way", "id": 1}]}).encode())
+        miss = io.BytesIO(json.dumps({"elements": []}).encode())
+        with self.settings(WALKABILITY_MODE="overpass"):
+            with mock.patch("urllib.request.urlopen") as urlopen:
+                urlopen.return_value.__enter__ = lambda s: hit
+                urlopen.return_value.__exit__ = mock.Mock(return_value=False)
+                self.assertIs(walkability.is_walkable(37.0, -122.0), True)
+                urlopen.return_value.__enter__ = lambda s: miss
+                self.assertIs(walkability.is_walkable(37.0, -122.0), False)
+            with mock.patch("urllib.request.urlopen", side_effect=OSError):
+                self.assertIsNone(walkability.is_walkable(37.0, -122.0))
+        self.assertIsNone(walkability.is_walkable(37.0, -122.0))   # mode off
+
+    def test_route_run_claims_crossed_system_drop_first_come(self):
+        route = self.publish_route().json()
+        drop = GemDrop.objects.create(
+            route=None, dropped_by=None, gem_id=catalog.gem_of("rare")["id"],
+            rarity="rare", lat=37.0 + 500 * DEG_PER_M_LAT, lng=-122.0,
+            position_along_route_m=0, respawn_rule="one_time", placed_by="system")
+        verdict = self.complete(route["id"], track(3.0), []).json()
+        self.assertEqual([d["id"] for d in verdict["awarded_drops"]], [str(drop.id)])
+        self.assertEqual(verdict["xp_earned"], 75)
+        # First come, first served: a second runner crossing it gets nothing.
+        rival = self.client.post("/v1/auth/apple",
+                                 data=json.dumps({"handle": "rival"}),
+                                 content_type="application/json").json()["token"]
+        second = self.client.post(
+            f"/v1/runs/{route['id']}/complete",
+            data=json.dumps({"idempotency_key": str(uuid.uuid4()),
+                             "started_at": "2026-07-23T11:00:00Z",
+                             "track": track(3.0), "claimed_collections": []}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {rival}").json()
+        self.assertEqual(second["awarded_drops"], [])
+        self.assertEqual(second["xp_earned"], 0)
 
     def test_catalog_matches_client_uuids(self):
         gems = self.client.get("/v1/gems/catalog").json()["gems"]
