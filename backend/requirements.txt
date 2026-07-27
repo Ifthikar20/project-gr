@@ -1,1 +1,4 @@
 Django>=5.2,<6.0
+# TLS trust store for urllib calls to Overpass — macOS Python installs often
+# ship without linked system certs, silently failing every HTTPS request.
+certifi>=2024.0.0

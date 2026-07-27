@@ -11,10 +11,17 @@ Three-valued result so callers choose their own fail policy:
     None  — check disabled (WALKABILITY_MODE != "overpass") or unreachable
 """
 import json
+import ssl
 import urllib.parse
 import urllib.request
 
 from django.conf import settings
+
+try:
+    import certifi
+    _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except ImportError:      # certifi missing → default trust store
+    _SSL_CONTEXT = None
 
 # Pedestrian-legal highway values (OSM wiki: guidelines for pedestrian
 # navigation). Motorway/trunk/primary are excluded by omission.
@@ -50,7 +57,8 @@ def query_overpass(query, timeout):
             url, data=urllib.parse.urlencode({"data": query}).encode(),
             headers={"User-Agent": "GemRun/0.1 (walkability)"})
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout,
+                                        context=_SSL_CONTEXT) as response:
                 return json.load(response)
         except (OSError, ValueError):
             continue
