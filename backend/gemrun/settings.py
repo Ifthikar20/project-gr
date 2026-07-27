@@ -44,4 +44,11 @@ OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 WALKABILITY_RADIUS_M = 25      # matches the gem collection radius
 WALKABILITY_TIMEOUT_S = 5
 
+# Presence-triggered system drops (api/system_drops.py, docs/13): each
+# GET /v1/drops map query tops up gems around ITS OWN coordinates — user
+# activity is the capture point, so regions nobody uses never get gems.
+PRESENCE_DROPS = True
+PRESENCE_DROP_MAX_PER_AREA = 3   # active system drops per queried area, capped
+PRESENCE_DROP_MIN_RUNS = 3       # a route needs this many runs to count as popular
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

@@ -19,22 +19,44 @@ popularity signal          walkability check           master table            f
 └─────────────────┘   └───────────────────────┘   └──────────────────┘   └──────────────────────┘
 ```
 
-## 1. Popularity: "being walked by many people"
+## 1. The trigger: user presence, not a schedule
 
-We already own the strongest possible signal — GemRun's run history.
-`manage.py drop_gems` ranks published routes by `run_count` and only
-considers routes at or above `--min-runs` (default 3). A candidate point is
-sampled at a random position along a qualifying route's polyline, so system
-gems land exactly where our users demonstrably run.
+**The map query is the trigger.** When any user opens the map, the app calls
+`GET /v1/drops?lat&lng&radius_m` with *their* coordinates — and that same
+request tops up system gems around those coordinates first
+(`system_drops.top_up_area`, called best-effort so a failure never breaks
+the map read). User activity is literally the coordinate capture:
+
+- Nobody uses the app in a region → nobody queries there, no routes exist
+  there, no gems ever spawn there. (No users in Alaska = no gems in Alaska.)
+- The first map open in an active area stocks it; the next one after a gem
+  is collected restocks it.
+
+The top-up is **self-limiting**, so repeated map opens never pile gems up:
+the target is one active system drop per popular route in the queried area,
+capped at `PRESENCE_DROP_MAX_PER_AREA` (default 3). At or above target the
+trigger is two cheap count queries and exits.
+
+### Popularity: "being walked by many people"
+
+We already own the strongest possible signal — GemRun's run history. Both
+the presence trigger and the command rank published routes by `run_count`
+and only consider routes at or above the min-runs gate (default 3). A
+candidate point is sampled at a random position along a qualifying route's
+polyline, so system gems land exactly where our users demonstrably run.
+Existing-drop spacing is enforced (100 m, the doc-02 rule) and rarity is
+weighted (common 60 / uncommon 25 / rare 12 / epic 3 — legendary never).
+
+### The global backstop command
+
+`manage.py drop_gems` sweeps ALL popular routes regardless of who's online —
+useful before an event or to stock a launch city ahead of users. Same engine
+(`system_drops.drop_gem_on_route`), optional cron, safe to re-run.
 
 ```sh
-python manage.py drop_gems --max-drops 5 --min-runs 3        # cron/scheduler
+python manage.py drop_gems --max-drops 5 --min-runs 3
 python manage.py drop_gems --seed 42                          # reproducible
 ```
-
-Existing-drop spacing is enforced (100 m, the doc-02 rule), rarity is
-weighted (common 60 / uncommon 25 / rare 12 / epic 3 — legendary never), and
-at most one gem per route per invocation keeps drops spread across the city.
 
 ## 2. Walkability: the downstream call
 
@@ -119,9 +141,11 @@ Shared guarantees, enforced server-side in one transaction:
 
 ## 5. Operating it
 
-Schedule `drop_gems` from cron (daily is plenty at launch scale). It's safe
-to re-run: spacing prevents pile-ups and claimed drops stay inactive. To
-watch supply/demand:
+Nothing to schedule for normal operation — the presence trigger keeps every
+active area stocked on its own (`PRESENCE_DROPS = True`). Run `drop_gems`
+from cron only as a backstop or to pre-stock a region. Both are safe to
+re-run: spacing prevents pile-ups, the area target self-limits, and claimed
+drops stay inactive. To watch supply/demand:
 
 ```sql
 -- unclaimed system drops

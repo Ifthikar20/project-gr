@@ -15,7 +15,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from . import catalog, rules, validation, walkability
+from . import catalog, rules, system_drops, validation, walkability
 from .geometry import RouteGeometry, polyline_decode
 from .models import GemDrop, Profile, Route, Run, StashItem, Token
 
@@ -551,6 +551,14 @@ def drops(request):
             radius = int(request.GET.get("radius_m", 5000))
         except (KeyError, ValueError):
             return problem(400, "lat, lng and radius_m are required")
+        # Presence trigger (docs/13): this map query's coordinates ARE the
+        # capture point — top up system gems here before answering, so gems
+        # only ever spawn where people actually use the app. Best-effort:
+        # a top-up failure must never break the map read.
+        try:
+            system_drops.top_up_area(lat, lng, radius)
+        except Exception:
+            pass
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
         qs = GemDrop.objects.filter(route__isnull=True, active=True,

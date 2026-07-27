@@ -278,6 +278,34 @@ class ApiTests(TestCase):
                 self.assertIsNone(walkability.is_walkable(37.0, -122.0))
         self.assertIsNone(walkability.is_walkable(37.0, -122.0))   # mode off
 
+    def test_presence_trigger_spawns_and_replenishes_gems(self):
+        self.seed_popular_route(run_count=5)
+        # Opening the map IS the trigger: the query's own coordinates get
+        # topped up (1 popular route → target 1 system drop).
+        nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                               "radius_m": 5000}).json()
+        self.assertEqual(len(nearby["drops"]), 1)
+        first_id = nearby["drops"][0]["id"]
+        # Self-limiting: another map open never piles up more gems.
+        again = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                              "radius_m": 5000}).json()
+        self.assertEqual([d["id"] for d in again["drops"]], [first_id])
+        # Once collected, the next map open replenishes with a NEW gem.
+        GemDrop.objects.filter(id=first_id).update(active=False)
+        refreshed = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                  "radius_m": 5000}).json()
+        self.assertEqual(len(refreshed["drops"]), 1)
+        self.assertNotEqual(refreshed["drops"][0]["id"], first_id)
+
+    def test_no_activity_in_region_means_no_gems_there(self):
+        self.seed_popular_route(run_count=5)          # activity: San Francisco
+        # A map open from Alaska — no routes, no runs there — spawns nothing.
+        alaska = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
+                                               "radius_m": 5000}).json()
+        self.assertEqual(alaska["drops"], [])
+        self.assertEqual(GemDrop.objects.filter(route__isnull=True,
+                                                lat__gte=60).count(), 0)
+
     def test_route_run_claims_crossed_system_drop_first_come(self):
         route = self.publish_route().json()
         drop = GemDrop.objects.create(

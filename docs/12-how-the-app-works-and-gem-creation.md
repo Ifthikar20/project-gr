@@ -162,13 +162,16 @@ alive with zero backend.
 
 ### Path E — System drops on popular walkable paths (doc 13)
 
-The backend itself drops gems where people actually run: `manage.py
-drop_gems` picks published routes ranked by `run_count`, samples a point on
-the (walking-snapped) polyline, verifies it against the walkability
-downstream call (OSM Overpass, `api/walkability.py`), and writes a
-`GemDrop` master-table row (`route=NULL`, `placed_by="system"`,
+The backend itself drops gems where people actually run — triggered by
+presence, not a schedule: each `GET /v1/drops` map query tops up gems
+around its own coordinates (`api/system_drops.py`; regions nobody uses
+never spawn gems). It picks published routes ranked by `run_count`, samples
+a point on the (walking-snapped) polyline, verifies it against the
+walkability downstream call (OSM Overpass, `api/walkability.py`), and
+writes a `GemDrop` master-table row (`route=NULL`, `placed_by="system"`,
 `one_time`). The first runner whose GPS track crosses those coordinates —
-on a free run **or** a route run — claims it. Full pipeline: doc 13.
+on a free run **or** a route run — claims it. `manage.py drop_gems` remains
+as a global backstop sweep. Full pipeline: doc 13.
 
 ### How drops become stash items (collection)
 
