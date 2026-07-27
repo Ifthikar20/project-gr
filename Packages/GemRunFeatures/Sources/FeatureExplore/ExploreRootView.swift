@@ -137,8 +137,10 @@ public struct ExploreRootView: View {
                 RouteDetailView(route: route)
             }
             .sheet(item: $infoDrop) { drop in
-                GemInfoSheet(drop: drop)
-                    .presentationDetents([.height(320)])
+                GemInfoSheet(drop: drop) {
+                    await runToGem(drop)
+                }
+                .presentationDetents([.height(320)])
             }
             .sheet(item: $pendingDropSpot) { spot in
                 DropGemSheet(coordinate: spot.coordinate) { newDrop in
@@ -500,6 +502,32 @@ public struct ExploreRootView: View {
         defer { isPlanningPath = false }
         let segment = await PathSnapper.snap(from: start, to: destination)
         destinationPath = segment
+    }
+
+    /// The gem card's CTA: snap a walking path from the user to the tapped
+    /// gem and start a run along it. Deliberately a FREE run, not a route
+    /// run — free runs are the mode that collects standalone drops by
+    /// proximity (≤ ~30 m, ActiveRunEngine), so arriving at the pin awards
+    /// the gem; every other nearby gem stays collectable on the way.
+    private func runToGem(_ drop: GemDrop) async {
+        let here: Coordinate
+        if let fix = live.coordinate {
+            here = fix
+        } else if let last = CLLocationManager().location {
+            here = Coordinate(lat: last.coordinate.latitude,
+                              lng: last.coordinate.longitude)
+        } else {
+            return   // map is only revealed after a fix, so this is rare
+        }
+        var path = await PathSnapper.snap(from: here, to: drop.coordinate)
+        if path.count < 2 {
+            // Snapper came up empty (offline, or no walkable route found):
+            // fall back to a straight guide line so the run still starts —
+            // collection is proximity-based, not path-based.
+            path = [here, drop.coordinate]
+        }
+        infoDrop = nil
+        session.startFreeRun(drops: nearbyDrops, plannedPath: path)
     }
 
     /// Assemble an in-memory Route from the snapped path and hand it to the

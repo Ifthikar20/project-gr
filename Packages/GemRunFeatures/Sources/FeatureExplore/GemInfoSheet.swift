@@ -7,6 +7,10 @@ import SwiftUI
 /// its rarity, its set, and a one-line blurb about the real material.
 struct GemInfoSheet: View {
     let drop: GemDrop
+    /// Provided by Explore: plan a walking path to this gem and start a
+    /// run that collects it. nil renders the old static pill instead.
+    var onRunToGem: (() async -> Void)? = nil
+    @State private var isPlanning = false
 
     private var entry: GemCatalog.Entry? {
         GemCatalog.entry(forGemID: drop.gemID)
@@ -42,13 +46,43 @@ struct GemInfoSheet: View {
                     .padding(.horizontal, 28)
             }
 
-            Text("Walk or run to it to collect")
-                .font(.footnote.bold())
-                .foregroundStyle(DS.Colors.snowCard)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(DS.Colors.pulse, in: Capsule())
+            if let onRunToGem {
+                Button {
+                    guard !isPlanning else { return }
+                    isPlanning = true
+                    Task {
+                        await onRunToGem()
+                        isPlanning = false
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isPlanning {
+                            ProgressView()
+                                .tint(DS.Colors.snowCard)
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "figure.run")
+                                .font(.footnote.bold())
+                        }
+                        Text(isPlanning ? "Planning your path…" : "Walk or run to collect")
+                            .font(.footnote.bold())
+                    }
+                    .foregroundStyle(DS.Colors.snowCard)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(DS.Colors.pulse, in: Capsule())
+                }
+                .disabled(isPlanning)
                 .padding(.top, 6)
+            } else {
+                Text("Walk or run to it to collect")
+                    .font(.footnote.bold())
+                    .foregroundStyle(DS.Colors.snowCard)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(DS.Colors.pulse, in: Capsule())
+                    .padding(.top, 6)
+            }
 
             Spacer(minLength: 0)
         }

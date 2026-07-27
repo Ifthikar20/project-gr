@@ -189,9 +189,16 @@ the hard gate.
   (spring from `y −30`, scale 1.3 → 1).
 - Tap → `onSelectDrop(drop)` → `ExploreRootView` sets `infoDrop` → a
   320 pt sheet presents **`GemInfoSheet`**: big emoji, gem name, rarity
-  badge + set name, one-line real-material blurb, and the "Walk or run to
-  it to collect" pill. Unknown `gem_id` degrades to "Mystery Gem" rather
-  than crashing — the sheet never assumes catalog hits.
+  badge + set name, one-line real-material blurb, and a **"Walk or run to
+  collect" button**. Tapping it snaps a walking path from the user to the
+  gem (`PathSnapper.snap`, straight-line fallback if snapping fails) and
+  starts a **free run** along it (`session.startFreeRun(drops:plannedPath:)`)
+  — deliberately a free run, not a route run, because free runs are the
+  mode that collects standalone drops by proximity; the tapped gem awards
+  on arrival and every other nearby gem stays collectable en route. The
+  planned line draws in pulse on the active-run map. Unknown `gem_id`
+  degrades to "Mystery Gem" rather than crashing — the sheet never assumes
+  catalog hits.
 
 **Active-run map** (`ActiveRunMapView`): the same drops arrive as
 `freeDrops` (free runs) or `route.gemDrops`. Uncollected → emoji
