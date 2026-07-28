@@ -35,9 +35,11 @@ struct DrawStepView: View {
                 case .destination: destinationControls
                 }
 
+                let nextBlocked = model.distanceM < 1_000
+                    || model.isSnapping || model.isPlanning
                 PillButton("Next: place gems") { model.step = .gems }
-                    .disabled(model.distanceM < 1_000)
-                    .opacity(model.distanceM < 1_000 ? 0.5 : 1)
+                    .disabled(nextBlocked)
+                    .opacity(nextBlocked ? 0.5 : 1)
             }
             .padding(16)
             .background(DS.Colors.snow)
@@ -50,21 +52,49 @@ struct DrawStepView: View {
     }
 
     private var drawControls: some View {
-        HStack {
-            Button {
-                model.undoWaypoint()
-            } label: {
-                Label("Undo", systemImage: "arrow.uturn.backward")
-                    .foregroundStyle(DS.Colors.ink)
+        VStack(alignment: .leading, spacing: 8) {
+            if let notice = model.pathNotice {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(DS.Colors.pulse)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
             }
-            .disabled(model.waypoints.isEmpty)
-            Spacer()
-            Text(String(format: "%.2f mi · %d points",
-                        UnitFormat.miles(fromMeters: Double(model.distanceM)),
-                        model.waypoints.count))
-                .font(.footnote)
-                .foregroundStyle(DS.Colors.inkSecondary)
+            HStack(spacing: 16) {
+                Button {
+                    model.undoWaypoint()
+                } label: {
+                    Label("Undo", systemImage: "arrow.uturn.backward")
+                        .foregroundStyle(DS.Colors.ink)
+                }
+                .disabled(model.waypoints.isEmpty)
+
+                Button {
+                    model.cycleAlternatePath()
+                } label: {
+                    Label("Another path", systemImage: "arrow.triangle.branch")
+                        .foregroundStyle(DS.Colors.ink)
+                }
+                .disabled(!model.canCycleAlternate)
+                .opacity(model.canCycleAlternate ? 1 : 0.4)
+
+                Spacer()
+
+                if model.isSnapping {
+                    ProgressView().controlSize(.small)
+                    Text("Finding a walkable path…")
+                        .font(.footnote)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                } else {
+                    Text(String(format: "%.2f mi · %d points",
+                                UnitFormat.miles(fromMeters: Double(model.distanceM)),
+                                model.waypoints.count))
+                        .font(.footnote)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: model.pathNotice)
     }
 
     /// Destination mode (docs/03 update): start = current location or a

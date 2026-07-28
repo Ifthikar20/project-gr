@@ -105,10 +105,15 @@ plus `OVERPASS_URL`, `WALKABILITY_RADIUS_M` (25, matches the collection
 radius), `WALKABILITY_TIMEOUT_S`. The same check gates user standalone drops
 in `POST /v1/drops`.
 
-The client closes the remaining leak at the source: `PathSnapper.snapVerified`
-reports whether MKDirections actually confirmed each segment, the creation
-flow records straight-line-fallback stretches (`unsnappedRangesM`), and gem
-placement on an unverified stretch is refused with an inline error.
+The client closes the remaining leak at the source: the creation flow now
+**rejects** any dot or destination pin MKDirections can't reach on foot at
+draw time (`PathSnapper.snapAlternates` / `snapVerified` — the dot bounces
+off with "No walkable path to that spot"), so an unverified stretch can no
+longer exist in a drawn route. The old `unsnappedRangesM` bookkeeping and
+its gem-placement guard are gone — the invariant moved upstream. Each
+verified segment also carries MKDirections' alternate walking routes, and
+the draw step's "Another path" button cycles the latest segment through
+them with the numbered dots held fixed.
 
 A future alternative provider is the Apple Maps Server API
 (`transportType=Walking`, 25k free calls/day): validate a point by routing

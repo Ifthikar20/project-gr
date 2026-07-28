@@ -817,4 +817,34 @@ public enum PathSnapper {
     public static func snap(from a: Coordinate, to b: Coordinate) async -> [Coordinate] {
         await snapVerified(from: a, to: b).path
     }
+
+    /// Every alternate walking path MKDirections offers between two points,
+    /// best-first, deduplicated. Empty = NO confirmed walking route (or the
+    /// request failed) — this API deliberately has no straight-line
+    /// fallback, so callers can refuse unwalkable segments outright.
+    /// Alternates arrive in the same single request: no extra quota.
+    public static func snapAlternates(from a: Coordinate,
+                                      to b: Coordinate) async -> [[Coordinate]] {
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: a.cl))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: b.cl))
+        request.transportType = .walking
+        request.requestsAlternateRoutes = true
+        guard let response = try? await MKDirections(request: request).calculate() else {
+            return []
+        }
+        var options: [[Coordinate]] = []
+        for route in response.routes {
+            let poly = route.polyline
+            var coords = [CLLocationCoordinate2D](repeating: .init(),
+                                                  count: poly.pointCount)
+            poly.getCoordinates(&coords, range: NSRange(location: 0,
+                                                        length: poly.pointCount))
+            let path = coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }
+            if path.count >= 2, !options.contains(path) {
+                options.append(path)
+            }
+        }
+        return options
+    }
 }
