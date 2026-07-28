@@ -69,6 +69,10 @@ public final class SessionStore {
     /// The planned walking line for free runs started from a recommended
     /// route (client-side, not stored on the backend) — drawn on the run map.
     public var freeRunPlannedPath: [Coordinate] = []
+    /// What this free run is called on the summary card, share card, and
+    /// stash rows — a recommended route's fun name ("Sidewalk Safari"),
+    /// "Run to Amber" from a gem tap, or the plain default.
+    public var freeRunName = "Free run"
 
     /// Reads lifetime run km from Health and mints via the API.
     public func refreshWallet() async {
@@ -85,9 +89,11 @@ public final class SessionStore {
         }
     }
 
-    public func startFreeRun(drops: [GemDrop], plannedPath: [Coordinate] = []) {
+    public func startFreeRun(drops: [GemDrop], plannedPath: [Coordinate] = [],
+                             runName: String = "Free run") {
         freeRunDrops = drops
         freeRunPlannedPath = plannedPath
+        freeRunName = runName
         isFreeRunning = true
     }
 
@@ -98,6 +104,10 @@ public final class SessionStore {
                                                         track: track)
         let awarded = result?.awardedDrops ?? []
         let xp = result?.xpEarned ?? 0
+        // Named runs (recommended routes, "Run to <gem>") keep their name in
+        // the stash; anonymous free runs keep the old phrasing.
+        let stashRouteName = freeRunName == "Free run"
+            ? "Found on a free run" : freeRunName
         if let context {
             for drop in awarded {
                 let entry = GemCatalog.entry(forGemID: drop.gemID)
@@ -106,7 +116,7 @@ public final class SessionStore {
                     gemName: entry?.gem.name ?? "Gem",
                     rarityRaw: drop.rarity.rawValue,
                     setName: entry?.setName ?? "Wanderer",
-                    routeID: drop.id, routeName: "Found on a free run",
+                    routeID: drop.id, routeName: stashRouteName,
                     collectedAt: Date(), isFirstFind: true))
             }
             profile?.xp += xp
@@ -129,7 +139,7 @@ public final class SessionStore {
             multiplier: 1.0, isWalk: false, status: .valid,
             startedAt: Date().addingTimeInterval(-TimeInterval(durationS)),
             durationS: durationS, distanceM: distanceM, paceSPerKm: pace,
-            splitsS: [], leaderboardRank: nil, routeName: "Free run",
+            splitsS: [], leaderboardRank: nil, routeName: freeRunName,
             pathPolyline: track.count > 1
                 ? PolylineCodec.encode(track.map(\.coordinate)) : nil)
     }

@@ -578,7 +578,9 @@ public struct ExploreRootView: View {
             path = [here, drop.coordinate]
         }
         infoDrop = nil
-        session.startFreeRun(drops: nearbyDrops, plannedPath: path)
+        let gemName = GemCatalog.entry(forGemID: drop.gemID)?.gem.name ?? "a Gem"
+        session.startFreeRun(drops: nearbyDrops, plannedPath: path,
+                             runName: "Run to \(gemName)")
     }
 
     /// Assemble an in-memory Route from the snapped path and hand it to the

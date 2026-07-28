@@ -192,7 +192,8 @@ struct RouteDetailView: View {
                 // through the standalone-drops endpoint.
                 if route.creatorHandle == "GemRun/auto" {
                     session.startFreeRun(drops: route.gemDrops,
-                                         plannedPath: PolylineCodec.decode(route.polyline))
+                                         plannedPath: PolylineCodec.decode(route.polyline),
+                                         runName: route.name)
                 } else {
                     session.activeRoute = route
                 }

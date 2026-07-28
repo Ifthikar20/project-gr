@@ -14,43 +14,78 @@ import GameKitCore
 /// never persisted server-side.
 @MainActor
 public enum RouteRecommender {
-    /// Up to four suggestions per user location:
-    ///   • Quick pick   — one nearest gem
-    ///   • Two-gem run  — two nearest, nearest first
-    ///   • Triple threat — three nearest, nearest first
-    ///   • Reverse triple — same three, farthest first (tougher opener)
+    /// Playful route names, drawn without replacement per batch so the four
+    /// cards never share a name. Kept ≤ ~24 chars — RouteCard titles are
+    /// lineLimit(1). The draw is seeded by (day, ~500 m cell): names hold
+    /// steady while you stand in one area today, and roll over with the
+    /// daily gem rotation — a new world gets new names.
+    static let namePool = [
+        "Sidewalk Safari", "Sunrise Scramble", "Gem Gallop", "Treasure Trot",
+        "Pocket Expedition", "Loot Before Lunch", "The Long Way Home",
+        "Curb Appeal", "Shiny Object Detour", "Block Party", "Corner Cutter",
+        "Glitter Mile", "Sparkle Sprint", "Neighborhood Heist", "Lucky Lap",
+        "Pebble Patrol", "Crosswalk Quest", "Fresh Air Fortune", "Gem Jog",
+        "Morning Miner", "Pavement Prowl", "Second Wind", "Street Sweep",
+        "Hidden Carats", "Rock Hound Run", "Five-Star Stroll", "Easy Money",
+        "Backyard Bounty", "Dazzle Dash", "Errand With Benefits", "Gold Hour",
+        "Jewel Hunt Jr.", "Lamppost Loop", "Magpie Mission", "Out & About",
+        "Prize Fighter", "Quick Karat", "Shortcut Scandal", "Small Fortune",
+        "Snack-Sized Quest", "Sparkle Circuit", "Stone's Throw", "Sunset Run",
+        "The Scenic Bit", "Twinkle Trail", "Urban Prospector", "Walkabout",
+        "Window Shopper",
+    ]
+
+    /// Up to four suggestions per user location — one nearest gem, two
+    /// nearest, three nearest, and the same three farthest-first — each
+    /// wearing a distinct name from the seeded pool draw.
     public static func recommend(from origin: Coordinate,
                                  drops: [GemDrop]) async -> [Route] {
         let ranked = drops.sorted {
             planarDistance(origin, $0.coordinate) < planarDistance(origin, $1.coordinate)
         }
         guard !ranked.isEmpty else { return [] }
+        let names = pickNames(count: 4, near: origin)
 
         var routes: [Route] = []
-        if let one = await buildRoute(named: "Quick pick",
+        if let one = await buildRoute(named: names[0],
                                       from: origin,
                                       through: Array(ranked.prefix(1))) {
             routes.append(one)
         }
         if ranked.count >= 2,
-           let two = await buildRoute(named: "Two-gem run",
+           let two = await buildRoute(named: names[1],
                                       from: origin,
                                       through: Array(ranked.prefix(2))) {
             routes.append(two)
         }
         if ranked.count >= 3 {
             let three = Array(ranked.prefix(3))
-            if let triple = await buildRoute(named: "Triple threat",
+            if let triple = await buildRoute(named: names[2],
                                              from: origin, through: three) {
                 routes.append(triple)
             }
-            if let reverse = await buildRoute(named: "Reverse triple",
+            if let reverse = await buildRoute(named: names[3],
                                               from: origin,
                                               through: Array(three.reversed())) {
                 routes.append(reverse)
             }
         }
         return routes
+    }
+
+    /// A deterministic, distinct pick of `count` names for this (day, area).
+    /// Swift's `hashValue` is salted per launch and the system RNG can't be
+    /// seeded, so the shuffle runs on a tiny SplitMix64 seeded from stable
+    /// inputs — same names all day in one place, fresh tomorrow.
+    static func pickNames(count: Int, near origin: Coordinate) -> [String] {
+        let day = Int(Date().timeIntervalSince1970 / 86_400)
+        let cellLat = Int((origin.lat / 0.005).rounded())
+        let cellLng = Int((origin.lng / 0.005).rounded())
+        var rng = SplitMix64(seed: UInt64(bitPattern:
+            Int64(day) &* 1_000_003 &+ Int64(cellLat) &* 8_191 &+ Int64(cellLng)))
+        var pool = namePool
+        pool.shuffle(using: &rng)
+        return Array(pool.prefix(count))
     }
 
     private static func buildRoute(named name: String,
@@ -99,5 +134,21 @@ public enum RouteRecommender {
         let dy = (b.lat - a.lat) * mPerDegLat
         let dx = (b.lng - a.lng) * mPerDegLat * cos(a.lat * .pi / 180)
         return (dx * dx + dy * dy).squareRoot()
+    }
+}
+
+/// Minimal seedable RNG (SplitMix64) — deterministic across launches, which
+/// `SystemRandomNumberGenerator` and `hashValue` are not.
+struct SplitMix64: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) { state = seed }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
     }
 }
