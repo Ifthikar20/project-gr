@@ -26,15 +26,31 @@ single vertical slice, current as of 2026-07-27.
 There is **no cron, no scheduled spawner**. The map query *is* the trigger.
 
 `GET /v1/drops?lat&lng&radius_m` (`backend/api/views.py → drops()`) calls
-`system_drops.top_up_area(lat, lng, radius)` **synchronously, before
-answering**, wrapped in a bare `try/except` so a top-up failure can never
-break the map read. Consequences:
+`system_drops.presence_trigger(lat, lng, radius)`, wrapped in a bare
+`try/except` so a trigger failure can never break the map read. The
+trigger picks one of two paths:
+
+- **Warm area** (already holds active system gems): rotation + top-up are
+  handed to a small background executor (2 workers, per-cell in-flight
+  dedupe on a ~550 m grid) and the request **answers immediately** — that
+  one response may show yesterday's layout a final time; the next refresh
+  shows the rotated world.
+- **Cold area** (nothing here at all): bootstrap runs **inline**, so the
+  first-ever answer for a new area arrives already stocked — the iOS
+  first-load cover exists for exactly this wait.
+
+`PRESENCE_ASYNC=False` forces inline everywhere (tests need it — their
+in-memory SQLite is per-thread). Consequences:
 
 - Gems exist only where someone has actually opened the map. A region with
   zero app usage has zero gems, forever, by design.
-- The *first* map open in a new area stocks it (bootstrap); a map open
-  after a gem is collected restocks the freed slot.
-- The user's own request pays the placement latency (see §9).
+- The *first* map open in a new area stocks it (bootstrap); later opens
+  restock freed slots in the background at zero request cost.
+- **Daily rotation** (`expire_stale`): uncollected *system* gems spawned
+  before today free their slots on the next map open, and the top-up that
+  follows restocks the area at fresh positions — the world never repeats
+  yesterday's layout. Player-placed drops are exempt: a runner chose
+  those spots. `GemDrop.created_at` (migration 0004) is the input.
 
 ## 2. Placement algorithm (`backend/api/system_drops.py → top_up_area`)
 
@@ -226,6 +242,7 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 |---|---|
 | Overpass mirror down | next mirror; all down → 120 s circuit breaker |
 | No walkable ways answer | Tier 2 spawns **nothing** (fail closed) |
+| Background top-up job raises | logged; slot for that cell frees; next map open retries |
 | Walkability check `None` on a route point | accepted (polyline is trusted) |
 | top_up_area raises | swallowed; map read still answers |
 | Unknown gem_id on client | "Mystery Gem" fallback in sheet & pin |
@@ -249,12 +266,11 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 
 ## 9. Known limitations (why this isn't the final design)
 
-1. **The user pays for placement.** The top-up runs inside the map request;
-   a cold area costs one Overpass round-trip (seconds when mirrors are
-   slow) before the map answers. The client's first-load cover makes that
-   wait an explicit "Stocking gems near you…" instead of a bare map, but
-   the latency itself remains. Better: answer immediately and top up in a
-   background task / queue keyed by an area cell.
+1. **Only first contact pays for placement.** Warm areas answer instantly
+   (background top-up); a genuinely cold area still pays one inline
+   Overpass round-trip, made explicit by the client's "Stocking gems near
+   you…" cover. Remaining better: pre-warm cells server-side (the
+   walkable-way cache of §9.2) so even first contact is a local read.
 2. **Overpass is a hard dependency for Tier 2.** Keyless, aggressively
    rate-limited, and its data quality *is* our placement quality — suburbs
    with unmapped sidewalks get few or no gems. Better: pre-download way
@@ -267,11 +283,11 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 4. **Spacing check is O(drops) per candidate** with a bbox prefilter — fine
    at 40, wrong at scale. Better: PostGIS + spatial index, or the cell
    cache above.
-5. **No respawn cadence.** Collected slots refill only on the *next* map
-   open, so a lone player in an area sees restocks exactly when they look —
-   which reads as "gems appear when I open the app" rather than a living
-   world. Better: cell-level respawn windows (e.g. refill at most N per
-   hour).
+5. **Respawn cadence is daily-or-on-look.** Daily rotation now guarantees
+   the world changes across days, and background restocks decouple the
+   refill from the answering request — but within a day, a lone player
+   still sees restocks land right after they look. Better: cell-level
+   respawn windows (e.g. refill at most N per hour, jittered).
 6. **`random.Random()` is unseeded per request** — placements are not
    reproducible for debugging. Passing a seed derived from (cell, day)
    would make spawn layouts deterministic and testable in the field.
