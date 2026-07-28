@@ -10,8 +10,12 @@ ever spawn there.
 import logging
 import math
 import random
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 
 from django.conf import settings
+from django.db import close_old_connections
+from django.utils import timezone
 
 log = logging.getLogger("api.system_drops")
 
@@ -184,3 +188,82 @@ def top_up_area(lat, lng, radius_m, rng=None):
         log.info("presence trigger: %d gem(s) spawned for map open at (%.4f, %.4f)",
                  created, lat, lng)
     return created
+
+
+# ── Presence-trigger dispatch: no lag, daily rotation ─────────────────────
+#
+# The map read must never wait on placement work it doesn't strictly need.
+# A WARM area (it already holds active system gems) answers instantly and
+# rotates/tops up in a background worker — that one response may show
+# yesterday's layout a final time, replaced on the next refresh. Only
+# first-contact bootstrap (nothing here at all) runs inline, so the very
+# first answer for a new area is already stocked — the app's loading cover
+# exists for exactly that wait.
+
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="gem-topup")
+_inflight = set()
+_inflight_lock = Lock()
+
+
+def _cell_key(lat, lng):
+    # ~550 m grid: dedupes concurrent background jobs per neighborhood.
+    return (round(lat / 0.005), round(lng / 0.005))
+
+
+def expire_stale(lat, lng, radius_m):
+    """Daily rotation: uncollected SYSTEM gems never squat the same spot
+    two days running — anything spawned before today frees its slot, and
+    the top-up that follows restocks the area at fresh positions.
+    Player-placed drops are exempt: a runner chose those spots."""
+    dlat, dlng = bbox_deltas(lat, radius_m)
+    today_start = timezone.now().replace(hour=0, minute=0,
+                                         second=0, microsecond=0)
+    expired = GemDrop.objects.filter(
+        route__isnull=True, active=True, placed_by="system",
+        created_at__lt=today_start,
+        lat__gte=lat - dlat, lat__lte=lat + dlat,
+        lng__gte=lng - dlng, lng__lte=lng + dlng).update(active=False)
+    if expired:
+        log.info("daily rotation: expired %d system gem(s) near (%.4f, %.4f)",
+                 expired, lat, lng)
+    return expired
+
+
+def rotate_and_top_up(lat, lng, radius_m):
+    expire_stale(lat, lng, radius_m)
+    return top_up_area(lat, lng, radius_m)
+
+
+def _background_job(key, lat, lng, radius_m):
+    try:
+        close_old_connections()
+        rotate_and_top_up(lat, lng, radius_m)
+    except Exception:
+        log.exception("background top-up failed for cell %s", (key,))
+    finally:
+        close_old_connections()
+        with _inflight_lock:
+            _inflight.discard(key)
+
+
+def presence_trigger(lat, lng, radius_m):
+    """Entry point for GET /v1/drops. Warm → background job (instant
+    answer); cold → inline bootstrap (first answer arrives stocked).
+    settings.PRESENCE_ASYNC=False forces inline everywhere — tests need
+    it because their in-memory SQLite can't be shared across threads."""
+    if not settings.PRESENCE_DROPS:
+        return
+    dlat, dlng = bbox_deltas(lat, radius_m)
+    warm = GemDrop.objects.filter(
+        route__isnull=True, active=True, placed_by="system",
+        lat__gte=lat - dlat, lat__lte=lat + dlat,
+        lng__gte=lng - dlng, lng__lte=lng + dlng).exists()
+    if not warm or not settings.PRESENCE_ASYNC:
+        rotate_and_top_up(lat, lng, radius_m)
+        return
+    key = _cell_key(lat, lng)
+    with _inflight_lock:
+        if key in _inflight:
+            return                       # this cell is already being stocked
+        _inflight.add(key)
+    _executor.submit(_background_job, key, lat, lng, radius_m)

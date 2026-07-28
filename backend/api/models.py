@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.utils import timezone
 
 
 class Profile(models.Model):
@@ -62,6 +63,9 @@ class GemDrop(models.Model):
     respawn_rule = models.CharField(max_length=16)
     placed_by = models.CharField(max_length=12, default="creator")
     active = models.BooleanField(default=True)
+    # Daily rotation input: system gems spawned before today expire on the
+    # next map open, so the world never repeats yesterday's layout.
+    created_at = models.DateTimeField(default=timezone.now)
 
 
 class Run(models.Model):

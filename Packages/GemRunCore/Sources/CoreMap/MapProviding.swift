@@ -1,6 +1,7 @@
 import CoreModels
 import MapKit
 import SwiftUI
+import UIKit
 
 // The map seam (docs/07): nothing outside CoreMap imports a map SDK.
 // Current provider is MapKit (free, native, zero-config — app renders dark
@@ -87,33 +88,72 @@ public enum MapPalette {
     }
 }
 
-/// A gem pin that falls onto the map with a spring (the pin-drop animation).
-/// Renders the specific gem type's emoji when given a gemID; otherwise falls
-/// back to a rarity-tier emoji.
-public struct DropPin: View {
-    let emoji: String
-    @State private var dropped = false
+/// THE gem artwork resolver, used by every surface that draws a gem (map
+/// pins, info sheet, run card, share card, stash flight). Prefers a custom
+/// PNG from the asset catalog — asset name = the catalog `iconRef`, e.g.
+/// "gem.amber" — and falls back to the emoji until one exists. Dropping
+/// the PNG collection into Assets.xcassets under those names upgrades the
+/// whole app at once, no code changes. UIImage(named:) is cached by the
+/// system, so the existence probe costs nothing per frame.
+public struct GemIcon: View {
+    let gemID: UUID
+    let size: CGFloat
 
-    public init(gemID: UUID) {
-        self.emoji = MapPalette.emoji(forGemID: gemID)
-    }
-
-    public init(rarity: Rarity) {
-        self.emoji = MapPalette.emoji(rarity)
+    public init(gemID: UUID, size: CGFloat) {
+        self.gemID = gemID
+        self.size = size
     }
 
     public var body: some View {
-        Text(emoji)
-            .font(.title2)
-            .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
-            .offset(y: dropped ? 0 : -30)
-            .scaleEffect(dropped ? 1 : 1.3, anchor: .bottom)
-            .opacity(dropped ? 1 : 0)
-            .onAppear {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
-                    dropped = true
-                }
+        if let ref = GemCatalog.entry(forGemID: gemID)?.gem.iconRef,
+           UIImage(named: ref) != nil {
+            Image(ref)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+        } else {
+            Text(MapPalette.emoji(forGemID: gemID))
+                .font(.system(size: size * 0.82))
+        }
+    }
+}
+
+/// A gem pin that falls onto the map with a spring (the pin-drop animation).
+/// Renders the gem's artwork (GemIcon) when given a gemID; otherwise falls
+/// back to a rarity-tier emoji.
+public struct DropPin: View {
+    let gemID: UUID?
+    let fallbackEmoji: String
+    @State private var dropped = false
+
+    public init(gemID: UUID) {
+        self.gemID = gemID
+        self.fallbackEmoji = MapPalette.emoji(forGemID: gemID)
+    }
+
+    public init(rarity: Rarity) {
+        self.gemID = nil
+        self.fallbackEmoji = MapPalette.emoji(rarity)
+    }
+
+    public var body: some View {
+        Group {
+            if let gemID {
+                GemIcon(gemID: gemID, size: 26)
+            } else {
+                Text(fallbackEmoji)
+                    .font(.title2)
             }
+        }
+        .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
+        .offset(y: dropped ? 0 : -30)
+        .scaleEffect(dropped ? 1 : 1.3, anchor: .bottom)
+        .opacity(dropped ? 1 : 0)
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
+                dropped = true
+            }
+        }
     }
 }
 
@@ -279,8 +319,7 @@ public struct RoutePreviewMap: View {
                             .font(.footnote)
                             .foregroundStyle(MapPalette.ink.opacity(0.35))
                     } else {
-                        Text(MapPalette.emoji(forGemID: drop.gemID))
-                            .font(.callout)
+                        GemIcon(gemID: drop.gemID, size: 22)
                             .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                     }
                 }
@@ -516,8 +555,7 @@ public struct ActiveRunMapView: View {
                                 .font(.footnote)
                                 .foregroundStyle(MapPalette.ink.opacity(0.35))
                         } else {
-                            Text(MapPalette.emoji(forGemID: drop.gemID))
-                                .font(.callout)
+                            GemIcon(gemID: drop.gemID, size: 22)
                                 .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                         }
                     }

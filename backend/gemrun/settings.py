@@ -57,6 +57,9 @@ WALKABILITY_TIMEOUT_S = 5
 # activity is the capture point, so regions nobody uses never get gems.
 PRESENCE_DROPS = True
 PRESENCE_DROP_MAX_PER_AREA = 40  # active system drops per queried area, capped
+# Warm areas run rotation/top-up in a background thread so the map read
+# answers instantly. False = inline (tests: in-memory SQLite is per-thread).
+PRESENCE_ASYNC = True
 # Empty-area bootstrap: when a map opens somewhere with zero system gems and
 # no qualifying routes, the system still stocks the area — gems sampled on
 # nearby OSM walkable ways only. No scatter fallback: with no trusted

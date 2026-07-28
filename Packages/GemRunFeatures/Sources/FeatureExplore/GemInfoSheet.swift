@@ -18,8 +18,7 @@ struct GemInfoSheet: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Text(MapPalette.emoji(forGemID: drop.gemID))
-                .font(.system(size: 64))
+            GemIcon(gemID: drop.gemID, size: 72)
                 .padding(.top, 28)
 
             Text(entry?.gem.name ?? "Mystery Gem")

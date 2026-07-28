@@ -197,8 +197,7 @@ struct RunCardView: View {
                     HStack(spacing: 10) {
                         ForEach(Array(orderedGems.prefix(8).enumerated()),
                                 id: \.element.id) { i, gem in
-                            Text(MapPalette.emoji(forGemID: gem.gemID))
-                                .font(.system(size: 26))
+                            GemIcon(gemID: gem.gemID, size: 28)
                                 .scaleEffect(i < revealed ? 1 : 0.3)
                                 .opacity(i < revealed ? 1 : 0)
                                 .animation(.spring(duration: 0.45), value: revealed)
@@ -317,8 +316,7 @@ struct RunCardView: View {
                          count: Int) -> some View {
         let entry = GemCatalog.entry(forGemID: gem.gemID)
         return HStack(alignment: .top, spacing: 12) {
-            Text(MapPalette.emoji(forGemID: gem.gemID))
-                .font(.system(size: 30))
+            GemIcon(gemID: gem.gemID, size: 32)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(gem.name)

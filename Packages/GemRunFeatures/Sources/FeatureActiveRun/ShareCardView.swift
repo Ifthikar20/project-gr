@@ -47,8 +47,7 @@ struct ShareCardView: View {
                     if !summary.gems.isEmpty {
                         HStack(spacing: 6) {
                             ForEach(summary.gems.prefix(6)) { gem in
-                                Text(MapPalette.emoji(forGemID: gem.gemID))
-                                    .font(.system(size: 24))
+                                GemIcon(gemID: gem.gemID, size: 26)
                             }
                             if summary.gems.count > 6 {
                                 Text("+\(summary.gems.count - 6)")

@@ -5,10 +5,12 @@ import io
 import json
 import random
 import uuid
+from datetime import timedelta
 from unittest import mock
 
 from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
+from django.utils import timezone
 
 from . import catalog, system_drops, walkability
 from .geometry import RouteGeometry, polyline_decode, polyline_encode
@@ -33,8 +35,11 @@ def track(speed, length_m=1000):
 
 
 # Hermetic: no real Overpass calls from tests; the walkability/bootstrap
-# tests below opt back in with mocked transports.
-@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False)
+# tests below opt back in with mocked transports. PRESENCE_ASYNC off: the
+# background worker's own DB connection can't see the per-thread in-memory
+# test database, so the trigger must run inline here.
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
+                   PRESENCE_ASYNC=False)
 class ApiTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -458,6 +463,32 @@ class ApiTests(TestCase):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
         self.assertEqual(drops, [])
+
+    def test_daily_rotation_respawns_system_gems_elsewhere(self):
+        """Uncollected system gems expire after their spawn day: the next
+        map open frees their slots and restocks fresh, so the world never
+        repeats yesterday's layout. Player-placed drops are exempt."""
+        self.seed_popular_route(run_count=5)
+        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+            first = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                  "radius_m": 5000}).json()["drops"]
+            self.assertEqual(len(first), 1)
+            yesterday = timezone.now() - timedelta(days=1)
+            GemDrop.objects.update(created_at=yesterday)
+            player = GemDrop.objects.create(
+                route=None, dropped_by=None,
+                gem_id=catalog.gem_of("common")["id"], rarity="common",
+                lat=37.004, lng=-122.0, position_along_route_m=0,
+                respawn_rule="one_time", placed_by="creator",
+                created_at=yesterday)
+            refreshed = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                      "radius_m": 5000}).json()["drops"]
+        ids = {d["id"] for d in refreshed}
+        self.assertNotIn(first[0]["id"], ids)          # yesterday's spot freed
+        self.assertIn(str(player.id), ids)             # player drop survives
+        self.assertEqual(
+            sum(1 for d in refreshed if d["placed_by"] == "system"), 1,
+            "rotation should restock the freed slot with a fresh gem")
 
     def test_rarity_bonus_follows_route_traffic_not_way_class(self):
         """Rarer loot tracks proven foot traffic, not scenery: gems on

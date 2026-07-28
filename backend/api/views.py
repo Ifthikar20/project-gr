@@ -576,11 +576,12 @@ def drops(request):
         except (KeyError, ValueError):
             return problem(400, "lat, lng and radius_m are required")
         # Presence trigger (docs/13): this map query's coordinates ARE the
-        # capture point — top up system gems here before answering, so gems
-        # only ever spawn where people actually use the app. Best-effort:
-        # a top-up failure must never break the map read.
+        # capture point. Warm areas hand rotation + top-up to a background
+        # worker and answer instantly; only first-contact bootstrap runs
+        # inline so the first-ever answer is already stocked. Best-effort:
+        # a trigger failure must never break the map read.
         try:
-            system_drops.top_up_area(lat, lng, radius)
+            system_drops.presence_trigger(lat, lng, radius)
         except Exception:
             pass
         dlat = radius / 111_320

@@ -120,8 +120,7 @@ public struct ActiveRunView: View {
                 // The gem in flight: map center → stash chip.
                 GeometryReader { geo in
                     if let flight {
-                        Text(MapPalette.emoji(forGemID: flight.drop.gemID))
-                            .font(.system(size: 44))
+                        GemIcon(gemID: flight.drop.gemID, size: 46)
                             .position(flightLanded
                                 ? CGPoint(x: 52, y: 30)
                                 : CGPoint(x: geo.size.width / 2,
