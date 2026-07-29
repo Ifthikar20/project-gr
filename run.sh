@@ -207,12 +207,42 @@ EOF
 
     # devicectl uses a CoreDevice UUID (36 chars); xcodebuild wants the
     # hardware ECID (e.g. 00008120-000639261EF8201E) — they aren't the same.
-    DEVCTL_UDID=$(xcrun devicectl list devices 2>/dev/null \
-        | awk '/available \(paired\)/{for(i=1;i<=NF;i++)if($i~/^[0-9A-F-]{36}$/){print $i;exit}}')
+    find_device() {
+        xcrun devicectl list devices 2>/dev/null \
+            | awk '$0 ~ /available/ && $0 !~ /unavailable/ \
+                   {for(i=1;i<=NF;i++)if($i~/^[0-9A-F-]{36}$/){print $i;exit}}'
+    }
+    DEVCTL_UDID=$(find_device)
+    if [ -z "$DEVCTL_UDID" ]; then
+        KNOWN=$(xcrun devicectl list devices 2>/dev/null | awk '/unavailable/{print $1; exit}')
+        echo
+        if [ -n "$KNOWN" ]; then
+            echo "iPhone \"$KNOWN\" is paired but UNREACHABLE right now. To fix:"
+        else
+            echo "No iPhone is visible to this Mac yet. To fix:"
+        fi
+        echo "  1. Plug the iPhone in with a cable and UNLOCK it (most reliable), or"
+        echo "  2. for wireless: wake + unlock it on the SAME Wi-Fi as this Mac,"
+        echo "     with 'Connect via network' checked in Xcode > Window > Devices."
+        echo "  (First time on a phone: accept 'Trust This Computer' and enable"
+        echo "   Settings > Privacy & Security > Developer Mode.)"
+        echo
+        echo "Waiting up to 3 minutes for the phone to come online (Ctrl-C to stop)..."
+        for _ in $(seq 1 36); do
+            sleep 5
+            DEVCTL_UDID=$(find_device)
+            if [ -n "$DEVCTL_UDID" ]; then
+                echo "Phone is online."
+                break
+            fi
+            printf '.'
+        done
+        echo
+    fi
+    [ -n "$DEVCTL_UDID" ] || { echo "Still no reachable iPhone (xcrun devicectl list devices)."; exit 1; }
     # Match the iOS ECID pattern (8 hex, dash, 16 hex) — unique to iPhone/iPad.
     XCODE_UDID=$(xcrun xctrace list devices 2>&1 \
         | grep -Eo '[0-9A-F]{8}-[0-9A-F]{16}' | head -1)
-    [ -n "$DEVCTL_UDID" ] || { echo "No paired iPhone found (xcrun devicectl list devices)."; exit 1; }
     [ -n "$XCODE_UDID" ] || { echo "Couldn't get hardware UDID from xctrace."; exit 1; }
     DEV_NAME=$(xcrun devicectl list devices 2>/dev/null | awk -v u="$DEVCTL_UDID" '$0 ~ u {print $1; exit}')
     echo "Device: ${DEV_NAME:-<unknown>}  (build id ${XCODE_UDID}, install id ${DEVCTL_UDID})"
