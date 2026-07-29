@@ -397,7 +397,8 @@ class ApiTests(TestCase):
 
     def test_stock_gems_spawns_at_startup_and_reports(self):
         self.seed_popular_route(run_count=5)
-        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=1):
             out = io.StringIO()
             call_command("stock_gems", lat=37.0, lng=-122.0, stdout=out)
             self.assertIn("Stocked 1 new system gem(s)", out.getvalue())
@@ -411,9 +412,10 @@ class ApiTests(TestCase):
 
     def test_presence_trigger_spawns_and_replenishes_gems(self):
         self.seed_popular_route(run_count=5)
-        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=1):
             # Opening the map IS the trigger: the query's own coordinates get
-            # topped up (1 popular route → target 1 system drop).
+            # topped up (mile below floor → fill to target).
             nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
                                                    "radius_m": 5000}).json()
             self.assertEqual(len(nearby["drops"]), 1)
@@ -445,7 +447,8 @@ class ApiTests(TestCase):
         step = 500 * DEG_PER_M_LAT
         ways = [[(64.2 + i * step, -149.4937), (64.2 + (i + 1) * step, -149.4937)]
                 for i in range(8)]
-        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=3,
+                           PRESENCE_FILL_TARGET=3, PRESENCE_HARD_MAX=5), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
@@ -454,11 +457,13 @@ class ApiTests(TestCase):
             self.assertAlmostEqual(d["lng"], -149.4937, places=5)
 
     def test_bootstrap_never_places_beyond_near_limit(self):
-        """Gems are a walk, not a drive: ways farther than NEAR_LIMIT_M from
-        the map-open point never receive gems, whatever the query radius."""
+        """Gems are a walk, not a drive: ways farther than the mile
+        (PRESENCE_RADIUS_M) from the map-open point never receive gems,
+        whatever the client's read radius."""
         far = 2_000 * DEG_PER_M_LAT
         ways = [[(64.2008 + far, -149.4937), (64.2008 + far * 2, -149.4937)]]
-        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=3,
+                           PRESENCE_FILL_TARGET=3, PRESENCE_HARD_MAX=5), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
@@ -469,7 +474,8 @@ class ApiTests(TestCase):
         map open frees their slots and restocks fresh, so the world never
         repeats yesterday's layout. Player-placed drops are exempt."""
         self.seed_popular_route(run_count=5)
-        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=1):
             first = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
                                                   "radius_m": 5000}).json()["drops"]
             self.assertEqual(len(first), 1)
@@ -489,6 +495,142 @@ class ApiTests(TestCase):
         self.assertEqual(
             sum(1 for d in refreshed if d["placed_by"] == "system"), 1,
             "rotation should restock the freed slot with a fresh gem")
+
+    # ── Per-mile contract (docs/14 §2.1) ─────────────────────────────────
+
+    @staticmethod
+    def grid_ways(lat, lng, lines=3):
+        """A synthetic sidewalk grid: `lines` parallel 3 km vertical ways
+        centered on the open point — ample capacity for fill tests."""
+        step = 500 * DEG_PER_M_LAT
+        spacing_lng = 300 / (111_320 * 0.55)     # ~300 m apart at lat 64
+        ways = []
+        for j in range(lines):
+            offset = (j - lines // 2) * spacing_lng
+            ways.append([(lat - 3 * step + i * step, lng + offset)
+                         for i in range(7)])
+        return ways
+
+    @staticmethod
+    def prefill_system(lat, lng, count, spacing_m=150):
+        """Spaced active system gems marching north from the open point."""
+        made = []
+        for i in range(count):
+            made.append(GemDrop.objects.create(
+                route=None, dropped_by=None,
+                gem_id=catalog.gem_of("common")["id"], rarity="common",
+                lat=lat + i * spacing_m * DEG_PER_M_LAT, lng=lng,
+                position_along_route_m=0, respawn_rule="one_time",
+                placed_by="system"))
+        return made
+
+    def test_floor_triggers_restock_and_band_does_not(self):
+        """Below PRESENCE_FLOOR a map open restocks to FILL_TARGET; at or
+        above the floor the mile is left alone (someone else's gems count
+        as stock — the shared-world band)."""
+        lat, lng = 64.2008, -149.4937
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=3,
+                           PRESENCE_FILL_TARGET=5, PRESENCE_HARD_MAX=8), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=self.grid_ways(lat, lng)):
+            self.prefill_system(lat, lng, 2)
+            made = system_drops.top_up_area(lat, lng, rng=random.Random(7))
+            self.assertEqual(made, 3)                    # 2 → fill to 5
+            self.assertEqual(system_drops.mile_count(lat, lng), 5)
+            # At the floor (and anywhere in the band): no action.
+            self.assertEqual(
+                system_drops.top_up_area(lat, lng, rng=random.Random(8)), 0)
+            self.assertEqual(system_drops.mile_count(lat, lng), 5)
+
+    def test_hard_cap_holds_when_neighbors_already_stocked(self):
+        """The cap is re-checked inside every guarded insert: a fill pass
+        that starts legitimately still stops the moment the mile reaches
+        PRESENCE_HARD_MAX."""
+        lat, lng = 64.2008, -149.4937
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=6,
+                           PRESENCE_FILL_TARGET=8, PRESENCE_HARD_MAX=6), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=self.grid_ways(lat, lng)):
+            self.prefill_system(lat, lng, 5)
+            made = system_drops.top_up_area(lat, lng, rng=random.Random(7))
+            self.assertLessEqual(made, 1)
+            self.assertLessEqual(system_drops.mile_count(lat, lng), 6)
+
+    def test_overlapping_top_ups_respect_every_mile(self):
+        """Two map opens ~800 m apart, both stocking: every mile — each
+        open point's and the midpoint's — stays at or under the hard max,
+        because each insert freshly counts both the requester's and the
+        candidate's mile."""
+        lat, lng = 64.2008, -149.4937
+        lat2 = lat + 800 * DEG_PER_M_LAT
+        mid = (lat + lat2) / 2
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=5,
+                           PRESENCE_FILL_TARGET=5, PRESENCE_HARD_MAX=5), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        side_effect=lambda la, ln, *a, **k:
+                        self.grid_ways(la, ln)):
+            system_drops.top_up_area(lat, lng, rng=random.Random(1))
+            system_drops.top_up_area(lat2, lng, rng=random.Random(2))
+        for point_lat in (lat, lat2, mid):
+            self.assertLessEqual(
+                system_drops.mile_count(point_lat, lng), 5,
+                f"mile at lat {point_lat} exceeded the hard max")
+
+    def test_observed_mile_is_trimmed_to_hard_max(self):
+        """Read-time enforcement: whatever concurrent neighbors spilled in
+        while nobody was looking, opening the map trims YOUR mile back to
+        the hard max before restock logic runs."""
+        lat, lng = 64.2008, -149.4937
+        with self.settings(PRESENCE_FLOOR=2, PRESENCE_FILL_TARGET=3,
+                           PRESENCE_HARD_MAX=6), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=[]):
+            self.prefill_system(lat, lng, 9)
+            self.assertEqual(system_drops.mile_count(lat, lng), 9)
+            system_drops.rotate_and_top_up(lat, lng)
+            self.assertEqual(system_drops.mile_count(lat, lng), 6)
+
+    def test_player_drops_do_not_count_toward_system_contract(self):
+        """Player wallet drops neither satisfy the floor nor consume the
+        system cap — littering can't suppress system stock."""
+        lat, lng = 64.2008, -149.4937
+        for i in range(3):                     # player drops 500 m east
+            GemDrop.objects.create(
+                route=None, dropped_by=None,
+                gem_id=catalog.gem_of("common")["id"], rarity="common",
+                lat=lat + i * 200 * DEG_PER_M_LAT,
+                lng=lng + 500 / (111_320 * 0.55),
+                position_along_route_m=0, respawn_rule="one_time",
+                placed_by="creator")
+        self.assertEqual(system_drops.mile_count(lat, lng), 0)
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=2,
+                           PRESENCE_FILL_TARGET=2, PRESENCE_HARD_MAX=4), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=self.grid_ways(lat, lng)):
+            made = system_drops.top_up_area(lat, lng, rng=random.Random(7))
+        self.assertEqual(made, 2)
+        self.assertEqual(system_drops.mile_count(lat, lng), 2)
+
+    def test_mile_count_is_radial_not_bbox(self):
+        """A gem in the bbox corner (~2.2 km away) is outside the mile; a
+        gem 1.6 km straight north is inside."""
+        lat, lng = 64.2008, -149.4937
+        dlat, dlng = system_drops.bbox_deltas(lat, 1609)
+        corner = GemDrop.objects.create(
+            route=None, dropped_by=None,
+            gem_id=catalog.gem_of("common")["id"], rarity="common",
+            lat=lat + dlat * 0.97, lng=lng + dlng * 0.97,
+            position_along_route_m=0, respawn_rule="one_time",
+            placed_by="system")
+        self.assertEqual(system_drops.mile_count(lat, lng), 0)
+        corner.delete()
+        GemDrop.objects.create(
+            route=None, dropped_by=None,
+            gem_id=catalog.gem_of("common")["id"], rarity="common",
+            lat=lat + 1_600 * DEG_PER_M_LAT, lng=lng,
+            position_along_route_m=0, respawn_rule="one_time",
+            placed_by="system")
+        self.assertEqual(system_drops.mile_count(lat, lng), 1)
 
     def test_rarity_bonus_follows_route_traffic_not_way_class(self):
         """Rarer loot tracks proven foot traffic, not scenery: gems on
@@ -510,7 +652,7 @@ class ApiTests(TestCase):
         with mock.patch("api.system_drops.create_system_drop") as spawn, \
              mock.patch("api.walkability.fetch_walkable_ways",
                         return_value=trail):
-            made = system_drops.drop_on_walkable_ways(37.0, -122.0, 5000, 1,
+            made = system_drops.drop_on_walkable_ways(37.0, -122.0, 1,
                                                       random.Random(1))
         self.assertEqual(made, 1)
         self.assertIsNone(spawn.call_args.kwargs.get("weights"))

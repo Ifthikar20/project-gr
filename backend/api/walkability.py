@@ -67,20 +67,29 @@ _down_until = 0.0
 CIRCUIT_COOLDOWN_S = 120
 
 
-def query_overpass(query, timeout):
+def query_overpass(query, timeout, deadline=None):
     """POST a query to the first Overpass mirror that answers. The main
     public instance rate-limits aggressively, so single-endpoint calls
-    failed often; None when every mirror fails."""
+    failed often; None when every mirror fails. `deadline` (monotonic) caps
+    the per-mirror timeout to the caller's remaining budget and skips
+    mirrors entirely when under ~1 s remains — inline bootstrap must never
+    outlive the map request it rides in."""
     global _down_until
     if time.monotonic() < _down_until:
         return None            # circuit open — recent total failure
     for url in settings.OVERPASS_URLS:
+        effective_timeout = timeout
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining < 1:
+                return None    # out of budget — behaves like unreachable
+            effective_timeout = min(timeout, remaining)
         request = urllib.request.Request(
             url, data=urllib.parse.urlencode({"data": query}).encode(),
             headers={"User-Agent": "GemRun/0.1 (walkability)"})
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(request, timeout=timeout,
+            with urllib.request.urlopen(request, timeout=effective_timeout,
                                         context=_SSL_CONTEXT) as response:
                 payload = json.load(response)
             log.info("overpass: %s answered in %.1fs (%d elements)",
@@ -98,18 +107,20 @@ def query_overpass(query, timeout):
     return None
 
 
-def fetch_walkable_ways(lat, lng, radius_m=2500, highways=WALKABLE_HIGHWAYS):
+def fetch_walkable_ways(lat, lng, radius_m=2500, highways=WALKABLE_HIGHWAYS,
+                        deadline=None):
     """Geometry of walkable ways around a point, as lists of (lat, lng) —
     the real 'walkable path list' used by the seed command to build
     street-following demo routes and by system_drops to place gems. An
     explicit data fetch, so it ignores WALKABILITY_MODE; returns [] when no
-    Overpass mirror is reachable.
+    Overpass mirror is reachable (or the caller's deadline is spent).
 
     Pass highways=PEDESTRIAN_HIGHWAYS to exclude roads/driveways/tracks."""
     query = WAYS_QUERY_TEMPLATE.format(
         timeout=int(settings.WALKABILITY_TIMEOUT_S) * 2, radius=int(radius_m),
         lat=lat, lng=lng, highways=highways)
-    payload = query_overpass(query, timeout=settings.WALKABILITY_TIMEOUT_S * 2)
+    payload = query_overpass(query, timeout=settings.WALKABILITY_TIMEOUT_S * 2,
+                             deadline=deadline)
     if payload is None:
         return []
     # Drop closed-ring ways (park loops, roundabouts) — they show as

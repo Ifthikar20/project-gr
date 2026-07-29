@@ -567,31 +567,37 @@ def wallet_sync(request):
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def drops(request):
-    profile = profile_from(request)
     if request.method == "GET":
+        # No profile lookup on the read path — the GET branch never uses
+        # it, and it used to cost a Token/Profile query per map open.
         try:
             lat = float(request.GET["lat"])
             lng = float(request.GET["lng"])
             radius = int(request.GET.get("radius_m", 5000))
         except (KeyError, ValueError):
             return problem(400, "lat, lng and radius_m are required")
-        # Presence trigger (docs/13): this map query's coordinates ARE the
-        # capture point. Warm areas hand rotation + top-up to a background
-        # worker and answer instantly; only first-contact bootstrap runs
-        # inline so the first-ever answer is already stocked. Best-effort:
-        # a trigger failure must never break the map read.
+        # Presence trigger (docs/13, docs/14 §2.1): this map query's
+        # coordinates ARE the capture point. Warm miles hand rotation +
+        # top-up to a background worker and answer instantly; only
+        # first-contact bootstrap runs inline (budget-bounded) so the
+        # first-ever answer is already stocked. Best-effort: a trigger
+        # failure must never break the map read. The client's radius_m is
+        # a READ radius only — the stocking budget is the per-mile
+        # contract, independent of how much map the client wants to see.
         try:
-            system_drops.presence_trigger(lat, lng, radius)
+            system_drops.presence_trigger(lat, lng)
         except Exception:
             pass
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
         qs = GemDrop.objects.filter(route__isnull=True, active=True,
                                     lat__gte=lat - dlat, lat__lte=lat + dlat,
-                                    lng__gte=lng - dlng, lng__lte=lng + dlng)
+                                    lng__gte=lng - dlng, lng__lte=lng + dlng
+                                    ).order_by("-created_at")[:200]
         return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs]})
 
     # POST — drop a wallet gem anywhere on the map.
+    profile = profile_from(request)
     if profile is None:
         return problem(401, "Sign in required")
     data = body_of(request) or {}

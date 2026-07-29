@@ -6,7 +6,7 @@ import Foundation
 /// MockGemRunAPI until then, against these exact shapes.
 public final class HTTPGemRunAPI: GemRunAPI {
     private let baseURL: URL
-    private let session = URLSession.shared
+    private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
     /// JWT from /v1/auth/apple; attach to every request. Keychain in Phase F polish.
@@ -14,6 +14,15 @@ public final class HTTPGemRunAPI: GemRunAPI {
 
     public init(baseURL: URL) {
         self.baseURL = baseURL
+        // Explicit timeouts instead of URLSession's 60 s default: the
+        // server bounds first-contact stocking (PRESENCE_INLINE_BUDGET_S)
+        // so an honest answer always arrives well inside 15 s — anything
+        // slower is a dead network, and the first-load cover's Retry
+        // screen is a better answer than a minute-long hang.
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        self.session = URLSession(configuration: config)
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase

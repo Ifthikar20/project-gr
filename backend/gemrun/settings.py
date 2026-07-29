@@ -30,6 +30,11 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        # BEGIN IMMEDIATE: transaction.atomic() takes SQLite's single write
+        # lock at block entry, so the gem-cap guard's COUNT→INSERT can never
+        # interleave with another writer (thread or process). 10 s busy
+        # timeout queues concurrent writers instead of erroring.
+        "OPTIONS": {"transaction_mode": "IMMEDIATE", "timeout": 10},
     }
 }
 
@@ -56,7 +61,20 @@ WALKABILITY_TIMEOUT_S = 5
 # GET /v1/drops map query tops up gems around ITS OWN coordinates — user
 # activity is the capture point, so regions nobody uses never get gems.
 PRESENCE_DROPS = True
-PRESENCE_DROP_MAX_PER_AREA = 40  # active system drops per queried area, capped
+# The per-mile contract (docs/14 §2.1): all counts are RADIAL within
+# PRESENCE_RADIUS_M of the map-open point. Below FLOOR → restock up to
+# FILL_TARGET; HARD_MAX is never exceeded counting everyone's system gems
+# (enforced per-insert inside a write-serialized transaction). The band
+# between FLOOR and HARD_MAX is shared-world tolerance: someone else's
+# gems count as stock, so overlapping users throttle each other.
+PRESENCE_RADIUS_M = 1609         # "my mile"
+PRESENCE_FLOOR = 20              # below this at map open → restock
+PRESENCE_FILL_TARGET = 35        # restock stops here
+PRESENCE_HARD_MAX = 50           # never exceeded, counting everyone's gems
+# Cold-inline bootstrap deadline: the first-ever map open of an area pays
+# for placement inline (the app shows its loading cover); this bounds that
+# wait. Placement stops mid-pass when it expires — later opens retry.
+PRESENCE_INLINE_BUDGET_S = 12
 # Warm areas run rotation/top-up in a background thread so the map read
 # answers instantly. False = inline (tests: in-memory SQLite is per-thread).
 PRESENCE_ASYNC = True

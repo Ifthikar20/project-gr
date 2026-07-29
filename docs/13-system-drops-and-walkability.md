@@ -44,9 +44,12 @@ Spawn placement is tiered, best ground first:
    flags any misplaced stragglers.
 
 The top-up is **self-limiting**, so repeated map opens never pile gems up:
-the target is one active system drop per popular route in the queried area,
-capped at `PRESENCE_DROP_MAX_PER_AREA` (default 3). At or above target the
-trigger is two cheap count queries and exits.
+the budget is the per-mile contract (docs/14 §2.1) — radial within
+`PRESENCE_RADIUS_M` of the map-open point, restock below `PRESENCE_FLOOR`
+(20) up to `PRESENCE_FILL_TARGET` (35), hard-capped at `PRESENCE_HARD_MAX`
+(50) counting everyone's system gems, re-checked inside a write-serialized
+transaction on every insert. In the 20–50 band the trigger is one cheap
+indexed count and exits.
 
 ### Popularity: "being walked by many people"
 

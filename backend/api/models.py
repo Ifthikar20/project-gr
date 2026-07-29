@@ -67,6 +67,13 @@ class GemDrop(models.Model):
     # next map open, so the world never repeats yesterday's layout.
     created_at = models.DateTimeField(default=timezone.now)
 
+    class Meta:
+        # Every hot query filters active + a lat range (mile counts, warm
+        # probe, map read, spacing, rotation). `active` leads because daily
+        # rotation makes inactive rows the majority as the table ages.
+        indexes = [models.Index(fields=["active", "lat", "lng"],
+                                name="gemdrop_active_lat_lng")]
+
 
 class Run(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
