@@ -97,12 +97,21 @@ PYEOF
 
 stop_backend() {
     say "Stopping backend"
+    # The pid file goes stale the moment runserver's auto-reloader replaces
+    # its process, so kill by PORT — whatever is actually answering on 8000.
     if [ -f "$PID_FILE" ]; then
         kill "$(cat "$PID_FILE")" 2>/dev/null || true
         rm -f "$PID_FILE"
-        echo "Stopped."
+    fi
+    PIDS=$(lsof -ti tcp:"$API_PORT" 2>/dev/null || true)
+    if [ -n "$PIDS" ]; then
+        echo "$PIDS" | xargs kill 2>/dev/null || true
+        sleep 1
+    fi
+    if curl -sf "http://127.0.0.1:${API_PORT}/v1/gems/catalog" >/dev/null 2>&1; then
+        echo "WARNING: something still answers on port ${API_PORT}."
     else
-        echo "No pid file - nothing to stop."
+        echo "Stopped."
     fi
 }
 
