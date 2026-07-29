@@ -62,6 +62,11 @@ targets:
         # Dev only: allows plain-HTTP calls to the local Django backend.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # iOS's Local Network privacy prompt (separate from ATS): required
+        # for the phone to reach the Mac's LAN IP during development.
+        NSLocalNetworkUsageDescription: >-
+          GemRun connects to your development server on this network to
+          load gems and routes.
         # Backend base URL. Debug builds get this from Configs/DevAPI.xcconfig
         # (script-written LAN IP). Empty = env-var fallback / mock.
         GemRunAPIBaseURL: $(GEMRUN_API_URL)
