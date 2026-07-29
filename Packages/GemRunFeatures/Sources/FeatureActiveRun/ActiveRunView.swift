@@ -103,26 +103,32 @@ public struct ActiveRunView: View {
                     CollectionBurst(rarity: event.drop.rarity)
                 }
                 // Stash chip: this run's haul, top-leading (the map's
-                // recenter control owns top-trailing). Bounces when a
-                // flying gem lands in it.
-                HStack(spacing: 6) {
-                    Image(systemName: "diamond.fill")
-                        .font(.caption.bold())
-                        .foregroundStyle(DS.Colors.pulse)
-                    Text("\(engine.collectedEvents.count)")
-                        .font(.footnote.bold())
-                        .monospacedDigit()
-                        .foregroundStyle(DS.Colors.ink)
+                // recenter control owns top-trailing). Hidden until the
+                // first find — a fresh run starts with a clean map, no
+                // orange "0" badge — then pops in to catch the flying gem
+                // and stays as the live count.
+                if !engine.collectedEvents.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "diamond.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(DS.Colors.pulse)
+                        Text("\(engine.collectedEvents.count)")
+                            .font(.footnote.bold())
+                            .monospacedDigit()
+                            .foregroundStyle(DS.Colors.ink)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
+                    .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+                    .scaleEffect(stashBounce ? 1.18 : 1)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .topLeading)
+                    .padding([.top, .leading], 12)
+                    .allowsHitTesting(false)
+                    .transition(.scale(scale: 0.4, anchor: .topLeading)
+                        .combined(with: .opacity))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
-                .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
-                .scaleEffect(stashBounce ? 1.18 : 1)
-                .frame(maxWidth: .infinity, maxHeight: .infinity,
-                       alignment: .topLeading)
-                .padding([.top, .leading], 12)
-                .allowsHitTesting(false)
                 if let stashed = stashedFloat {
                     StashedFloat(rarity: stashed.drop.rarity)
                         .id(stashed.drop.id)   // restart per gem, even back-to-back
@@ -156,6 +162,9 @@ public struct ActiveRunView: View {
                         .padding(.top, 8)
                 }
             }
+            // Drives the stash chip's first appearance (empty → 1 find).
+            .animation(.spring(response: 0.35, dampingFraction: 0.7),
+                       value: engine.collectedEvents.isEmpty)
             .frame(maxHeight: .infinity)
 
             statsBand
