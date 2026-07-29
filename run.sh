@@ -207,14 +207,19 @@ EOF
 
     # devicectl uses a CoreDevice UUID (36 chars); xcodebuild wants the
     # hardware ECID (e.g. 00008120-000639261EF8201E) — they aren't the same.
+    # `|| true` everywhere: devicectl exits non-zero when CoreDevice is
+    # momentarily wedged, and set -e/pipefail would kill the script with
+    # no message at all (it did). Detection failure must never be fatal —
+    # the wait loop below is the recovery path.
     find_device() {
-        xcrun devicectl list devices 2>/dev/null \
+        { xcrun devicectl list devices 2>/dev/null || true; } \
             | awk '$0 ~ /available/ && $0 !~ /unavailable/ \
                    {for(i=1;i<=NF;i++)if($i~/^[0-9A-F-]{36}$/){print $i;exit}}'
     }
     DEVCTL_UDID=$(find_device)
     if [ -z "$DEVCTL_UDID" ]; then
-        KNOWN=$(xcrun devicectl list devices 2>/dev/null | awk '/unavailable/{print $1; exit}')
+        KNOWN=$({ xcrun devicectl list devices 2>/dev/null || true; } \
+            | awk '/unavailable/{print $1; exit}')
         echo
         if [ -n "$KNOWN" ]; then
             echo "iPhone \"$KNOWN\" is paired but UNREACHABLE right now. To fix:"
@@ -239,7 +244,18 @@ EOF
         done
         echo
     fi
-    [ -n "$DEVCTL_UDID" ] || { echo "Still no reachable iPhone (xcrun devicectl list devices)."; exit 1; }
+    if [ -z "$DEVCTL_UDID" ]; then
+        echo "Still no reachable iPhone. Raw device status (with errors shown):"
+        xcrun devicectl list devices || true
+        echo
+        echo "If the phone is plugged in but absent/unavailable above, check:"
+        echo "  - Does macOS even see it on USB?  system_profiler SPUSBDataType | grep -i iphone"
+        echo "    (no output = cable/port problem — many cables are charge-only)"
+        echo "  - Xcode > Window > Devices and Simulators — any yellow warning on the phone?"
+        echo "    ('Developer Mode disabled' / 'not trusted' / 'preparing device')"
+        echo "  - Wedged services: sudo pkill -f usbmuxd  (it restarts), then replug."
+        exit 1
+    fi
     # Match the iOS ECID pattern (8 hex, dash, 16 hex) — unique to iPhone/iPad.
     XCODE_UDID=$(xcrun xctrace list devices 2>&1 \
         | grep -Eo '[0-9A-F]{8}-[0-9A-F]{16}' | head -1)
