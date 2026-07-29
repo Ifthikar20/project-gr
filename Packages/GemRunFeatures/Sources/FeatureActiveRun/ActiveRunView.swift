@@ -24,6 +24,9 @@ public struct ActiveRunView: View {
     @State private var flight: CollectionEngine.Event?
     @State private var flightLanded = false
     @State private var stashBounce = false
+    /// Quiet receipt: a small "+1" drifts up beside the stash chip right
+    /// as it catches the flying gem, then fades.
+    @State private var stashedFloat: CollectionEngine.Event?
 
     public init(route: Route?) {
         self.route = route
@@ -60,6 +63,7 @@ public struct ActiveRunView: View {
                     try? await Task.sleep(for: .seconds(0.6))
                     guard flight == event else { return }
                     flight = nil
+                    stashedFloat = event
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
                         stashBounce = true
                     }
@@ -67,6 +71,8 @@ public struct ActiveRunView: View {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
                         stashBounce = false
                     }
+                    try? await Task.sleep(for: .seconds(0.9))
+                    if stashedFloat == event { stashedFloat = nil }
                 }
             }
             // Battery budget instrumentation (docs/04): delta logged at stop.
@@ -112,11 +118,20 @@ public struct ActiveRunView: View {
                 .padding(.vertical, 8)
                 .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
                 .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
-                .scaleEffect(stashBounce ? 1.3 : 1)
+                .scaleEffect(stashBounce ? 1.18 : 1)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: .topLeading)
                 .padding([.top, .leading], 12)
                 .allowsHitTesting(false)
+                if let stashed = stashedFloat {
+                    StashedFloat(rarity: stashed.drop.rarity)
+                        .id(stashed.drop.id)   // restart per gem, even back-to-back
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: .topLeading)
+                        .padding(.top, 18)
+                        .padding(.leading, 96)
+                        .allowsHitTesting(false)
+                }
                 // The gem in flight: map center → stash chip.
                 GeometryReader { geo in
                     if let flight {
@@ -282,6 +297,32 @@ public struct ActiveRunView: View {
         // The docs/04 gate is < 8%/hour — tracked per TestFlight build.
         print(String(format: "[Battery] %.1f%%/hour over %d min",
                      perHour, durationS / 60))
+    }
+}
+
+/// The subtle "just stashed it" cue: a tiny "+1" in the gem's rarity color
+/// that rises from the stash chip's edge and fades — quiet enough to read
+/// in peripheral vision mid-run.
+@MainActor
+struct StashedFloat: View {
+    let rarity: Rarity
+    @State private var risen = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "diamond.fill")
+                .font(.caption2.bold())
+            Text("+1")
+                .font(.caption.bold())
+                .monospacedDigit()
+        }
+        .foregroundStyle(DS.Colors.rarity(rarity))
+        .shadow(color: DS.Colors.snowCard, radius: 3)
+        .offset(y: risen ? -24 : 0)
+        .opacity(risen ? 0 : 1)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.9)) { risen = true }
+        }
     }
 }
 
