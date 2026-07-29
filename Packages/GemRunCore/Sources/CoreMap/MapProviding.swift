@@ -201,6 +201,12 @@ public struct ExploreMapView: View {
     let onTapCoordinate: ((Coordinate) -> Void)?
     /// Tap on a gem pin — the caller shows the gem-info card.
     let onSelectDrop: ((GemDrop) -> Void)?
+    /// Bump to snap the camera back to the user (the location capsule's
+    /// tap). A counter instead of a bool so repeat taps keep working.
+    let recenterTick: Int
+
+    @State private var cameraPosition: MapCameraPosition =
+        .userLocation(fallback: .automatic)
 
     public init(routes: [Route], standaloneDrops: [GemDrop] = [], selectedID: UUID?,
                 previewPath: [Coordinate] = [],
@@ -208,7 +214,8 @@ public struct ExploreMapView: View {
                 userCoordinate: Coordinate? = nil,
                 onSelect: @escaping (Route) -> Void,
                 onTapCoordinate: ((Coordinate) -> Void)? = nil,
-                onSelectDrop: ((GemDrop) -> Void)? = nil) {
+                onSelectDrop: ((GemDrop) -> Void)? = nil,
+                recenterTick: Int = 0) {
         self.routes = routes
         self.standaloneDrops = standaloneDrops
         self.selectedID = selectedID
@@ -218,6 +225,7 @@ public struct ExploreMapView: View {
         self.onSelect = onSelect
         self.onTapCoordinate = onTapCoordinate
         self.onSelectDrop = onSelectDrop
+        self.recenterTick = recenterTick
     }
 
     public var body: some View {
@@ -228,11 +236,19 @@ public struct ExploreMapView: View {
                           let coord = proxy.convert(screenPoint, from: .local) else { return }
                     onTapCoordinate(Coordinate(lat: coord.latitude, lng: coord.longitude))
                 }
+                .onChange(of: recenterTick) { _, _ in
+                    guard let here = userCoordinate else { return }
+                    withAnimation(.easeInOut(duration: 0.6)) {
+                        cameraPosition = .region(MKCoordinateRegion(
+                            center: here.cl,
+                            latitudinalMeters: 1_200, longitudinalMeters: 1_200))
+                    }
+                }
         }
     }
 
     private var mapContent: some View {
-        Map(initialPosition: .userLocation(fallback: .automatic)) {
+        Map(position: $cameraPosition) {
             if let userCoordinate {
                 Annotation("You", coordinate: userCoordinate.cl) {
                     Text("🏃")

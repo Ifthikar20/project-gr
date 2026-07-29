@@ -61,6 +61,9 @@ public struct ExploreRootView: View {
     @State private var locationLabel: String?
     @State private var lastGeocodedCoord: Coordinate?
     @State private var isGeocodingLabel = false
+    /// Bumped when the location capsule is tapped — ExploreMapView watches
+    /// it and snaps the camera back to the user's current position.
+    @State private var recenterTick = 0
 
     public init() {}
 
@@ -96,7 +99,8 @@ public struct ExploreRootView: View {
                     userCoordinate: live.coordinate,
                     onSelect: { detailRoute = $0 },
                     onTapCoordinate: mapTapHandler,
-                    onSelectDrop: { infoDrop = $0 }
+                    onSelectDrop: { infoDrop = $0 },
+                    recenterTick: recenterTick
                 )
                 .ignoresSafeArea()
 
@@ -127,20 +131,28 @@ public struct ExploreRootView: View {
                 if firstLoad == .ready {
                     VStack(spacing: 8) {
                         if let locationLabel {
-                            HStack(spacing: 6) {
-                                Image(systemName: "location.fill")
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(DS.Colors.pulse)
-                                Text(locationLabel)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(DS.Colors.ink)
-                                    .lineLimit(1)
+                            // Tapping the capsule snaps the map back to
+                            // where you're standing.
+                            Button {
+                                recenterTick += 1
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "location.fill")
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(DS.Colors.pulse)
+                                    Text(locationLabel)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(DS.Colors.ink)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
+                                .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+                                .shadow(color: DS.Colors.ink.opacity(0.08), radius: 5, y: 2)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
-                            .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
-                            .shadow(color: DS.Colors.ink.opacity(0.08), radius: 5, y: 2)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Show my current location")
                             .transition(.opacity)
                         }
                         // Honest empty state: fail-closed spawning means an
