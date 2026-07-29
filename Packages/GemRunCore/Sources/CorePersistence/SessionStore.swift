@@ -176,7 +176,8 @@ public final class SessionStore {
             // From here on Health pushes to us — every new stretch of
             // walked/run distance re-mints the wallet without a button.
             HealthDistance.startObservingDistance { [weak self] in
-                Task { @MainActor in await self?.refreshWallet() }
+                guard let self else { return }
+                Task { @MainActor in await self.refreshWallet() }
             }
         }
     }
