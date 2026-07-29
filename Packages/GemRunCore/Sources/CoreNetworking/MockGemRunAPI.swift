@@ -198,6 +198,66 @@ public actor MockGemRunAPI: GemRunAPI {
         return GemCatalog.entries.map(\.gem)
     }
 
+    // MARK: - Compete (friends board + run history)
+
+    private static func rosterID(_ n: UInt8) -> UUID {
+        UUID(uuid: (0xF0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, n))
+    }
+
+    private var mockFriends: [FriendEntry] = [
+        FriendEntry(id: MockGemRunAPI.rosterID(1), handle: "strideking",
+                    level: 7, isMe: false,
+                    weeklyXp: 240, weeklyDistanceM: 12_400, weeklyRuns: 3),
+        FriendEntry(id: MockGemRunAPI.rosterID(2), handle: "gemhunter42",
+                    level: 5, isMe: false,
+                    weeklyXp: 130, weeklyDistanceM: 6_100, weeklyRuns: 2),
+    ]
+    private let mockPlayers: [PlayerSummary] = [
+        PlayerSummary(id: MockGemRunAPI.rosterID(1), handle: "strideking", level: 7),
+        PlayerSummary(id: MockGemRunAPI.rosterID(2), handle: "gemhunter42", level: 5),
+        PlayerSummary(id: MockGemRunAPI.rosterID(3), handle: "dawnpatrol", level: 9),
+        PlayerSummary(id: MockGemRunAPI.rosterID(4), handle: "sidewalksam", level: 3),
+        PlayerSummary(id: MockGemRunAPI.rosterID(5), handle: "pearldiver", level: 6),
+        PlayerSummary(id: MockGemRunAPI.rosterID(6), handle: "quartzqueen", level: 8),
+    ]
+
+    public func myRuns() async throws -> [CompletedRun] {
+        await call("GET /v1/runs/mine")
+        return []           // mock UI is driven by the local StoredRun list
+    }
+
+    public func searchPlayers(query: String) async throws -> [PlayerSummary] {
+        await call("GET /v1/players?search=\(query)")
+        let q = query.lowercased()
+        guard q.count >= 2 else { return [] }
+        return mockPlayers.filter { $0.handle.lowercased().contains(q) }
+    }
+
+    public func friends() async throws -> [FriendEntry] {
+        await call("GET /v1/friends")
+        let me = FriendEntry(id: profile.id, handle: profile.handle,
+                             level: profile.level, isMe: true,
+                             weeklyXp: 120, weeklyDistanceM: 5_200,
+                             weeklyRuns: 2)
+        return ([me] + mockFriends).sorted { $0.weeklyXp > $1.weeklyXp }
+    }
+
+    public func addFriend(profileID: UUID) async throws -> [FriendEntry] {
+        await call("POST /v1/friends")
+        if !mockFriends.contains(where: { $0.id == profileID }),
+           let player = mockPlayers.first(where: { $0.id == profileID }) {
+            mockFriends.append(FriendEntry(
+                id: player.id, handle: player.handle, level: player.level,
+                isMe: false, weeklyXp: 0, weeklyDistanceM: 0, weeklyRuns: 0))
+        }
+        return try await friends()
+    }
+
+    public func removeFriend(profileID: UUID) async throws {
+        await call("DELETE /v1/friends/\(profileID)")
+        mockFriends.removeAll { $0.id == profileID }
+    }
+
     // MARK: - Gem wallet + standalone drops
 
     // Starter pack: new runners open the app with a handful of gems already

@@ -154,6 +154,73 @@ public struct DropCollectResult: Sendable {
     }
 }
 
+/// A player found by handle search (Compete → friends board).
+public struct PlayerSummary: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let handle: String
+    public let level: Int
+
+    public init(id: UUID, handle: String, level: Int) {
+        self.id = id
+        self.handle = handle
+        self.level = level
+    }
+}
+
+/// One row of the weekly friends board — you plus everyone you follow,
+/// with this week's totals (Monday 00:00 UTC onward), ranked by XP.
+public struct FriendEntry: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let handle: String
+    public let level: Int
+    public let isMe: Bool
+    public let weeklyXp: Int
+    public let weeklyDistanceM: Int
+    public let weeklyRuns: Int
+
+    public init(id: UUID, handle: String, level: Int, isMe: Bool,
+                weeklyXp: Int, weeklyDistanceM: Int, weeklyRuns: Int) {
+        self.id = id
+        self.handle = handle
+        self.level = level
+        self.isMe = isMe
+        self.weeklyXp = weeklyXp
+        self.weeklyDistanceM = weeklyDistanceM
+        self.weeklyRuns = weeklyRuns
+    }
+}
+
+/// A completed run from the server's history (Compete → "My Routes").
+/// The phone's own SwiftData copy is richer (gems collected, free runs);
+/// this fills in history on a fresh install or second device.
+public struct CompletedRun: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let routeId: UUID
+    public let routeName: String
+    public let startedAt: Date
+    public let durationS: Int
+    public let distanceM: Int
+    public let paceSPerKm: Int
+    public let isWalk: Bool
+    public let status: String
+    public let xpEarned: Int
+
+    public init(id: UUID, routeId: UUID, routeName: String, startedAt: Date,
+                durationS: Int, distanceM: Int, paceSPerKm: Int, isWalk: Bool,
+                status: String, xpEarned: Int) {
+        self.id = id
+        self.routeId = routeId
+        self.routeName = routeName
+        self.startedAt = startedAt
+        self.durationS = durationS
+        self.distanceM = distanceM
+        self.paceSPerKm = paceSPerKm
+        self.isWalk = isWalk
+        self.status = status
+        self.xpEarned = xpEarned
+    }
+}
+
 // MARK: - The contract
 
 public protocol GemRunAPI: Sendable {
@@ -179,6 +246,19 @@ public protocol GemRunAPI: Sendable {
     func stash() async throws -> StashResponse
     func routeLeaderboard(routeID: UUID, window: LeaderboardWindow) async throws -> [LeaderboardEntry]
     func localLeaderboard(geohash: String) async throws -> [LeaderboardEntry]
+
+    // Compete — GET /v1/runs/mine, GET /v1/players?search=,
+    //           GET/POST /v1/friends, DELETE /v1/friends/{id}
+    /// My completed-run history (server copy of the local StoredRun list).
+    func myRuns() async throws -> [CompletedRun]
+    /// Case-insensitive handle search, excluding me. Empty under 2 chars.
+    func searchPlayers(query: String) async throws -> [PlayerSummary]
+    /// The weekly board: me + everyone I follow, ranked by this week's XP.
+    func friends() async throws -> [FriendEntry]
+    /// Follow a player; returns the refreshed board. Idempotent.
+    func addFriend(profileID: UUID) async throws -> [FriendEntry]
+    /// Unfollow — removes only MY follow row.
+    func removeFriend(profileID: UUID) async throws
 
     // Catalog — GET /v1/gems/catalog
     func gemCatalog() async throws -> [Gem]

@@ -17,7 +17,8 @@ from django.views.decorators.http import require_http_methods
 
 from . import catalog, rules, system_drops, validation, walkability
 from .geometry import RouteGeometry, polyline_decode
-from .models import ClaimAttempt, GemDrop, Profile, Route, Run, StashItem, Token
+from .models import (ClaimAttempt, Friendship, GemDrop, Profile, Route, Run,
+                     StashItem, Token)
 
 FUZZ_RADIUS_M = 150
 
@@ -533,6 +534,106 @@ def local_leaderboard(request):
         {"rank": i + 1, "handle": p.handle, "level": p.level, "best_time_s": xp,
          "is_me": viewer is not None and p.id == viewer.id}
         for i, (p, xp) in enumerate(rows)]})
+
+
+# ------------------------------------------------- my runs, players, friends
+
+def _week_start():
+    now = datetime.now(tz.utc)
+    return now - timedelta(days=now.weekday(), hours=now.hour,
+                           minutes=now.minute, seconds=now.second)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def my_runs(request):
+    """Completed-run history for the Compete tab's "My Routes" cards —
+    server copy of what the phone also stores locally, so a fresh install
+    (or second device) can show history."""
+    profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+    rows = (Run.objects.filter(profile=profile)
+            .select_related("route").order_by("-started_at")[:50])
+    return JsonResponse({"runs": [
+        {"id": str(r.id), "route_id": str(r.route_id),
+         "route_name": r.route.name, "started_at": iso(r.started_at),
+         "duration_s": r.duration_s, "distance_m": r.distance_m,
+         "pace_s_per_km": r.pace_s_per_km, "is_walk": r.is_walk,
+         "status": r.status, "xp_earned": r.xp_earned}
+        for r in rows]})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def players(request):
+    """Username search for the friends board. Case-insensitive substring
+    on handle, excluding yourself; capped at 20."""
+    profile = profile_from(request)
+    query = (request.GET.get("search") or "").strip()
+    if len(query) < 2:
+        return JsonResponse({"players": []})
+    qs = Profile.objects.filter(handle__icontains=query)
+    if profile is not None:
+        qs = qs.exclude(id=profile.id)
+    return JsonResponse({"players": [
+        {"id": str(p.id), "handle": p.handle, "level": p.level}
+        for p in qs.order_by("handle")[:20]]})
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def friends(request):
+    """GET: your friends (plus yourself) with this-week stats, ranked by
+    weekly XP — the Compete tab's "This Week" board. POST {profile_id}:
+    add a friend (one-directional; idempotent)."""
+    profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+
+    if request.method == "POST":
+        data = body_of(request) or {}
+        try:
+            friend_id = uuid.UUID(str(data.get("profile_id")))
+        except (ValueError, AttributeError, TypeError):
+            return problem(400, "profile_id is required")
+        if friend_id == profile.id:
+            return problem(422, "You're already on your own board")
+        friend = Profile.objects.filter(id=friend_id).first()
+        if friend is None:
+            return problem(404, "No such player")
+        Friendship.objects.get_or_create(profile=profile, friend=friend)
+
+    week_start = _week_start()
+    members = [profile] + [f.friend for f in
+                           profile.friendships.select_related("friend")
+                           .order_by("created_at")]
+    weekly = {m.id: {"xp": 0, "distance_m": 0, "runs": 0} for m in members}
+    for run in Run.objects.filter(profile_id__in=weekly.keys(),
+                                  started_at__gte=week_start):
+        row = weekly[run.profile_id]
+        row["xp"] += run.xp_earned
+        row["distance_m"] += run.distance_m
+        row["runs"] += 1
+    members.sort(key=lambda m: -weekly[m.id]["xp"])
+    return JsonResponse({"friends": [
+        {"id": str(m.id), "handle": m.handle, "level": m.level,
+         "is_me": m.id == profile.id,
+         "weekly_xp": weekly[m.id]["xp"],
+         "weekly_distance_m": weekly[m.id]["distance_m"],
+         "weekly_runs": weekly[m.id]["runs"]}
+        for m in members]})
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def friend_detail(request, friend_id):
+    """Swipe-to-remove: deletes only YOUR follow row."""
+    profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+    Friendship.objects.filter(profile=profile, friend_id=friend_id).delete()
+    return JsonResponse({})
 
 
 # ------------------------------------------------- wallet & standalone drops

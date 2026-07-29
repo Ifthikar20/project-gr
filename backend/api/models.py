@@ -98,6 +98,24 @@ class Run(models.Model):
         ]
 
 
+class Friendship(models.Model):
+    """One-directional follow (docs/03 §10): YOUR friends list is yours —
+    adding someone puts them on your weekly board, removing them only edits
+    your list. Mutual consent can layer on later without a schema change."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE,
+                                related_name="friendships")
+    friend = models.ForeignKey(Profile, on_delete=models.CASCADE,
+                               related_name="befriended_by")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["profile", "friend"],
+                                    name="uniq_friendship"),
+        ]
+
+
 class ClaimAttempt(models.Model):
     """Write-audit of the gem race (docs/13): EVERY attempt to claim a
     standalone drop is logged — winners and losers — so 'who was there and

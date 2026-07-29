@@ -722,6 +722,63 @@ class ApiTests(TestCase):
         self.assertFalse(GemDrop.objects.filter(route__isnull=True,
                                                 dropped_by__isnull=True).exists())
 
+    def test_my_runs_lists_completed_history(self):
+        gem = self.gem("common", 500)
+        route = self.publish_route(gems=[gem]).json()
+        self.complete(route["id"], track(3.0), [gem["id"]])
+        runs = self.client.get(
+            "/v1/runs/mine",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["runs"]
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["route_name"], "Test Route")
+        self.assertGreaterEqual(runs[0]["distance_m"], 990)   # sampled track
+        self.assertGreater(runs[0]["xp_earned"], 0)
+
+    def test_friends_search_add_weekly_rank_and_remove(self):
+        """The whole friends loop: search by handle → follow → they appear
+        on the weekly board with their stats → swipe-remove deletes only my
+        follow row."""
+        rival_token = self.client.post(
+            "/v1/auth/apple", data=json.dumps({"handle": "gemhunter"}),
+            content_type="application/json").json()["token"]
+        # The rival completes a run this week and collects a gem, so
+        # their weekly XP is non-zero (runs without gems score 0).
+        gem = self.gem("common", 500)
+        route = self.publish_route(gems=[gem]).json()
+        self.client.post(
+            f"/v1/runs/{route['id']}/complete",
+            data=json.dumps({"idempotency_key": str(uuid.uuid4()),
+                             "started_at": timezone.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                             "track": track(3.0),
+                             "claimed_collections": [gem["id"]]}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {rival_token}")
+
+        found = self.client.get(
+            "/v1/players", {"search": "GEMH"},
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["players"]
+        self.assertEqual([p["handle"] for p in found], ["gemhunter"])
+
+        added = self.client.post(
+            "/v1/friends", data=json.dumps({"profile_id": found[0]["id"]}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["friends"]
+        self.assertEqual([f["handle"] for f in added if not f["is_me"]],
+                         ["gemhunter"])
+        rival_row = next(f for f in added if f["handle"] == "gemhunter")
+        self.assertGreater(rival_row["weekly_xp"], 0)
+        self.assertEqual(rival_row["weekly_runs"], 1)
+        # Rival out-ran me this week → ranked above my row.
+        self.assertEqual(added[0]["handle"], "gemhunter")
+
+        self.client.delete(
+            f"/v1/friends/{found[0]['id']}",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        after = self.client.get(
+            "/v1/friends",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["friends"]
+        self.assertEqual([f["is_me"] for f in after], [True])
+
     def test_dev_fallback_survives_duplicate_profiles(self):
         """The app fires routes+drops concurrently; a get_or_create race once
         left two dev-fallback profiles and every request 500'd. Unauthed

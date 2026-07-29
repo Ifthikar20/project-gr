@@ -171,6 +171,40 @@ public final class HTTPGemRunAPI: GemRunAPI {
                                  xpEarned: response.xpEarned)
     }
 
+    // MARK: - Compete
+
+    private struct RunsResponse: Decodable { let runs: [CompletedRun] }
+    private struct PlayersResponse: Decodable { let players: [PlayerSummary] }
+    private struct FriendsResponse: Decodable { let friends: [FriendEntry] }
+
+    public func myRuns() async throws -> [CompletedRun] {
+        let response: RunsResponse = try await get("runs/mine")
+        return response.runs
+    }
+
+    public func searchPlayers(query: String) async throws -> [PlayerSummary] {
+        let response: PlayersResponse = try await get("players",
+                                                      query: ["search": query])
+        return response.players
+    }
+
+    public func friends() async throws -> [FriendEntry] {
+        let response: FriendsResponse = try await get("friends")
+        return response.friends
+    }
+
+    public func addFriend(profileID: UUID) async throws -> [FriendEntry] {
+        let response: FriendsResponse = try await send(
+            "POST", "friends", body: ["profile_id": profileID.uuidString])
+        return response.friends
+    }
+
+    public func removeFriend(profileID: UUID) async throws {
+        let _: Empty = try await send("DELETE",
+                                      "friends/\(profileID.uuidString)",
+                                      body: Empty())
+    }
+
     // MARK: - Plumbing
 
     private struct Empty: Codable {}
