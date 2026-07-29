@@ -293,11 +293,36 @@ EOF
     xcrun devicectl device install app --device "$DEVCTL_UDID" "$APP_PATH"
 
     say "Launching"
-    xcrun devicectl device process launch \
-        --device "$DEVCTL_UDID" \
-        --environment-variables "{\"GEMRUN_API_URL\":\"${API_URL}\"}" \
-        com.gemrun.GemRun 2>/dev/null || \
-    xcrun devicectl device process launch --device "$DEVCTL_UDID" com.gemrun.GemRun
+    # iOS denies remote launches while the phone is locked ("Locked" /
+    # RequestDenied). The app is already installed by now, so coach and
+    # retry instead of dying; worst case the user taps the icon — the API
+    # URL is baked into the build via DevAPI.xcconfig, so a manual tap
+    # works identically.
+    LAUNCHED=""
+    COACHED=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if xcrun devicectl device process launch \
+              --device "$DEVCTL_UDID" \
+              --environment-variables "{\"GEMRUN_API_URL\":\"${API_URL}\"}" \
+              com.gemrun.GemRun >/dev/null 2>&1 \
+           || xcrun devicectl device process launch \
+              --device "$DEVCTL_UDID" com.gemrun.GemRun >/dev/null 2>&1; then
+            LAUNCHED=1
+            break
+        fi
+        if [ -z "$COACHED" ]; then
+            echo "Launch refused — your iPhone is probably locked."
+            echo "Unlock it now; retrying for ~90 seconds..."
+            COACHED=1
+        fi
+        sleep 5
+    done
+    if [ -n "$LAUNCHED" ]; then
+        echo "Launched."
+    else
+        echo "Couldn't auto-launch, but the app IS installed."
+        echo "Unlock your iPhone and tap the GemRun icon to open it."
+    fi
 
     echo
     echo "GemRun is on ${DEV_NAME:-your iPhone} → ${API_URL}. Tips:"
