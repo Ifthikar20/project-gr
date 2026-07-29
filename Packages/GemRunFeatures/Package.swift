@@ -64,6 +64,8 @@ let package = Package(
             .product(name: "CoreModels", package: "GemRunCore"),
             .product(name: "DesignSystem", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
+            .product(name: "CoreNetworking", package: "GemRunCore"),
+            .product(name: "GameKitCore", package: "GemRunCore"),
         ]),
     ]
 )
