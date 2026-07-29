@@ -1,3 +1,4 @@
+import CoreMap
 import CoreModels
 import CorePersistence
 import DesignSystem
@@ -5,20 +6,26 @@ import SwiftData
 import SwiftUI
 
 /// The collection (docs/03 §9), Airbnb wishlist-grid style: white tiles on
-/// snow, rarity as pulse ramp + glyph, ink-tint silhouettes for the missing.
+/// snow, grouped by rarity tier (Common → Legendary) so the buckets read
+/// plainly; ink-tint silhouettes for the missing.
 @MainActor
 public struct StashRootView: View {
     @Environment(SessionStore.self) private var session
     @Query(sort: \StoredStashItem.collectedAt, order: .reverse) private var items: [StoredStashItem]
     @State private var detail: StoredStashItem?
-    @State private var isSyncing = false
 
     public init() {}
 
-    private var sets: [(name: String, entries: [GemCatalog.Entry])] {
-        Dictionary(grouping: GemCatalog.entries, by: \.setName)
-            .map { (name: $0.key, entries: $0.value) }
-            .sorted { $0.name < $1.name }
+    /// Commonest first — the natural reading order for a collection.
+    private static let tiers: [Rarity] = [.common, .uncommon, .rare, .epic, .legendary]
+
+    private var tierSections: [(tier: Rarity, entries: [GemCatalog.Entry])] {
+        Self.tiers.compactMap { tier in
+            let entries = GemCatalog.entries
+                .filter { $0.gem.rarity == tier }
+                .sorted { $0.gem.name < $1.gem.name }
+            return entries.isEmpty ? nil : (tier, entries)
+        }
     }
 
     private func collected(for gemID: UUID) -> StoredStashItem? {
@@ -31,12 +38,13 @@ public struct StashRootView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     walletCard
                     header
-                    ForEach(sets, id: \.name) { set in
-                        setSection(set.name, set.entries)
+                    ForEach(tierSections, id: \.tier) { section in
+                        tierSection(section.tier, section.entries)
                     }
                 }
                 .padding(16)
             }
+            .refreshable { await session.refreshWallet(force: true) }
             .background(DS.Colors.snow)
             .navigationTitle("Stash")
             .task { await session.refreshWallet() }
@@ -48,32 +56,15 @@ public struct StashRootView: View {
     }
 
     /// The gem wallet: gems earned by running (Apple Health), ready to drop
-    /// anywhere from the Explore map. Everyone starts at zero.
+    /// anywhere from the Explore map. Everyone starts at zero. No sync
+    /// button — Health pushes new distance to us automatically.
     private var walletCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Gem wallet")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.ink)
-                Spacer()
-                Button {
-                    isSyncing = true
-                    Task {
-                        await session.refreshWallet()
-                        isSyncing = false
-                    }
-                } label: {
-                    if isSyncing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Sync Health", systemImage: "arrow.triangle.2.circlepath")
-                            .font(.caption.bold())
-                            .foregroundStyle(DS.Colors.pulse)
-                    }
-                }
-            }
+            Text("Gem wallet")
+                .font(DS.Typography.heading)
+                .foregroundStyle(DS.Colors.ink)
             if session.wallet.values.reduce(0, +) == 0 {
-                Text("Empty — every 1.2 miles you run earns a gem to drop. Sync with Apple Health to collect what you've already earned.")
+                Text("Every 1.2 mi you walk or run mints a gem here — rarer ones at bigger milestones. Drop them anywhere on the map for another runner to find.")
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
             } else {
@@ -94,6 +85,9 @@ public struct StashRootView: View {
                         .foregroundStyle(DS.Colors.inkSecondary)
                 }
             }
+            Label("Syncs automatically with Apple Health", systemImage: "checkmark.circle.fill")
+                .font(.caption2)
+                .foregroundStyle(DS.Colors.inkSecondary)
         }
         .airbnbCard()
     }
@@ -121,11 +115,12 @@ public struct StashRootView: View {
         .airbnbCard()
     }
 
-    private func setSection(_ name: String, _ entries: [GemCatalog.Entry]) -> some View {
+    private func tierSection(_ tier: Rarity, _ entries: [GemCatalog.Entry]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             let found = entries.filter { collected(for: $0.gem.id) != nil }.count
-            HStack {
-                Text(name)
+            HStack(spacing: 8) {
+                RarityBadge(tier, size: 14)
+                Text("\(tier.rawValue.capitalized) gems")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                 Spacer()
@@ -139,11 +134,15 @@ public struct StashRootView: View {
                 ForEach(entries, id: \.gem.id) { entry in
                     let item = collected(for: entry.gem.id)
                     VStack(spacing: 4) {
-                        Image(systemName: DS.rarityGlyph(entry.gem.rarity))
-                            .font(.system(size: 32))
-                            .foregroundStyle(item != nil
-                                ? DS.Colors.rarity(entry.gem.rarity)
-                                : DS.Colors.hairline)   // silhouette: the pull
+                        if item != nil {
+                            GemIcon(gemID: entry.gem.id, size: 32)
+                                .frame(height: 36)
+                        } else {
+                            Image(systemName: DS.rarityGlyph(entry.gem.rarity))
+                                .font(.system(size: 32))
+                                .foregroundStyle(DS.Colors.hairline)   // silhouette: the pull
+                                .frame(height: 36)
+                        }
                         Text(item != nil ? entry.gem.name : "???")
                             .font(.caption2)
                             .foregroundStyle(DS.Colors.inkSecondary)
@@ -162,25 +161,69 @@ public struct StashRootView: View {
     }
 }
 
+/// A collected gem's card: icon, name, tier, a rotating real-material fact
+/// (same per-gem rotation the map pins use — every open shows the next
+/// one), and where you found it.
 struct GemDetailSheet: View {
     let item: StoredStashItem
+    /// Raw ever-incrementing counter; shown fact = facts[factIndex % count].
+    @State private var factIndex = 0
+
+    private var entry: GemCatalog.Entry? {
+        GemCatalog.entry(forGemID: item.gemID)
+    }
+
+    /// Shared with the map's gem card (same UserDefaults key), so the
+    /// rotation continues across surfaces instead of resetting.
+    private func bumpFactCounter() -> Int {
+        let key = "gemrun.gemFact.\(item.gemID.uuidString)"
+        let defaults = UserDefaults.standard
+        let counter = defaults.integer(forKey: key)
+        defaults.set(counter + 1, forKey: key)
+        return counter
+    }
 
     var body: some View {
         VStack(spacing: 14) {
-            Image(systemName: DS.rarityGlyph(item.rarity))
-                .font(.system(size: 72))
-                .foregroundStyle(DS.Colors.rarity(item.rarity))
+            GemIcon(gemID: item.gemID, size: 72)
                 .padding(.top, 24)
             Text(item.gemName)
                 .font(DS.Typography.display(24))
                 .foregroundStyle(DS.Colors.ink)
-            Text("\(item.rarity.rawValue.capitalized) · \(item.setName) set")
-                .font(.subheadline)
-                .foregroundStyle(DS.Colors.inkSecondary)
+            HStack(spacing: 8) {
+                RarityBadge(item.rarity, size: 14)
+                Text("\(item.rarity.rawValue.capitalized) gem")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(DS.Colors.rarity(item.rarity))
+            }
             if item.isFirstFind {
                 Label("First find", systemImage: "crown.fill")
                     .font(.subheadline.bold())
                     .foregroundStyle(DS.Colors.pulse)
+            }
+            if let facts = entry?.facts, !facts.isEmpty {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        factIndex = bumpFactCounter()
+                    }
+                } label: {
+                    VStack(spacing: 5) {
+                        Text(facts[factIndex % facts.count])
+                            .font(.subheadline)
+                            .foregroundStyle(DS.Colors.inkSecondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .contentTransition(.opacity)
+                        if facts.count > 1 {
+                            Label("Tap for another fact", systemImage: "sparkles")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(DS.Colors.pulse)
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                }
+                .buttonStyle(.plain)
+                .onAppear { factIndex = bumpFactCounter() }
             }
             Rectangle().fill(DS.Colors.hairline).frame(height: 1)
                 .padding(.horizontal, 32)

@@ -74,13 +74,26 @@ public final class SessionStore {
     /// "Run to Amber" from a gem tap, or the plain default.
     public var freeRunName = "Free run"
 
-    /// Reads lifetime run km from Health and mints via the API.
-    public func refreshWallet() async {
+    /// Reads lifetime run km from Health and mints via the API. Server-side
+    /// minting is watermarked (never double-mints), so calling this often is
+    /// safe — the debounce only trims redundant network chatter from the
+    /// Health observer + view-open triggers. `force` skips the debounce
+    /// (pull-to-refresh, just-finished run).
+    public func refreshWallet(force: Bool = false) async {
+        if isWalletSyncing { return }
+        if !force, let last = lastWalletSyncAt,
+           Date().timeIntervalSince(last) < 30 { return }
+        isWalletSyncing = true
+        defer { isWalletSyncing = false }
         let km = await HealthDistance.totalRunKm()
         if let minted = try? await API.shared.syncWallet(totalRunKm: km) {
             wallet = minted
+            lastWalletSyncAt = Date()
         }
     }
+
+    private var lastWalletSyncAt: Date?
+    private var isWalletSyncing = false
 
     /// Optimistic local decrement after a successful dropGem call.
     public func spend(_ rarity: Rarity) {
@@ -127,6 +140,7 @@ public final class SessionStore {
             try? context.save()
         }
         let pace = distanceM > 50 ? Int(Double(durationS) / (Double(distanceM) / 1_000)) : 0
+        Task { await refreshWallet(force: true) }
         return RunCompletionSummary(
             gems: awarded.map {
                 let entry = GemCatalog.entry(forGemID: $0.gemID)
@@ -157,7 +171,14 @@ public final class SessionStore {
     public func attach(context: ModelContext) {
         self.context = context
         profile = try? context.fetch(FetchDescriptor<StoredProfile>()).first
-        Task { await refreshWallet() }
+        Task {
+            await refreshWallet()
+            // From here on Health pushes to us — every new stretch of
+            // walked/run distance re-mints the wallet without a button.
+            HealthDistance.startObservingDistance { [weak self] in
+                Task { @MainActor in await self?.refreshWallet() }
+            }
+        }
     }
 
     public func createProfile(handle: String) {
@@ -266,6 +287,9 @@ public final class SessionStore {
         let completedSet = persist(result: result, status: status,
                                    awardedDrops: awardedDrops, xp: xp)
         let setBonus = completedSet != nil ? XPRules.setCompletionBonus : 0
+        // The run just added distance to Health — re-mint without waiting
+        // for the next observer push.
+        Task { await refreshWallet(force: true) }
 
         return RunCompletionSummary(
             gems: gems, revokedCount: revokedCount, xpEarned: xp + setBonus,
@@ -299,17 +323,19 @@ public final class SessionStore {
                     isFirstFind: drop.rarity == .legendary))
             }
             var totalXP = xp
-            // Set-completion bonus (docs/02): all gems of a set now collected,
-            // bonus not yet awarded → +500 XP + badge (Stash shows completion).
+            // Tier-completion bonus (docs/02): all gems of a rarity tier now
+            // collected, bonus not yet awarded → +500 XP. Tiers are what the
+            // Stash groups by (the themed sets left the UI), so the bonus
+            // tracks a goal the user can actually see filling up.
             if let profile {
                 let stash = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
                 let owned = Set(stash.map(\.gemID))
-                for (setName, entries) in Dictionary(grouping: GemCatalog.entries,
-                                                     by: \.setName) {
-                    guard !profile.completedSets.contains(setName),
+                for (tier, entries) in Dictionary(grouping: GemCatalog.entries,
+                                                  by: \.gem.rarity) {
+                    guard !profile.completedSets.contains(tier.rawValue),
                           entries.allSatisfy({ owned.contains($0.gem.id) }) else { continue }
-                    profile.completedSets.insert(setName)
-                    completedSet = setName
+                    profile.completedSets.insert(tier.rawValue)
+                    completedSet = tier.rawValue.capitalized
                     totalXP += XPRules.setCompletionBonus
                     break
                 }

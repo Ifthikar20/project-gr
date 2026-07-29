@@ -331,13 +331,8 @@ struct RunCardView: View {
                 HStack(spacing: 5) {
                     Image(systemName: DS.rarityGlyph(gem.rarity))
                         .font(.caption2)
-                    Text(gem.rarity.rawValue.capitalized)
+                    Text("\(gem.rarity.rawValue.capitalized) gem")
                         .font(.caption.weight(.semibold))
-                    if let setName = entry?.setName {
-                        Text("· \(setName) set")
-                            .font(.caption)
-                            .foregroundStyle(DS.Colors.inkSecondary)
-                    }
                 }
                 .foregroundStyle(DS.Colors.rarity(gem.rarity))
                 if let blurb = entry?.blurb, !blurb.isEmpty {

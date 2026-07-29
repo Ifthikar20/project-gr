@@ -130,7 +130,7 @@ Push navigation within tabs:
 
 - **Layout (scrolling):**
   1. **Gem reveal:** collected gems flip in one by one, rarest last, with its haptic. Skippable by tap.
-  2. XP breakdown: per-gem XP × streak multiplier, set-completion bonus if any, total. Streak flame increments here if this run extended it.
+  2. XP breakdown: per-gem XP × streak multiplier, tier-completion bonus if any (all gems of a rarity tier collected), total. Streak flame increments here if this run extended it.
   3. Run stats: time, distance, avg pace, splits table, mini route map with collected-gem checkmarks.
   4. Leaderboard delta: "Your best on this route · #14 → #9" (or "Walk — no leaderboard time" per doc 02).
   5. **Share card:** rendered image (map thumbnail + gems + time) → share sheet.
@@ -140,8 +140,8 @@ Push navigation within tabs:
 ### 9. Stash
 **Purpose:** the collection — progress you can see, gaps you want to fill.
 
-- **Layout:** grid grouped by **set** (5 slots each), sets ordered by completion desc; within a set, gems in rarity order. Uncollected = silhouette. Set completion shows the badge + "3/5". Header: total gems · total XP · level.
-- **Gem detail sheet (tap):** large gem render, rarity, set, count collected, **provenance**: where/when first collected with mini-map, link to the route. First-find Legendary variant flagged with a crown.
+- **Layout:** grid grouped by **rarity tier** ("Common gems" → "Legendary gems", commonest first); within a tier, gems alphabetical. Uncollected = silhouette. Tier header shows found count ("3/7", pulse when complete). Above the grid: the gem wallet card (auto-synced from Apple Health, no manual button) and totals.
+- **Gem detail sheet (tap):** gem icon, rarity tier, a rotating real-material fact (same per-gem rotation as the map's gem card — every open advances it), **provenance**: where/when collected. First-find flagged with a crown.
 - **States:** empty ("Your stash is empty — run a route to start collecting" + CTA to Explore); seasonal/Founder sets show time-remaining chip.
 
 ### 10. Compete

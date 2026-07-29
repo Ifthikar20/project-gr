@@ -99,8 +99,8 @@ struct RunSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
-            if summary.setBonusXP > 0, let setName = summary.completedSetName {
-                Label("\(setName) set complete! +\(summary.setBonusXP) XP",
+            if summary.setBonusXP > 0, let tier = summary.completedSetName {
+                Label("All \(tier) gems found! +\(summary.setBonusXP) XP",
                       systemImage: "rosette")
                     .font(.subheadline.bold())
                     .foregroundStyle(DS.Colors.pulse)

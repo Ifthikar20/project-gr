@@ -34,6 +34,9 @@ targets:
       path: App/GemRun.entitlements
       properties:
         com.apple.developer.healthkit: true
+        # Lets iOS wake the app (~hourly, the floor for distance types) when
+        # new Health distance lands, so the gem wallet re-mints on its own.
+        com.apple.developer.healthkit.background-delivery: true
         # Sign in with Apple requires a paid Apple Developer Program membership;
         # personal (free) teams can't provision it. Add back when we go paid:
         # com.apple.developer.applesignin: [Default]

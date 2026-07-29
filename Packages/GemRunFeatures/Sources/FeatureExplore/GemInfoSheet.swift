@@ -4,7 +4,7 @@ import DesignSystem
 import SwiftUI
 
 /// Tapping a gem pin on the Explore map opens this card: what the gem is,
-/// its rarity, its set, and a one-line blurb about the real material.
+/// its rarity, and a rotating real fact about the material.
 struct GemInfoSheet: View {
     let drop: GemDrop
     /// Provided by Explore: plan a walking path to this gem and start a
@@ -40,14 +40,9 @@ struct GemInfoSheet: View {
 
             HStack(spacing: 8) {
                 RarityBadge(drop.rarity, size: 14)
-                Text(drop.rarity.rawValue.capitalized)
+                Text("\(drop.rarity.rawValue.capitalized) gem")
                     .font(.subheadline.bold())
                     .foregroundStyle(DS.Colors.rarity(drop.rarity))
-                if let setName = entry?.setName {
-                    Text("· \(setName) set")
-                        .font(.subheadline)
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                }
             }
 
             if let facts = entry?.facts, !facts.isEmpty {
