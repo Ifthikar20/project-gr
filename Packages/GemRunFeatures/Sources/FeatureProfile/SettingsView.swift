@@ -425,12 +425,15 @@ struct DataTransparencyView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                block("Location — only while you look",
-                      "GemRun uses your location while the app is open: to "
-                      + "show gems near you and to record your path during a "
-                      + "run you started. We never track you in the "
-                      + "background, and there is no location history beyond "
-                      + "the runs you keep.")
+                block("Location — only for the map and your runs",
+                      "GemRun uses your location while the app is open, to "
+                      + "show gems near you. During a run YOU started, "
+                      + "tracking continues with the screen off or the app "
+                      + "pocketed — that's how gems collect mid-run — and "
+                      + "iOS shows its location indicator the whole time. "
+                      + "The moment the run ends, background tracking stops. "
+                      + "Outside a run we never track you, and there is no "
+                      + "location history beyond the runs you keep.")
                 block("Your GPS trace stays on your phone",
                       "When you finish a run, your route trace is sent once "
                       + "to our server to verify your gem collections were "
@@ -522,7 +525,9 @@ enum LegalDoc: String, Identifiable {
             time, pace, gems collected). Your raw GPS trace is used once, \
             transiently, to validate collections, and is stored only on \
             your device.
-            • Location: used while the app is open, never in the background.
+            • Location: used while the app is open; during an active run, \
+            tracking continues in the background (screen off, phone \
+            pocketed) until the run ends — never at any other time.
             • Apple Health: read/write only with your permission, only for \
             the features described in the app, each with an in-app switch.
 

@@ -6,6 +6,7 @@ import DesignSystem
 import GameKitCore
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// The in-run screen (docs/03 §7), Daybreak Pulse: light map, snow stats
 /// band, ink numerals, pulse for the live accent. Presented as a full-screen
@@ -45,7 +46,14 @@ public struct ActiveRunView: View {
             }
         }
         .onAppear {
+            // Pocket mode: the run keeps tracking and collecting with the
+            // screen off (background location). Ask for notification
+            // permission at run start — the one moment it's obviously
+            // useful — so a gem grabbed with the phone pocketed can say so.
+            UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound]) { _, _ in }
             engine.onCollect = { event in
+                notifyIfPocketed(event)
                 burst = event
                 HapticPlayer.shared.collection(for: event.drop.rarity)
                 Task {
@@ -257,6 +265,23 @@ public struct ActiveRunView: View {
                 .font(.caption)
                 .foregroundStyle(DS.Colors.inkSecondary)
         }
+    }
+
+    /// Screen off / app pocketed → the collection still happened (background
+    /// location keeps the engine running); tell the runner with a local
+    /// notification since the burst animation has no audience.
+    private func notifyIfPocketed(_ event: CollectionEngine.Event) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        let name = GemCatalog.entry(forGemID: event.drop.gemID)?.gem.name ?? "A gem"
+        let content = UNMutableNotificationContent()
+        content.title = "Gem collected!"
+        content.body = "\(name) is in this run's haul — keep going."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "gem-collect-\(event.drop.id.uuidString)",
+            content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+        print("[Vendor] Local notification posted for pocketed collection (\(name))")
     }
 
     private func finish() {

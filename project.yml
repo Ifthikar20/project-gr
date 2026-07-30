@@ -51,8 +51,9 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
         NSLocationWhenInUseUsageDescription: >-
-          GemRun uses your location during runs to confirm you passed each gem.
-          While-using only — we never track you outside a run.
+          GemRun uses your location during runs to confirm you passed each
+          gem, including with the screen off so gems collect while your
+          phone is in your pocket. We never track you outside a run.
         UIBackgroundModes: [location]
         NSHealthUpdateUsageDescription: >-
           GemRun saves your finished runs and walks to Health as workouts.

@@ -114,6 +114,13 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
   rotates with you, and an ETA at your current pace ("Rare · 240 ft ·
   ~2:15").
 - Stats band: time, **miles**, live steps (pedometer), **min/mi** pace.
+- **Pocket mode**: lock the screen or background the app mid-run and
+  tracking + gem capture keep going (background location, on only while
+  a run is live, with iOS's indicator showing; the OS auto-pause that
+  silently kills backgrounded GPS is disabled — the app's own
+  speed-based pause handles stops). A gem grabbed while pocketed posts
+  a local notification ("Gem collected!"); permission is asked at run
+  start. Just open the app, tap Start Run, pocket the phone.
 - Auto-pause when you stop moving; long-press to stop (deliberate
   friction); battery drain logged per run against the docs/04 budget.
 
