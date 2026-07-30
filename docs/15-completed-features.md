@@ -178,20 +178,24 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
   were **removed** (run history lives in Compete → My Routes); there was
   no backend for those sections to remove.
 - **Settings** (under Profile):
-  - **Account**: sign-in provider shown, username change (server-synced),
-    an explanation of why there is no password (provider/guest sign-in —
-    nothing to change or leak), sign out, and **real account deletion**:
-    server-side delete, then local erase, then sign-out. Placed gems are
-    anonymized (SET_NULL), not orphaned — App Store 5.1.1(v) compliant.
-  - **Permissions**: one tap to the app's iOS Settings page (location,
-    Health, motion).
-  - **Your data**: an explicit, plain-language page that mirrors what the
-    code actually does — GPS traces are used to validate runs and are not
-    stored server-side; Health is read only with permission and only for
-    distance/steps; no ads, no analytics SDKs, no selling data; deletion
-    is real.
+  - **Account, spelled out**: sign-in provider, username on file, an
+    explicit "Email: not stored" row, and a username editor with **live
+    availability checking** (debounced `GET /v1/handles/check`, server
+    enforces uniqueness with a 409 on rename races). Footer states
+    exactly what's on file; sign out.
+  - **Permissions, with real switches**: two in-app Apple Health toggles
+    that take effect instantly (save workouts / read steps — off means
+    the feature doesn't run), live status rows for Location and Motion,
+    and a system-settings link only as the last resort.
+  - **Your data**: the explicit page now also covers credential
+    hashing — session tokens and Apple/Google sign-in IDs are stored
+    only as one-way SHA-256 digests, never plaintext; no email, phone,
+    or password ever stored; usernames are public by design.
   - **Legal**: full Terms and Privacy Policy as in-app sheets.
-  - **About**: version.
+  - **About**: version + auto-incremented build number.
+  - **Danger zone at the very bottom**: "Erase all local data" and
+    "Delete account & data" (server delete → local erase → sign-out;
+    placed gems anonymized — App Store 5.1.1(v) compliant).
   (`FeatureProfile/ProfileRootView.swift`, `SettingsView.swift`)
 
 ---

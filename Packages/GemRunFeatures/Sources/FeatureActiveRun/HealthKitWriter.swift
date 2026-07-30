@@ -12,7 +12,8 @@ enum HealthKitWriter {
     /// unavailable/declined — and possibly for a minute or two right after
     /// a run, since the motion coprocessor flushes step samples in batches.
     static func steps(from start: Date, to end: Date) async -> Int {
-        guard HKHealthStore.isHealthDataAvailable() else { return 0 }
+        guard HealthPrefs.readSteps,
+              HKHealthStore.isHealthDataAvailable() else { return 0 }
         let store = HKHealthStore()
         let type = HKQuantityType(.stepCount)
         _ = try? await store.requestAuthorization(toShare: [], read: [type])
@@ -30,7 +31,8 @@ enum HealthKitWriter {
     }
 
     static func save(_ summary: RunCompletionSummary) async {
-        guard HKHealthStore.isHealthDataAvailable(),
+        guard HealthPrefs.saveWorkouts,
+              HKHealthStore.isHealthDataAvailable(),
               summary.status != .invalid, summary.durationS > 60 else { return }
         let store = HKHealthStore()
         do {

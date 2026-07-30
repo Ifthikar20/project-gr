@@ -226,6 +226,11 @@ public struct CompletedRun: Codable, Identifiable, Sendable {
 // MARK: - The contract
 
 public protocol GemRunAPI: Sendable {
+    /// Live availability for the Settings username editor (GET
+    /// /v1/handles/check): free for THIS caller to take? Your own current
+    /// handle counts as free.
+    func checkHandle(_ handle: String) async throws -> Bool
+
     // Auth & user — POST /v1/auth/apple, GET/PATCH/DELETE /v1/users/me
     func auth(handle: String) async throws -> AuthResponse
     func me() async throws -> UserProfile

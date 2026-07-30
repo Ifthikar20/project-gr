@@ -52,6 +52,16 @@ public final class HTTPGemRunAPI: GemRunAPI {
         let _: Empty = try await send("DELETE", "users/me", body: Empty())
     }
 
+    private struct HandleCheckResponse: Decodable {
+        let available: Bool
+    }
+
+    public func checkHandle(_ handle: String) async throws -> Bool {
+        let response: HandleCheckResponse = try await get(
+            "handles/check", query: ["handle": handle])
+        return response.available
+    }
+
     private struct RoutesResponse: Decodable {
         let routes: [Route]
     }

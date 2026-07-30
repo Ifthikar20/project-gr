@@ -49,6 +49,15 @@ public actor MockGemRunAPI: GemRunAPI {
         return profile
     }
 
+    public func checkHandle(_ handle: String) async throws -> Bool {
+        await call("GET /v1/handles/check?handle=\(handle)")
+        guard handle.count >= 3 else { return false }
+        // Mock competitors squat their names; your own handle stays free.
+        let taken = Self.competitors.map { $0.0.lowercased() }
+        return handle.lowercased() == profile.handle.lowercased()
+            || !taken.contains(handle.lowercased())
+    }
+
     public func updateMe(handle: String?) async throws -> UserProfile {
         await call("PATCH /v1/users/me")
         if let handle { profile.handle = handle }

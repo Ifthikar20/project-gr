@@ -46,6 +46,14 @@ def body_of(request):
         return None
 
 
+def digest(value):
+    """One-way SHA-256 of a client-held secret/identifier. Auth tokens and
+    provider user IDs are stored ONLY as digests — a leaked database holds
+    no usable bearer token and no raw Apple/Google identifier. The client
+    keeps the raw token; every lookup hashes before comparing."""
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
 def grant_welcome_gift(profile):
     """First-login gift: a deterministic starter set of stash gems (3 common,
     2 uncommon, 1 rare — same for everyone) so a brand-new player opens the
@@ -64,7 +72,8 @@ def grant_welcome_gift(profile):
 def profile_from(request):
     header = request.headers.get("Authorization", "")
     if header.startswith("Bearer "):
-        token = Token.objects.filter(key=header[7:]).select_related("profile").first()
+        token = (Token.objects.filter(key=digest(header[7:]))
+                 .select_related("profile").first())
         if token:
             return token.profile
     if settings.ALLOW_ALL_ACCOUNTS:
@@ -149,19 +158,23 @@ def auth_provider(request, provider):
         return problem(501, "Identity token verification not yet enabled",
                        code="auth_strict_mode")
     handle = (data.get("handle") or "runner").strip() or "runner"
+    # Provider IDs are stored hashed (see digest()) — lookups hash first.
+    hashed_external = digest(external_id) if external_id else None
     profile = None
-    if external_id:
+    if hashed_external:
         profile = Profile.objects.filter(auth_provider=provider,
-                                         external_user_id=external_id).first()
+                                         external_user_id=hashed_external).first()
     if profile is None:
         profile = Profile.objects.create(handle=handle, auth_provider=provider,
-                                         external_user_id=external_id)
+                                         external_user_id=hashed_external)
         grant_welcome_gift(profile)
     else:
         profile.handle = handle
         profile.save(update_fields=["handle"])
-    token = Token.objects.create(key=secrets.token_hex(24), profile=profile)
-    return JsonResponse({"token": token.key, "profile": profile_json(profile)})
+    # The client keeps the raw token; the DB keeps only its digest.
+    raw_token = secrets.token_hex(24)
+    Token.objects.create(key=digest(raw_token), profile=profile)
+    return JsonResponse({"token": raw_token, "profile": profile_json(profile)})
 
 
 @csrf_exempt
@@ -175,11 +188,34 @@ def me(request):
     if request.method == "PATCH":
         data = body_of(request) or {}
         if handle := (data.get("handle") or "").strip():
+            # Renames must be unique (case-insensitive) across everyone
+            # else — renaming to your own current handle is a no-op, not
+            # a conflict.
+            taken = (Profile.objects.filter(handle__iexact=handle)
+                     .exclude(id=profile.id).exists())
+            if taken:
+                return problem(409, "That username is taken",
+                               code="handle_taken")
             profile.handle = handle
             profile.save(update_fields=["handle"])
         return JsonResponse(profile_json(profile))
     profile.delete()   # DELETE — cascades runs/stash/tokens (App Store requirement)
     return JsonResponse({})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def handle_check(request):
+    """Live availability for the Settings username editor: is this handle
+    free for the CALLER to take? (Your own current handle counts as free.)"""
+    handle = (request.GET.get("handle") or "").strip()
+    if len(handle) < 3:
+        return JsonResponse({"available": False})
+    qs = Profile.objects.filter(handle__iexact=handle)
+    viewer = profile_from(request)
+    if viewer is not None:
+        qs = qs.exclude(id=viewer.id)
+    return JsonResponse({"available": not qs.exists()})
 
 
 # ---------------------------------------------------------------- routes

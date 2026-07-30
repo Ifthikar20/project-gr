@@ -1,4 +1,6 @@
+import CoreLocation
 import CoreModels
+import CoreMotion
 import CoreNetworking
 import CorePersistence
 import DesignSystem
@@ -6,12 +8,15 @@ import SwiftData
 import SwiftUI
 import UIKit
 
-/// Settings (docs/03 §11): account, permissions, data transparency, legal.
+/// Settings (docs/03 §11): account, permissions, data transparency, legal —
+/// destructive actions live at the very bottom, standard practice.
 /// Deliberately small — the essentials a location game owes its users:
-/// rename, sign out, in-app account deletion (App Store 5.1.1(v)), a
-/// plain-language "how we handle your data" page, privacy policy, terms.
-/// There is no password to change: sign-in is Apple-ID based, so the
-/// account section says exactly that instead of pretending otherwise.
+/// rename (with live availability), sign out, in-app account deletion
+/// (App Store 5.1.1(v)), working Apple Health toggles, a plain-language
+/// "how we handle your data" page, privacy policy, terms. There is no
+/// password to change: sign-in is Apple-ID based, and no email is ever
+/// stored — the account section says exactly that instead of pretending
+/// otherwise.
 @MainActor
 struct SettingsView: View {
     @Environment(SessionStore.self) private var session
@@ -19,10 +24,20 @@ struct SettingsView: View {
     @Environment(\.openURL) private var openURL
     @State private var newHandle = ""
     @State private var isSavingHandle = false
+    @State private var handleStatus: HandleStatus = .idle
+    @State private var checkTask: Task<Void, Never>?
     @State private var confirmingErase = false
     @State private var confirmingDelete = false
     @State private var isDeleting = false
     @State private var legalDoc: LegalDoc?
+    // In-app Health switches (HealthPrefs) — mirrored into @State so the
+    // toggles animate; every change writes straight back.
+    @State private var saveWorkouts = HealthPrefs.saveWorkouts
+    @State private var readSteps = HealthPrefs.readSteps
+
+    enum HandleStatus: Equatable {
+        case idle, tooShort, checking, available, taken, failed
+    }
 
     var body: some View {
         List {
@@ -31,6 +46,7 @@ struct SettingsView: View {
             dataSection
             legalSection
             aboutSection
+            dangerSection
         }
         .scrollContentBackground(.hidden)
         .background(DS.Colors.snow)
@@ -39,12 +55,19 @@ struct SettingsView: View {
         .sheet(item: $legalDoc) { doc in
             LegalTextView(doc: doc)
         }
+        .onChange(of: newHandle) { _, _ in scheduleAvailabilityCheck() }
+        .onChange(of: saveWorkouts) { _, on in HealthPrefs.saveWorkouts = on }
+        .onChange(of: readSteps) { _, on in HealthPrefs.readSteps = on }
     }
 
     // MARK: - Account
 
+    /// What actually falls under "Account", spelled out: how you're signed
+    /// in, the username on file (with live availability when changing it),
+    /// what we do and don't keep, and sign out. Deletion lives at the
+    /// bottom of the page, where destructive actions belong.
     private var accountSection: some View {
-        Section("Account") {
+        Section {
             let provider = switch session.authProvider {
             case .apple: "Signed in with Apple"
             case .google: "Signed in with Google"
@@ -55,75 +78,170 @@ struct SettingsView: View {
                 .foregroundStyle(DS.Colors.ink)
                 .listRowBackground(DS.Colors.snowCard)
 
-            HStack(spacing: 8) {
-                TextField("Change username", text: $newHandle,
-                          prompt: Text("@\(session.profile?.handle ?? "runner")"))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button {
-                    saveHandle()
-                } label: {
-                    if isSavingHandle {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Save").font(.caption.bold())
-                            .foregroundStyle(DS.Colors.pulse)
-                    }
-                }
-                .disabled(newHandle.trimmingCharacters(in: .whitespaces).isEmpty
-                          || isSavingHandle)
+            HStack {
+                Text("Username")
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                Text("@\(session.profile?.handle ?? "runner")")
+                    .foregroundStyle(DS.Colors.inkSecondary)
             }
             .listRowBackground(DS.Colors.snowCard)
 
-            Text("There's no GemRun password to change — your sign-in is "
-                 + "protected by your Apple ID (Face ID or passcode). Manage "
-                 + "it in iOS Settings → your name → Sign-In & Security.")
-                .font(.caption)
-                .foregroundStyle(DS.Colors.inkSecondary)
-                .listRowBackground(DS.Colors.snowCard)
+            HStack {
+                Text("Email")
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                Text("Not stored")
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            }
+            .listRowBackground(DS.Colors.snowCard)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    TextField("New username", text: $newHandle,
+                              prompt: Text("Change username"))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button {
+                        saveHandle()
+                    } label: {
+                        if isSavingHandle {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Save").font(.caption.bold())
+                                .foregroundStyle(handleStatus == .available
+                                    ? DS.Colors.pulse : DS.Colors.inkSecondary)
+                        }
+                    }
+                    .disabled(handleStatus != .available || isSavingHandle)
+                }
+                availabilityLine
+            }
+            .listRowBackground(DS.Colors.snowCard)
 
             Button("Sign out") { session.signOut() }
                 .foregroundStyle(DS.Colors.pulse)
                 .listRowBackground(DS.Colors.snowCard)
+        } header: {
+            Text("Account")
+        } footer: {
+            Text("On file: your username, how you signed in, a one-way "
+                 + "scrambled sign-in ID, and your gameplay stats. No email, "
+                 + "phone number, or password is ever stored, so there is "
+                 + "nothing more to leak. Sign-in security lives with your "
+                 + "Apple ID (Face ID or passcode).")
+                .font(.caption)
+                .foregroundStyle(DS.Colors.inkSecondary)
+        }
+    }
 
-            Button(isDeleting ? "Deleting…" : "Delete account & data",
-                   role: .destructive) {
-                confirmingDelete = true
+    /// Live feedback under the username field.
+    @ViewBuilder private var availabilityLine: some View {
+        switch handleStatus {
+        case .idle:
+            EmptyView()
+        case .tooShort:
+            Text("At least 3 characters")
+                .font(.caption2)
+                .foregroundStyle(DS.Colors.inkSecondary)
+        case .checking:
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.mini)
+                Text("Checking availability…")
             }
-            .disabled(isDeleting)
-            .listRowBackground(DS.Colors.snowCard)
-            .confirmationDialog(
-                "Delete your account? Your profile, runs, stash, and friends "
-                + "are erased from our server for good. Gems you placed stay "
-                + "on the map but are no longer linked to you.",
-                isPresented: $confirmingDelete, titleVisibility: .visible) {
-                Button("Delete everything", role: .destructive) {
-                    Task { await deleteAccount() }
-                }
-            }
+            .font(.caption2)
+            .foregroundStyle(DS.Colors.inkSecondary)
+        case .available:
+            Label("Available", systemImage: "checkmark.circle.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(DS.Colors.ink)
+        case .taken:
+            Label("Already taken", systemImage: "xmark.circle.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(DS.Colors.pulse)
+        case .failed:
+            Text("Couldn't check right now. Try again in a moment.")
+                .font(.caption2)
+                .foregroundStyle(DS.Colors.pulse)
         }
     }
 
     // MARK: - Permissions
 
+    /// Real, working switches — not a bounce to iOS Settings. iOS never
+    /// lets an app flip its own system permissions, so the Health toggles
+    /// gate what GemRun DOES (off = the feature doesn't run at all), and
+    /// the status rows show what the system currently allows.
     private var permissionsSection: some View {
-        Section("Permissions") {
+        Section {
+            Toggle(isOn: $saveWorkouts) {
+                Label("Save runs to Apple Health", systemImage: "heart.fill")
+                    .foregroundStyle(DS.Colors.ink)
+            }
+            .tint(DS.Colors.pulse)
+            .listRowBackground(DS.Colors.snowCard)
+
+            Toggle(isOn: $readSteps) {
+                Label("Read steps for run stats", systemImage: "figure.walk")
+                    .foregroundStyle(DS.Colors.ink)
+            }
+            .tint(DS.Colors.pulse)
+            .listRowBackground(DS.Colors.snowCard)
+
+            HStack {
+                Label("Location", systemImage: "location.fill")
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                Text(locationStatus)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            }
+            .listRowBackground(DS.Colors.snowCard)
+
+            HStack {
+                Label("Motion & steps", systemImage: "figure.run")
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                Text(motionStatus)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            }
+            .listRowBackground(DS.Colors.snowCard)
+
             Button {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     openURL(url)
                 }
             } label: {
-                Label("Location, Health & Motion — manage in iOS Settings",
-                      systemImage: "location.fill")
+                Label("System permissions in iOS Settings",
+                      systemImage: "gearshape")
                     .foregroundStyle(DS.Colors.ink)
             }
             .listRowBackground(DS.Colors.snowCard)
-            Text("Location is used while the app is open, never in the "
-                 + "background. Every permission can be revoked there at any "
-                 + "time — the app keeps working, with those features off.")
+        } header: {
+            Text("Permissions")
+        } footer: {
+            Text("The two Health switches take effect immediately, no "
+                 + "system dialog. Location is used while the app is open, "
+                 + "never in the background. Apple hides whether Health "
+                 + "reading was granted (by design) — if steps stay at 0, "
+                 + "check the Health app under Sharing.")
                 .font(.caption)
                 .foregroundStyle(DS.Colors.inkSecondary)
-                .listRowBackground(DS.Colors.snowCard)
+        }
+    }
+
+    private var locationStatus: String {
+        switch CLLocationManager().authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: "While using"
+        case .denied, .restricted: "Off"
+        default: "Not asked yet"
+        }
+    }
+
+    private var motionStatus: String {
+        switch CMMotionActivityManager.authorizationStatus() {
+        case .authorized: "On"
+        case .denied, .restricted: "Off"
+        default: "Not asked yet"
         }
     }
 
@@ -138,18 +256,6 @@ struct SettingsView: View {
                     .foregroundStyle(DS.Colors.ink)
             }
             .listRowBackground(DS.Colors.snowCard)
-
-            Button("Erase all local data", role: .destructive) {
-                confirmingErase = true
-            }
-            .listRowBackground(DS.Colors.snowCard)
-            .confirmationDialog(
-                "Erase everything on this phone? Runs, stash, and routes "
-                + "stored locally are gone for good. Your server account is "
-                + "not touched.",
-                isPresented: $confirmingErase, titleVisibility: .visible) {
-                Button("Erase local data", role: .destructive) { eraseLocal() }
-            }
         }
     }
 
@@ -199,17 +305,87 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Danger zone (always the last section)
+
+    private var dangerSection: some View {
+        Section {
+            Button("Erase all local data", role: .destructive) {
+                confirmingErase = true
+            }
+            .listRowBackground(DS.Colors.snowCard)
+            .confirmationDialog(
+                "Erase everything on this phone? Runs, stash, and routes "
+                + "stored locally are gone for good. Your server account is "
+                + "not touched.",
+                isPresented: $confirmingErase, titleVisibility: .visible) {
+                Button("Erase local data", role: .destructive) { eraseLocal() }
+            }
+
+            Button(isDeleting ? "Deleting…" : "Delete account & data",
+                   role: .destructive) {
+                confirmingDelete = true
+            }
+            .disabled(isDeleting)
+            .listRowBackground(DS.Colors.snowCard)
+            .confirmationDialog(
+                "Delete your account? Your profile, runs, stash, and friends "
+                + "are erased from our server for good. Gems you placed stay "
+                + "on the map but are no longer linked to you.",
+                isPresented: $confirmingDelete, titleVisibility: .visible) {
+                Button("Delete everything", role: .destructive) {
+                    Task { await deleteAccount() }
+                }
+            }
+        } footer: {
+            Text("Erase clears this phone only. Delete removes your account "
+                 + "and history from our server, permanently.")
+                .font(.caption)
+                .foregroundStyle(DS.Colors.inkSecondary)
+        }
+    }
+
     // MARK: - Actions
+
+    /// Debounced live availability: fires ~350 ms after the last keystroke,
+    /// and a stale response can never overwrite a newer field value.
+    private func scheduleAvailabilityCheck() {
+        checkTask?.cancel()
+        let handle = newHandle.trimmingCharacters(in: .whitespaces)
+        guard !handle.isEmpty else { handleStatus = .idle; return }
+        guard handle.count >= 3 else { handleStatus = .tooShort; return }
+        handleStatus = .checking
+        checkTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            let available = try? await API.shared.checkHandle(handle)
+            guard !Task.isCancelled,
+                  handle == newHandle.trimmingCharacters(in: .whitespaces)
+            else { return }
+            switch available {
+            case .none: handleStatus = .failed
+            case .some(true): handleStatus = .available
+            case .some(false): handleStatus = .taken
+            }
+        }
+    }
 
     private func saveHandle() {
         let handle = newHandle.trimmingCharacters(in: .whitespaces)
         guard !handle.isEmpty else { return }
         isSavingHandle = true
         Task {
-            if let updated = try? await API.shared.updateMe(handle: handle) {
+            do {
+                let updated = try await API.shared.updateMe(handle: handle)
                 session.profile?.handle = updated.handle
                 try? context.save()
                 newHandle = ""
+                handleStatus = .idle
+            } catch let error as HTTPGemRunAPI.HTTPError
+                        where error.code == "handle_taken" {
+                // Someone grabbed it between the live check and Save.
+                handleStatus = .taken
+            } catch {
+                handleStatus = .failed
             }
             isSavingHandle = false
         }
@@ -262,11 +438,21 @@ struct DataTransparencyView: View {
                       + "the outcome — distance, time, XP, which gems — not "
                       + "the trace. The full trace is stored only on your "
                       + "phone, and \"Erase all local data\" deletes it.")
-                block("Apple Health, by permission",
+                block("Apple Health, by permission and by switch",
                       "With your permission we read your step count to "
                       + "show accurate run stats, and save finished runs "
-                      + "as workouts. Revoke either anytime in iOS "
-                      + "Settings; the app keeps working.")
+                      + "as workouts. Both have in-app switches under "
+                      + "Permissions that stop them instantly, and the "
+                      + "system-level grants can be revoked in iOS "
+                      + "Settings anytime; the app keeps working.")
+                block("Sign-in secrets are scrambled",
+                      "Your session tokens and your Apple/Google sign-in ID "
+                      + "are stored only as one-way SHA-256 scrambles — "
+                      + "never in plaintext — so a leaked database contains "
+                      + "no usable credentials. We never store your email, "
+                      + "phone number, or any password. Your username is "
+                      + "public by design (leaderboards and friends), which "
+                      + "is why it isn't secret.")
                 block("What lives on our server",
                       "Your username, level, XP, streak, stash, friends "
                       + "list, and the runs' summary numbers. Gems you "
@@ -328,14 +514,17 @@ enum LegalDoc: String, Identifiable {
             return """
             GemRun collects the minimum needed to run the game:
 
-            • Account: a username you choose, plus level, XP, and streak.
+            • Account: a username you choose, plus level, XP, and streak. \
+            Session tokens and sign-in identifiers are stored only as \
+            one-way hashes; we never store your email, phone number, or \
+            any password.
             • Activity: summary numbers for runs you complete (distance, \
             time, pace, gems collected). Your raw GPS trace is used once, \
             transiently, to validate collections, and is stored only on \
             your device.
             • Location: used while the app is open, never in the background.
             • Apple Health: read/write only with your permission, only for \
-            the features described in the app.
+            the features described in the app, each with an in-app switch.
 
             We do not sell, rent, or share your personal data. We show no \
             ads and embed no third-party analytics or tracking SDKs.
@@ -354,7 +543,7 @@ enum LegalDoc: String, Identifiable {
 
             • Run safely. You are responsible for your surroundings — obey \
             traffic signals, stay on public paths, and never chase a gem \
-            into a place you shouldn't be. Gems only spawn on public \
+            into a place you shouldn't be. Gems only appear on public \
             walkable paths, but the judgment on the ground is always yours.
             • Play fair. GPS spoofing, automation, or tampering with the \
             service may void collections and can end your account.

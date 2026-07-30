@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path("auth/<str:provider>", views.auth_provider),
     path("users/me", views.me),
+    path("handles/check", views.handle_check),
     path("routes", views.routes),
     path("routes/<uuid:route_id>", views.route_detail),
     path("routes/<uuid:route_id>/leaderboard", views.route_leaderboard),

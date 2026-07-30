@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from . import catalog, system_drops, walkability
 from .geometry import RouteGeometry, polyline_decode, polyline_encode
-from .models import ClaimAttempt, GemDrop, Route
+from .models import ClaimAttempt, GemDrop, Profile, Route, Token
 
 DEG_PER_M_LAT = 1.0 / 111_320.0
 
@@ -164,6 +164,55 @@ class ApiTests(TestCase):
         me = self.client.get("/v1/users/me",
                              HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
         self.assertEqual(me["streak_count"], 1)   # same day: no double count
+
+    def test_tokens_and_provider_ids_are_hashed_at_rest(self):
+        import hashlib
+        # The raw bearer token the client holds never appears in the DB —
+        # only its SHA-256 digest does, and auth still works through it.
+        raw = self.token
+        self.assertFalse(Token.objects.filter(key=raw).exists())
+        expected = hashlib.sha256(raw.encode()).hexdigest()
+        self.assertTrue(Token.objects.filter(key=expected).exists())
+        me = self.client.get("/v1/users/me",
+                             HTTP_AUTHORIZATION=f"Bearer {raw}")
+        self.assertEqual(me.status_code, 200)
+        # Provider IDs are hashed too, and repeat sign-ins still map to
+        # the same profile via the hashed lookup.
+        first = self.client.post(
+            "/v1/auth/apple",
+            data=json.dumps({"handle": "hasher", "external_user_id": "apple-123"}),
+            content_type="application/json").json()
+        again = self.client.post(
+            "/v1/auth/apple",
+            data=json.dumps({"handle": "hasher", "external_user_id": "apple-123"}),
+            content_type="application/json").json()
+        self.assertEqual(first["profile"]["id"], again["profile"]["id"])
+        self.assertFalse(Profile.objects.filter(
+            external_user_id="apple-123").exists())
+
+    def test_username_change_checks_availability(self):
+        self.client.post("/v1/auth/apple", data=json.dumps({"handle": "taken_name"}),
+                         content_type="application/json")
+        check = self.client.get("/v1/handles/check", {"handle": "taken_name"},
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        self.assertFalse(check["available"])
+        check = self.client.get("/v1/handles/check", {"handle": "fresh_name"},
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        self.assertTrue(check["available"])
+        self.assertFalse(self.client.get(
+            "/v1/handles/check", {"handle": "ab"}).json()["available"])  # too short
+        denied = self.client.patch(
+            "/v1/users/me", data=json.dumps({"handle": "taken_name"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(denied.status_code, 409)
+        self.assertEqual(denied.json()["code"], "handle_taken")
+        ok = self.client.patch(
+            "/v1/users/me", data=json.dumps({"handle": "fresh_name"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json()["handle"], "fresh_name")
 
     def test_drops_response_carries_stocking_flag(self):
         # Inline mode (tests) answers pre-stocked, so the flag is False —
