@@ -90,7 +90,7 @@ struct RunCardView: View {
                 .opacity(isFlipped ? 1 : 0)
                 .accessibilityHidden(!isFlipped)
         }
-        .frame(height: 430)
+        .frame(height: 500)
         .rotation3DEffect(.degrees(isFlipped ? 180 : 0),
                           axis: (x: 0, y: 1, z: 0), perspective: 0.3)
         .contentShape(Rectangle())
@@ -118,17 +118,52 @@ struct RunCardView: View {
         return PolylineCodec.decode(polyline)
     }
 
-    // MARK: front — the numbers
+    // MARK: front — trading-card anatomy
+
+    /// Hero panel (the "player photo"): the shape of the path you actually
+    /// ran, drawn large, with the headline distance overlaid. Falls back to
+    /// a faint diamond watermark when no track exists.
+    private var hero: some View {
+        ZStack {
+            if pathCoords.count > 1 {
+                RouteShapeView(coords: pathCoords)
+            } else {
+                Image(systemName: "diamond.fill")
+                    .font(.system(size: 70))
+                    .foregroundStyle(DS.Colors.pulse.opacity(0.10))
+            }
+            VStack {
+                Spacer()
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(UnitFormat.milesText(fromMeters: Double(summary.distanceM)))
+                        .font(DS.Typography.statLarge)
+                        .foregroundStyle(DS.Colors.ink)
+                        .monospacedDigit()
+                    Text("mi")
+                        .font(DS.Typography.heading)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                    Spacer()
+                }
+            }
+            .padding(12)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 148)
+        .background(DS.Colors.snow, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .stroke(DS.Colors.hairline, lineWidth: 1))
+    }
 
     private var front: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 10) {
             HStack {
                 HStack(spacing: 5) {
                     Image(systemName: "diamond.fill")
                         .font(.caption)
                         .foregroundStyle(DS.Colors.pulse)
-                    Text("GemRun")
+                    Text("GEMRUN")
                         .font(.caption.bold())
+                        .kerning(1.2)
                         .foregroundStyle(DS.Colors.pulse)
                 }
                 Spacer()
@@ -137,56 +172,36 @@ struct RunCardView: View {
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
 
-            Text(summary.routeName)
-                .font(DS.Typography.heading)
-                .foregroundStyle(DS.Colors.ink)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 14)
+            hero
 
-            Spacer(minLength: 8)
-
-            HStack(alignment: .center, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(UnitFormat.milesText(fromMeters: Double(summary.distanceM)))
-                        .font(DS.Typography.statLarge)
-                        .foregroundStyle(DS.Colors.ink)
-                        .monospacedDigit()
-                    Text("mi")
-                        .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                }
+            HStack(spacing: 8) {
+                Text(summary.routeName)
+                    .font(DS.Typography.display(20))
+                    .foregroundStyle(DS.Colors.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Spacer()
-                if pathCoords.count > 1 {
-                    RouteShapeView(coords: pathCoords)
-                        .frame(width: 86, height: 86)
-                        .background(DS.Colors.snow,
-                                    in: RoundedRectangle(cornerRadius: 14))
-                        .overlay(RoundedRectangle(cornerRadius: 14)
-                            .stroke(DS.Colors.hairline, lineWidth: 1))
-                }
+                Text(summary.isWalk ? "WALK" : "RUN")
+                    .font(.system(size: 10, weight: .heavy))
+                    .kerning(0.8)
+                    .foregroundStyle(DS.Colors.snowCard)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(DS.Colors.pulse, in: Capsule())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 8)
-            cardDivider
-
-            HStack(spacing: 0) {
-                frontStat(formatDuration(summary.durationS), "Time")
-                frontStat(summary.paceSPerKm > 0
-                          ? formatDuration(UnitFormat.paceSecPerMile(
-                            fromSecPerKm: summary.paceSPerKm)) : "–", "Pace /mi")
-                frontStat(summary.steps > 0 ? "\(summary.steps)" : "–", "Steps")
+            HStack(spacing: 8) {
+                tile(formatDuration(summary.durationS), "Time")
+                tile(summary.paceSPerKm > 0
+                     ? formatDuration(UnitFormat.paceSecPerMile(
+                        fromSecPerKm: summary.paceSPerKm)) : "–", "Pace /mi")
+                tile(summary.steps > 0 ? "\(summary.steps)" : "–", "Steps")
             }
-            .padding(.vertical, 12)
-            cardDivider
-            HStack(spacing: 0) {
-                frontStat("~\(summary.approxCalories)", "Calories")
-                frontStat("+\(summary.xpEarned)", "XP", accent: true)
-                frontStat("\(summary.gems.count)", "Gems")
+            HStack(spacing: 8) {
+                tile("~\(summary.approxCalories)", "Calories")
+                tile("+\(summary.xpEarned)", "XP", accent: true)
+                tile("\(summary.gems.count)", "Gems")
             }
-            .padding(.vertical, 12)
-            cardDivider
 
             Group {
                 if summary.gems.isEmpty {
@@ -197,7 +212,7 @@ struct RunCardView: View {
                     HStack(spacing: 10) {
                         ForEach(Array(orderedGems.prefix(8).enumerated()),
                                 id: \.element.id) { i, gem in
-                            GemIcon(gemID: gem.gemID, size: 28)
+                            GemIcon(gemID: gem.gemID, size: 26)
                                 .scaleEffect(i < revealed ? 1 : 0.3)
                                 .opacity(i < revealed ? 1 : 0)
                                 .animation(.spring(duration: 0.45), value: revealed)
@@ -221,27 +236,34 @@ struct RunCardView: View {
             .foregroundStyle(DS.Colors.pulse)
             .frame(maxWidth: .infinity)
         }
-        .padding(20)
+        .padding(18)
         .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 22))
         .overlay(RoundedRectangle(cornerRadius: 22)
             .stroke(DS.Colors.hairline, lineWidth: 1))
         .shadow(color: DS.Colors.ink.opacity(0.12), radius: 16, y: 6)
     }
 
-    private func frontStat(_ value: String, _ label: String,
-                           accent: Bool = false) -> some View {
-        VStack(spacing: 2) {
+    /// Baseball-card stat tile: small caps label on top, the number under
+    /// it, on its own soft panel — snow on snow-card, hairline stroked.
+    private func tile(_ value: String, _ label: String,
+                      accent: Bool = false) -> some View {
+        VStack(spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .kerning(0.8)
+                .foregroundStyle(DS.Colors.inkSecondary)
             Text(value)
                 .font(DS.Typography.statMedium)
                 .foregroundStyle(accent ? DS.Colors.pulse : DS.Colors.ink)
                 .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(DS.Colors.inkSecondary)
+                .minimumScaleFactor(0.55)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 9)
+        .background(DS.Colors.snow, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .stroke(DS.Colors.hairline, lineWidth: 1))
     }
 
     private var cardDivider: some View {
