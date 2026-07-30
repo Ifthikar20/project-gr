@@ -103,10 +103,13 @@ public final class StoredStashItem {
     public var routeName: String
     public var collectedAt: Date
     public var isFirstFind: Bool
+    /// Given away as a map drop: still shown in the collection, no longer
+    /// offered by the drop sheet.
+    public var isDropped: Bool = false
 
     public init(id: UUID, gemID: UUID, gemDropID: UUID? = nil, gemName: String,
                 rarityRaw: String, setName: String, routeID: UUID, routeName: String,
-                collectedAt: Date, isFirstFind: Bool) {
+                collectedAt: Date, isFirstFind: Bool, isDropped: Bool = false) {
         self.id = id
         self.gemID = gemID
         self.gemDropID = gemDropID
@@ -117,6 +120,7 @@ public final class StoredStashItem {
         self.routeName = routeName
         self.collectedAt = collectedAt
         self.isFirstFind = isFirstFind
+        self.isDropped = isDropped
     }
 
     public var rarity: Rarity { Rarity(rawValue: rarityRaw) ?? .common }

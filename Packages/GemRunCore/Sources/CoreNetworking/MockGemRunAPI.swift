@@ -26,7 +26,10 @@ public actor MockGemRunAPI: GemRunAPI {
         ("pace.ghost", 9), ("gemhound", 3),
     ]
 
-    public init() {}
+    public init() {
+        // First login = the account exists now → welcome gift in the stash.
+        stashItems = MockGemRunAPI.welcomeGift()
+    }
 
     private func call(_ line: String) async {
         print("[MockAPI] \(line)")
@@ -46,6 +49,15 @@ public actor MockGemRunAPI: GemRunAPI {
         return profile
     }
 
+    public func checkHandle(_ handle: String) async throws -> Bool {
+        await call("GET /v1/handles/check?handle=\(handle)")
+        guard handle.count >= 3 else { return false }
+        // Mock competitors squat their names; your own handle stays free.
+        let taken = Self.competitors.map { $0.0.lowercased() }
+        return handle.lowercased() == profile.handle.lowercased()
+            || !taken.contains(handle.lowercased())
+    }
+
     public func updateMe(handle: String?) async throws -> UserProfile {
         await call("PATCH /v1/users/me")
         if let handle { profile.handle = handle }
@@ -54,10 +66,11 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func deleteAccount() async throws {
         await call("DELETE /v1/users/me")
-        stashItems.removeAll()
         awardedKeys.removeAll()
         userTimes.removeAll()
         profile = UserProfile(id: UUID(), handle: "runner")
+        // A fresh account starts over — including a fresh welcome gift.
+        stashItems = Self.welcomeGift()
     }
 
     // MARK: - Routes
@@ -198,43 +211,110 @@ public actor MockGemRunAPI: GemRunAPI {
         return GemCatalog.entries.map(\.gem)
     }
 
-    // MARK: - Gem wallet + standalone drops
+    // MARK: - Compete (friends board + run history)
 
-    // Starter pack: new runners open the app with a handful of gems already
-    // in the wallet, so dropping / running feels alive from tap zero.
-    private var wallet: GemWallet = [.common: 5, .uncommon: 3, .rare: 1]
-    private var mintedCounts: [Rarity: Int] = [:]
-    private var standaloneDrops: [UUID: GemDrop] = [:]
-    private var myDropIDs: Set<UUID> = []                  // never collect your own
-    private var seededStandalone = false
-
-    public func syncWallet(totalRunKm: Double) async throws -> GemWallet {
-        await call("POST /v1/wallet/sync  (\(String(format: "%.1f", totalRunKm)) km)")
-        for (tier, threshold) in MintRules.thresholdKm {
-            let earned = Int(totalRunKm / threshold)
-            let delta = earned - (mintedCounts[tier] ?? 0)
-            if delta > 0 {
-                wallet[tier, default: 0] += delta
-                mintedCounts[tier] = earned
-            }
-        }
-        return wallet
+    private static func rosterID(_ n: UInt8) -> UUID {
+        UUID(uuid: (0xF0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, n))
     }
 
-    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
+    private var mockFriends: [FriendEntry] = [
+        FriendEntry(id: MockGemRunAPI.rosterID(1), handle: "strideking",
+                    level: 7, isMe: false,
+                    weeklyXp: 240, weeklyDistanceM: 12_400, weeklyRuns: 3),
+        FriendEntry(id: MockGemRunAPI.rosterID(2), handle: "gemhunter42",
+                    level: 5, isMe: false,
+                    weeklyXp: 130, weeklyDistanceM: 6_100, weeklyRuns: 2),
+    ]
+    private let mockPlayers: [PlayerSummary] = [
+        PlayerSummary(id: MockGemRunAPI.rosterID(1), handle: "strideking", level: 7),
+        PlayerSummary(id: MockGemRunAPI.rosterID(2), handle: "gemhunter42", level: 5),
+        PlayerSummary(id: MockGemRunAPI.rosterID(3), handle: "dawnpatrol", level: 9),
+        PlayerSummary(id: MockGemRunAPI.rosterID(4), handle: "sidewalksam", level: 3),
+        PlayerSummary(id: MockGemRunAPI.rosterID(5), handle: "pearldiver", level: 6),
+        PlayerSummary(id: MockGemRunAPI.rosterID(6), handle: "quartzqueen", level: 8),
+    ]
+
+    public func myRuns() async throws -> [CompletedRun] {
+        await call("GET /v1/runs/mine")
+        return []           // mock UI is driven by the local StoredRun list
+    }
+
+    public func searchPlayers(query: String) async throws -> [PlayerSummary] {
+        await call("GET /v1/players?search=\(query)")
+        let q = query.lowercased()
+        guard q.count >= 2 else { return [] }
+        return mockPlayers.filter { $0.handle.lowercased().contains(q) }
+    }
+
+    public func friends() async throws -> [FriendEntry] {
+        await call("GET /v1/friends")
+        let me = FriendEntry(id: profile.id, handle: profile.handle,
+                             level: profile.level, isMe: true,
+                             weeklyXp: 120, weeklyDistanceM: 5_200,
+                             weeklyRuns: 2)
+        return ([me] + mockFriends).sorted { $0.weeklyXp > $1.weeklyXp }
+    }
+
+    public func addFriend(profileID: UUID) async throws -> [FriendEntry] {
+        await call("POST /v1/friends")
+        if !mockFriends.contains(where: { $0.id == profileID }),
+           let player = mockPlayers.first(where: { $0.id == profileID }) {
+            mockFriends.append(FriendEntry(
+                id: player.id, handle: player.handle, level: player.level,
+                isMe: false, weeklyXp: 0, weeklyDistanceM: 0, weeklyRuns: 0))
+        }
+        return try await friends()
+    }
+
+    public func removeFriend(profileID: UUID) async throws {
+        await call("DELETE /v1/friends/\(profileID)")
+        mockFriends.removeAll { $0.id == profileID }
+    }
+
+    // MARK: - Standalone drops & the welcome gift
+
+    private var standaloneDrops: [UUID: GemDrop] = [:]
+    private var myDropIDs: Set<UUID> = []                  // never collect your own
+
+    /// Server mirror of grant_welcome_gift: a deterministic starter set
+    /// (3 common, 2 uncommon, 1 rare) lands in the stash at first login,
+    /// so dropping / collecting feels alive from tap zero. No wallet.
+    static func welcomeGift() -> [StashItem] {
+        func first(_ rarity: Rarity, _ count: Int) -> [GemCatalog.Entry] {
+            Array(GemCatalog.entries.filter { $0.gem.rarity == rarity }.prefix(count))
+        }
+        return (first(.common, 3) + first(.uncommon, 2) + first(.rare, 1)).map {
+            StashItem(id: UUID(), gemID: $0.gem.id, gemDropID: UUID(uuid: UUID_NULL),
+                      runID: UUID(uuid: UUID_NULL), collectedAt: Date(),
+                      isFirstFind: false, source: "gift", dropped: false)
+        }
+    }
+
+    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> DropsPage {
         await call("GET /v1/drops?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
-        seedStandaloneIfNeeded(around: Coordinate(lat: lat, lng: lng))
-        return Array(standaloneDrops.values)
+        // No phantom seeding: real gem placement lives on the backend and
+        // is verified walkable. A fixed offset pattern here once produced
+        // "the same 3 gems, equally spaced, anywhere" — sometimes on water.
+        return DropsPage(drops: Array(standaloneDrops.values), stocking: false)
     }
 
     public func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop {
         await call("POST /v1/drops  (\(gemID.uuidString.prefix(8)))")
+        // Spend one droppable copy from the stash (mirror of the server's
+        // not_in_stash rule); the row stays, flagged dropped.
         guard let entry = GemCatalog.entry(forGemID: gemID),
               entry.gem.rarity != .legendary,
-              wallet[entry.gem.rarity, default: 0] > 0 else {
+              let index = stashItems.firstIndex(where: {
+                  $0.gemID == gemID && !($0.dropped ?? false)
+              }) else {
             throw URLError(.cannotParseResponse)
         }
-        wallet[entry.gem.rarity]! -= 1
+        let spent = stashItems[index]
+        stashItems[index] = StashItem(id: spent.id, gemID: spent.gemID,
+                                      gemDropID: spent.gemDropID, runID: spent.runID,
+                                      collectedAt: spent.collectedAt,
+                                      isFirstFind: spent.isFirstFind,
+                                      source: spent.source, dropped: true)
         let drop = GemDrop(id: UUID(), gemID: gemID, rarity: entry.gem.rarity,
                            lat: lat, lng: lng, positionAlongRouteM: 0,
                            respawnRule: .oneTime, placedBy: .creator)
@@ -272,22 +352,6 @@ public actor MockGemRunAPI: GemRunAPI {
 
     /// "Someone else loaded the app and left gems near you": three drops from
     /// other runners within a few hundred meters, waiting to be run to.
-    private func seedStandaloneIfNeeded(around center: Coordinate) {
-        guard !seededStandalone else { return }
-        seededStandalone = true
-        let placements: [(Rarity, Double, Double)] = [
-            (.common, 220, 140), (.uncommon, -310, 260), (.rare, 90, -420),
-        ]
-        for (rarity, dLatM, dLngM) in placements {
-            let position = Self.offset(center, dLatM: dLatM, dLngM: dLngM)
-            let drop = GemDrop(id: UUID(), gemID: GemCatalog.gem(of: rarity).id,
-                               rarity: rarity, lat: position.lat, lng: position.lng,
-                               positionAlongRouteM: 0, respawnRule: .oneTime,
-                               placedBy: .creator)
-            standaloneDrops[drop.id] = drop
-        }
-    }
-
     // MARK: - Internals
 
     private func claimRespawn(_ drop: GemDrop) -> Bool {
@@ -302,8 +366,4 @@ public actor MockGemRunAPI: GemRunAPI {
         return true
     }
 
-    private static func offset(_ c: Coordinate, dLatM: Double, dLngM: Double) -> Coordinate {
-        Coordinate(lat: c.lat + dLatM / 111_320,
-                   lng: c.lng + dLngM / (111_320 * cos(c.lat * .pi / 180)))
-    }
 }

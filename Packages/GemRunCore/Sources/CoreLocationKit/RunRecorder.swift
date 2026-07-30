@@ -31,6 +31,12 @@ public final class LiveRunRecorder: NSObject, CLLocationManagerDelegate {
         manager.activityType = .fitness
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.distanceFilter = GPSRules.distanceFilterM
+        // Pocket mode: iOS's own auto-pause kills location delivery when it
+        // thinks you've stopped — and once paused in the BACKGROUND it never
+        // resumes until the app is foregrounded, which read as "the run
+        // died in my pocket". We run our own pause/resume (GPSRules speeds),
+        // so the system one stays off.
+        manager.pausesLocationUpdatesAutomatically = false
     }
 
     public static func requestPermissionIfNeeded() {

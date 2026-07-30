@@ -22,7 +22,7 @@ public struct OnboardingView: View {
         ("map.fill", "Routes are treasure maps",
          "Every route near you has gems hidden along it — some in plain sight, some you'll have to find."),
         ("figure.run", "Run to collect",
-         "Pass within 25 meters of a gem and it's yours. Your phone buzzes; you never break stride."),
+         "Pass within 100 feet of a gem and it's yours. Your phone buzzes; you never break stride."),
         ("diamond.fill", "Leave something behind",
          "Draw your own routes and place gems for the next runner. Rare ones belong on the hard hills."),
     ]
@@ -72,7 +72,7 @@ public struct OnboardingView: View {
             Text("One thing first")
                 .font(DS.Typography.display(28))
                 .foregroundStyle(DS.Colors.ink)
-            Text("GemRun uses your location during runs to confirm you passed each gem. While-using only — we never track you outside a run.")
+            Text("GemRun uses your location during runs to confirm you passed each gem — even with your phone in your pocket, screen off. Outside a run, we never track you.")
                 .font(.body)
                 .foregroundStyle(DS.Colors.inkSecondary)
                 .multilineTextAlignment(.center)

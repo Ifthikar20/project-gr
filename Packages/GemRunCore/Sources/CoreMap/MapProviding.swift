@@ -1,6 +1,7 @@
 import CoreModels
 import MapKit
 import SwiftUI
+import UIKit
 
 // The map seam (docs/07): nothing outside CoreMap imports a map SDK.
 // Current provider is MapKit (free, native, zero-config — app renders dark
@@ -87,33 +88,90 @@ public enum MapPalette {
     }
 }
 
-/// A gem pin that falls onto the map with a spring (the pin-drop animation).
-/// Renders the specific gem type's emoji when given a gemID; otherwise falls
-/// back to a rarity-tier emoji.
-public struct DropPin: View {
-    let emoji: String
-    @State private var dropped = false
+/// THE gem artwork resolver, used by every surface that draws a gem (map
+/// pins, info sheet, run card, share card, stash flight). Prefers a custom
+/// PNG from the asset catalog — asset name = the catalog `iconRef`, e.g.
+/// "gem.amber" — and falls back to the emoji until one exists. Dropping
+/// the PNG collection into Assets.xcassets under those names upgrades the
+/// whole app at once, no code changes (scripts/import-gem-art.sh does the
+/// drop: downscales GEMS_REPO/*.png once and writes the imagesets).
+/// Existence verdicts are cached per launch — see GemArtProbe below.
+public struct GemIcon: View {
+    let gemID: UUID
+    let size: CGFloat
 
-    public init(gemID: UUID) {
-        self.emoji = MapPalette.emoji(forGemID: gemID)
-    }
-
-    public init(rarity: Rarity) {
-        self.emoji = MapPalette.emoji(rarity)
+    public init(gemID: UUID, size: CGFloat) {
+        self.gemID = gemID
+        self.size = size
     }
 
     public var body: some View {
-        Text(emoji)
-            .font(.title2)
-            .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
-            .offset(y: dropped ? 0 : -30)
-            .scaleEffect(dropped ? 1 : 1.3, anchor: .bottom)
-            .opacity(dropped ? 1 : 0)
-            .onAppear {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
-                    dropped = true
-                }
+        if let ref = GemCatalog.entry(forGemID: gemID)?.gem.iconRef,
+           GemArtProbe.exists(ref) {
+            Image(ref)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+        } else {
+            Text(MapPalette.emoji(forGemID: gemID))
+                .font(.system(size: size * 0.82))
+        }
+    }
+}
+
+/// One bundle probe per icon ref per launch. UIImage(named:) caches
+/// decoded HITS system-wide, but a MISS re-searches the bundle on every
+/// call — and until the full art set ships most refs are misses, with
+/// dozens of pins re-rendering on every map change. The verdict cache
+/// makes the miss path a dictionary hit.
+@MainActor
+private enum GemArtProbe {
+    private static var verdicts: [String: Bool] = [:]
+
+    static func exists(_ ref: String) -> Bool {
+        if let known = verdicts[ref] { return known }
+        let present = UIImage(named: ref) != nil
+        verdicts[ref] = present
+        return present
+    }
+}
+
+/// A gem pin that falls onto the map with a spring (the pin-drop animation).
+/// Renders the gem's artwork (GemIcon) when given a gemID; otherwise falls
+/// back to a rarity-tier emoji.
+public struct DropPin: View {
+    let gemID: UUID?
+    let fallbackEmoji: String
+    @State private var dropped = false
+
+    public init(gemID: UUID) {
+        self.gemID = gemID
+        self.fallbackEmoji = MapPalette.emoji(forGemID: gemID)
+    }
+
+    public init(rarity: Rarity) {
+        self.gemID = nil
+        self.fallbackEmoji = MapPalette.emoji(rarity)
+    }
+
+    public var body: some View {
+        Group {
+            if let gemID {
+                GemIcon(gemID: gemID, size: 26)
+            } else {
+                Text(fallbackEmoji)
+                    .font(.title2)
             }
+        }
+        .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
+        .offset(y: dropped ? 0 : -30)
+        .scaleEffect(dropped ? 1 : 1.3, anchor: .bottom)
+        .opacity(dropped ? 1 : 0)
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
+                dropped = true
+            }
+        }
     }
 }
 
@@ -161,6 +219,12 @@ public struct ExploreMapView: View {
     let onTapCoordinate: ((Coordinate) -> Void)?
     /// Tap on a gem pin — the caller shows the gem-info card.
     let onSelectDrop: ((GemDrop) -> Void)?
+    /// Bump to snap the camera back to the user (the location capsule's
+    /// tap). A counter instead of a bool so repeat taps keep working.
+    let recenterTick: Int
+
+    @State private var cameraPosition: MapCameraPosition =
+        .userLocation(fallback: .automatic)
 
     public init(routes: [Route], standaloneDrops: [GemDrop] = [], selectedID: UUID?,
                 previewPath: [Coordinate] = [],
@@ -168,7 +232,8 @@ public struct ExploreMapView: View {
                 userCoordinate: Coordinate? = nil,
                 onSelect: @escaping (Route) -> Void,
                 onTapCoordinate: ((Coordinate) -> Void)? = nil,
-                onSelectDrop: ((GemDrop) -> Void)? = nil) {
+                onSelectDrop: ((GemDrop) -> Void)? = nil,
+                recenterTick: Int = 0) {
         self.routes = routes
         self.standaloneDrops = standaloneDrops
         self.selectedID = selectedID
@@ -178,6 +243,7 @@ public struct ExploreMapView: View {
         self.onSelect = onSelect
         self.onTapCoordinate = onTapCoordinate
         self.onSelectDrop = onSelectDrop
+        self.recenterTick = recenterTick
     }
 
     public var body: some View {
@@ -188,11 +254,19 @@ public struct ExploreMapView: View {
                           let coord = proxy.convert(screenPoint, from: .local) else { return }
                     onTapCoordinate(Coordinate(lat: coord.latitude, lng: coord.longitude))
                 }
+                .onChange(of: recenterTick) { _, _ in
+                    guard let here = userCoordinate else { return }
+                    withAnimation(.easeInOut(duration: 0.6)) {
+                        cameraPosition = .region(MKCoordinateRegion(
+                            center: here.cl,
+                            latitudinalMeters: 1_200, longitudinalMeters: 1_200))
+                    }
+                }
         }
     }
 
     private var mapContent: some View {
-        Map(initialPosition: .userLocation(fallback: .automatic)) {
+        Map(position: $cameraPosition) {
             if let userCoordinate {
                 Annotation("You", coordinate: userCoordinate.cl) {
                     Text("🏃")
@@ -218,7 +292,7 @@ public struct ExploreMapView: View {
             if previewPath.count > 1 {
                 MapPolyline(coordinates: previewPath.map(\.cl))
                     .stroke(MapPalette.pulse,
-                            style: StrokeStyle(lineWidth: 4, dash: [8, 5]))
+                            style: StrokeStyle(lineWidth: 3, dash: [8, 5]))
             }
             if let destinationPin {
                 Annotation("", coordinate: destinationPin.cl) {
@@ -254,6 +328,13 @@ public struct ExploreMapView: View {
             }
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+        // A real, always-on compass (top-trailing): shows which way is
+        // north, and tapping it after a two-finger rotation snaps the map
+        // back to north-up — native MapKit behavior, always tappable.
+        .mapControls {
+            MapCompass()
+                .mapControlVisibility(.visible)
+        }
     }
 }
 
@@ -279,8 +360,7 @@ public struct RoutePreviewMap: View {
                             .font(.footnote)
                             .foregroundStyle(MapPalette.ink.opacity(0.35))
                     } else {
-                        Text(MapPalette.emoji(forGemID: drop.gemID))
-                            .font(.callout)
+                        GemIcon(gemID: drop.gemID, size: 22)
                             .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                     }
                 }
@@ -461,6 +541,15 @@ public struct ActiveRunMapView: View {
     /// Drops currently playing their capture sparkle (cleared ~1.6 s after
     /// the collection lands, leaving the muted checkmark behind).
     @State private var sparklingDropIDs: Set<UUID> = []
+    /// Furthest progress (meters) along the guide line the runner has
+    /// covered. The line is drawn from here onward only, so it visibly
+    /// disappears behind you as you advance. Monotonic: it never refills.
+    @State private var coveredM: Double = 0
+    /// How far off the line you can be while still "covering" it. Snapped
+    /// paths follow road centerlines while people walk the sidewalk beside
+    /// them, so this stays generous: walking parallel to the line consumes
+    /// it; wandering off on a detour does not.
+    private let guideCorridorM: Double = 75
 
     public init(route: Route?, freeDrops: [GemDrop] = [],
                 plannedPath: [Coordinate] = [], runnerPosition: Coordinate?,
@@ -480,11 +569,13 @@ public struct ActiveRunMapView: View {
     public var body: some View {
         ZStack(alignment: .topTrailing) {
             Map(position: $cameraPosition) {
-                if let route {
-                    MapPolyline(coordinates: PolylineCodec.decode(route.polyline).map(\.cl))
-                        .stroke(MapPalette.pulse, lineWidth: 4)
-                } else if plannedPath.count > 1 {
-                    MapPolyline(coordinates: plannedPath.map(\.cl))
+                // Only the not-yet-covered remainder of the guide line is
+                // drawn — the part behind the runner disappears, and the
+                // ink breadcrumb below takes over as the record of where
+                // you actually went.
+                let remaining = remainderOf(guideLine, fromM: coveredM)
+                if remaining.count > 1 {
+                    MapPolyline(coordinates: remaining.map(\.cl))
                         .stroke(MapPalette.pulse, lineWidth: 4)
                 }
                 // The trail of steps actually taken this run — smoothed with
@@ -505,8 +596,7 @@ public struct ActiveRunMapView: View {
                                 .font(.footnote)
                                 .foregroundStyle(MapPalette.ink.opacity(0.35))
                         } else {
-                            Text(MapPalette.emoji(forGemID: drop.gemID))
-                                .font(.callout)
+                            GemIcon(gemID: drop.gemID, size: 22)
                                 .shadow(color: MapPalette.ink.opacity(0.5), radius: 1, y: 1)
                         }
                     }
@@ -537,6 +627,12 @@ public struct ActiveRunMapView: View {
                 }
             }
             .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            // Always-on compass: north indicator while running, and the
+            // native tap-to-reset after any two-finger rotation.
+            .mapControls {
+                MapCompass()
+                    .mapControlVisibility(.visible)
+            }
             .onChange(of: collectedDropIDs) { old, new in
                 let fresh = new.subtracting(old)
                 guard !fresh.isEmpty else { return }
@@ -549,10 +645,12 @@ public struct ActiveRunMapView: View {
             .onChange(of: runnerPosition?.lat) { _, _ in
                 updateHeading()
                 pushCameraIfFollowing()
+                consumeGuideLine()
             }
             .onChange(of: runnerPosition?.lng) { _, _ in
                 updateHeading()
                 pushCameraIfFollowing()
+                consumeGuideLine()
             }
             // Detect user pan: if the camera drifts far from the runner while
             // we're supposed to be following, they dragged it — release follow.
@@ -598,7 +696,9 @@ public struct ActiveRunMapView: View {
                         .overlay(Circle().stroke(MapPalette.ink.opacity(0.15), lineWidth: 1))
                         .shadow(color: MapPalette.ink.opacity(0.2), radius: 4, y: 2)
                 }
-                .padding(.top, 60)
+                // Below the map's compass (top-trailing) so neither control
+                // covers the other.
+                .padding(.top, 112)
                 .padding(.trailing, 16)
                 .accessibilityLabel("Recenter on runner")
                 .transition(.scale.combined(with: .opacity))
@@ -620,6 +720,73 @@ public struct ActiveRunMapView: View {
 
     /// Simple 3-sample moving average — keeps the trail visually clean without
     /// the cost/latency of re-running MKDirections on the traveled path.
+    /// The pulse guide line for this run: the route's polyline, or the
+    /// snapped planned path on a free run. Empty when neither exists.
+    private var guideLine: [Coordinate] {
+        if let route { return PolylineCodec.decode(route.polyline) }
+        return plannedPath
+    }
+
+    /// Advance `coveredM` to the runner's furthest on-line progress. Only
+    /// positions within `guideCorridorM` of the line count — walking the
+    /// sidewalk beside a road-snapped line still consumes it, but leaving
+    /// the line (a shortcut, a detour) freezes it until you rejoin.
+    private func consumeGuideLine() {
+        guard let runner = runnerPosition else { return }
+        let line = guideLine
+        guard line.count > 1,
+              let hit = projectOntoGuide(runner, line: line),
+              hit.crossM <= guideCorridorM else { return }
+        coveredM = max(coveredM, hit.alongM)
+    }
+
+    /// Planar projection of a point onto the polyline: distance along the
+    /// line of the nearest point, and how far off the line the point sits.
+    private func projectOntoGuide(_ p: Coordinate,
+                                  line: [Coordinate]) -> (alongM: Double, crossM: Double)? {
+        let kLat = 111_320.0
+        let kLng = kLat * max(0.1, cos(line[0].lat * .pi / 180))
+        var best: (alongM: Double, crossM: Double)?
+        var cum = 0.0
+        for i in 0..<(line.count - 1) {
+            let a = line[i], b = line[i + 1]
+            let px = (p.lng - a.lng) * kLng, py = (p.lat - a.lat) * kLat
+            let sx = (b.lng - a.lng) * kLng, sy = (b.lat - a.lat) * kLat
+            let len2 = sx * sx + sy * sy
+            let segLen = len2.squareRoot()
+            let t = len2 > 0 ? min(1, max(0, (px * sx + py * sy) / len2)) : 0
+            let cross = ((px - t * sx) * (px - t * sx)
+                + (py - t * sy) * (py - t * sy)).squareRoot()
+            if best == nil || cross < best!.crossM {
+                best = (cum + t * segLen, cross)
+            }
+            cum += segLen
+        }
+        return best
+    }
+
+    /// The polyline from `fromM` meters onward — the cut point interpolated
+    /// on its segment so the line shrinks smoothly, not node by node.
+    private func remainderOf(_ line: [Coordinate], fromM: Double) -> [Coordinate] {
+        guard line.count > 1, fromM > 0 else { return line }
+        let kLat = 111_320.0
+        let kLng = kLat * max(0.1, cos(line[0].lat * .pi / 180))
+        var cum = 0.0
+        for i in 0..<(line.count - 1) {
+            let a = line[i], b = line[i + 1]
+            let segLen = ((b.lat - a.lat) * kLat * (b.lat - a.lat) * kLat
+                + (b.lng - a.lng) * kLng * (b.lng - a.lng) * kLng).squareRoot()
+            if cum + segLen > fromM, segLen > 0 {
+                let t = (fromM - cum) / segLen
+                let cut = Coordinate(lat: a.lat + t * (b.lat - a.lat),
+                                     lng: a.lng + t * (b.lng - a.lng))
+                return [cut] + line[(i + 1)...]
+            }
+            cum += segLen
+        }
+        return []          // fully covered — nothing left to draw
+    }
+
     private func smoothedTrail(_ raw: [Coordinate]) -> [Coordinate] {
         guard raw.count >= 3 else { return raw }
         var out: [Coordinate] = [raw[0]]
@@ -671,12 +838,13 @@ func region(for coords: [Coordinate]) -> MKCoordinateRegion {
 }
 
 /// Snap consecutive waypoints to walkable paths via MKDirections (docs/03 §4).
-/// Falls back to a straight segment when routing fails — callers that place
-/// gems must use `snapVerified` and treat `snapped == false` segments as
-/// unconfirmed (they may cross private land; docs/13 §2).
+/// Every caller must honor the `snapped` flag: `false` means the returned
+/// pair is a straight-line placeholder, NOT a walkable path — never draw it
+/// (it may cross water, highways, private land; docs/13 §2). There is
+/// deliberately no unchecked convenience API.
 public enum PathSnapper {
     /// The snapped path plus whether MKDirections actually confirmed it as a
-    /// walking route (`false` = straight-line fallback, NOT a walkable path).
+    /// walking route (`false` = straight-line placeholder, NOT a walkable path).
     public static func snapVerified(from a: Coordinate,
                                     to b: Coordinate) async -> (path: [Coordinate],
                                                                 snapped: Bool) {
@@ -684,19 +852,55 @@ public enum PathSnapper {
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: a.cl))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: b.cl))
         request.transportType = .walking
+        let started = Date()
         do {
             let response = try await MKDirections(request: request).calculate()
-            guard let poly = response.routes.first?.polyline else { return ([a, b], false) }
+            let ms = Int(Date().timeIntervalSince(started) * 1_000)
+            guard let poly = response.routes.first?.polyline else {
+                print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): no route in \(ms) ms")
+                return ([a, b], false)
+            }
             var coords = [CLLocationCoordinate2D](repeating: .init(), count: poly.pointCount)
             poly.getCoordinates(&coords, range: NSRange(location: 0, length: poly.pointCount))
+            print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): \(poly.pointCount) pts in \(ms) ms")
             return (coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }, true)
         } catch {
+            let ms = Int(Date().timeIntervalSince(started) * 1_000)
+            print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)) FAILED after \(ms) ms: \(error.localizedDescription)")
             return ([a, b], false)
         }
     }
 
-    /// Path-only convenience for previews, where verification doesn't matter.
-    public static func snap(from a: Coordinate, to b: Coordinate) async -> [Coordinate] {
-        await snapVerified(from: a, to: b).path
+    /// Every alternate walking path MKDirections offers between two points,
+    /// best-first, deduplicated. Empty = NO confirmed walking route (or the
+    /// request failed) — this API deliberately has no straight-line
+    /// fallback, so callers can refuse unwalkable segments outright.
+    /// Alternates arrive in the same single request: no extra quota.
+    public static func snapAlternates(from a: Coordinate,
+                                      to b: Coordinate) async -> [[Coordinate]] {
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: a.cl))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: b.cl))
+        request.transportType = .walking
+        request.requestsAlternateRoutes = true
+        let started = Date()
+        guard let response = try? await MKDirections(request: request).calculate() else {
+            print("[Vendor] MKDirections alternates (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)) FAILED after \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+            return []
+        }
+        print("[Vendor] MKDirections alternates (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): \(response.routes.count) route(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+        var options: [[Coordinate]] = []
+        for route in response.routes {
+            let poly = route.polyline
+            var coords = [CLLocationCoordinate2D](repeating: .init(),
+                                                  count: poly.pointCount)
+            poly.getCoordinates(&coords, range: NSRange(location: 0,
+                                                        length: poly.pointCount))
+            let path = coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }
+            if path.count >= 2, !options.contains(path) {
+                options.append(path)
+            }
+        }
+        return options
     }
 }

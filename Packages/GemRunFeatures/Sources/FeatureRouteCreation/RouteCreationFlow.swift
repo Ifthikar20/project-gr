@@ -39,28 +39,64 @@ final class CreationModel {
     enum Step { case draw, gems, publish }
     enum PlanMode { case draw, destination }
 
+    /// One verified segment between consecutive numbered dots. `options`
+    /// holds every walkable alternate MKDirections offered for the pair —
+    /// never empty, because an unwalkable leg is rejected instead of stored.
+    /// The drawn path is `options[chosenIndex]`; "Another path" advances it.
+    struct Leg {
+        let options: [[Coordinate]]
+        var chosenIndex: Int
+        var path: [Coordinate] { options[chosenIndex] }
+    }
+
     var step: Step = .draw
     var planMode: PlanMode = .draw
     var waypoints: [Coordinate] = []
-    var pathCoords: [Coordinate] = []
-    /// Along-route stretches where MKDirections could NOT confirm a walking
-    /// path (straight-line fallback). Gems are refused here — an unverified
-    /// segment may cross private land (docs/13 §2).
-    var unsnappedRangesM: [ClosedRange<Double>] = []
+    /// Idle invariant: legs.count == max(0, waypoints.count - 1). While the
+    /// snap worker drains, trailing waypoints briefly outnumber legs.
+    var legs: [Leg] = []
     var placedDrops: [GemDrop] = []
     var selectedRarity: Rarity = .common
     var name = ""
     var descriptionText = ""
     var placementError: String?
-    private var snapping = false
+    /// Transient "No walkable path to that spot." style message; auto-clears.
+    var pathNotice: String?
+    /// Draw-mode "Finding a walkable path…" indicator (worker lifetime).
+    var isSnapping = false
+    @ObservationIgnored private var snapWorker: Task<Void, Never>?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
 
     // Destination mode: start (current location or a typed address) → pin.
     var destination: Coordinate?
+    var destinationPath: [Coordinate] = []
     var startAddress = ""
     /// nil = "use my current location" (the default).
     var customStart: Coordinate?
     var planError: String?
     var isPlanning = false
+    @ObservationIgnored private var planGeneration = 0
+
+    /// Single source of truth for the drawn/published polyline, derived per
+    /// mode. Draw mode concatenates the chosen path of each verified leg —
+    /// unverified geometry is structurally impossible here.
+    var pathCoords: [Coordinate] {
+        switch planMode {
+        case .draw:
+            guard let first = waypoints.first else { return [] }
+            var out = [first]
+            for leg in legs { out.append(contentsOf: leg.path.dropFirst()) }
+            return out
+        case .destination:
+            return destinationPath
+        }
+    }
+
+    /// "Another path" is offered only for the most recent settled leg, and
+    /// only when MKDirections actually returned more than one option.
+    var canCycleAlternate: Bool {
+        !isSnapping && (legs.last?.options.count ?? 0) > 1
+    }
 
     var geometry: RouteGeometry { RouteGeometry(coordinates: pathCoords) }
     var distanceM: Int { Int(geometry.totalLengthM) }
@@ -122,66 +158,94 @@ final class CreationModel {
             planError = "Waiting for your location — or type a start address."
             return
         }
+        // Generation token: rapid re-pinning can finish out of order, and an
+        // older plan must never overwrite a newer pin's result.
+        planGeneration += 1
+        let generation = planGeneration
         isPlanning = true
         defer { isPlanning = false }
         let result = await PathSnapper.snapVerified(from: start, to: destination)
-        waypoints = [start, destination]
-        pathCoords = result.path
-        unsnappedRangesM = result.snapped
-            ? [] : [0...RouteGeometry(coordinates: result.path).totalLengthM]
-    }
-
-    func addWaypoint(_ c: Coordinate) {
-        let previous = waypoints.last
-        waypoints.append(c)
-        guard let previous else {
-            pathCoords = [c]
-            unsnappedRangesM = []
+        guard generation == planGeneration else { return }
+        guard result.snapped else {
+            // Never keep the straight-line fallback: an unreachable pin is
+            // rejected outright, and a fresh tap is the retry gesture.
+            self.destination = nil
+            destinationPath = []
+            planError = "No walkable path there — try a closer pin."
             return
         }
-        guard !snapping else { return }
-        snapping = true
-        Task {
-            // Snap to walkable paths via MKDirections; a straight-line
-            // fallback is recorded as an unverified stretch (no gems there).
-            let result = await PathSnapper.snapVerified(from: previous, to: c)
-            let startM = geometry.totalLengthM
-            pathCoords.append(contentsOf: result.path.dropFirst())
-            if !result.snapped {
-                unsnappedRangesM.append(startM...geometry.totalLengthM)
+        destinationPath = result.path
+    }
+
+    /// Draw mode: the numbered dot appears instantly; the serial worker
+    /// verifies a walking path to it and rejects the dot if none exists.
+    func addWaypoint(_ c: Coordinate) {
+        waypoints.append(c)
+        ensureSnapWorker()
+    }
+
+    /// One drain loop resolves pending legs strictly in order. Everything
+    /// runs on the main actor, so between awaits nothing interleaves and
+    /// each iteration's read-check-mutate is atomic. Rapid taps queue
+    /// naturally; undo and rejections re-shape the queue and the loop just
+    /// re-derives the next job from live state — legs can never silently
+    /// desync from waypoints.
+    private func ensureSnapWorker() {
+        guard snapWorker == nil, waypoints.count - 1 > legs.count else { return }
+        isSnapping = true
+        snapWorker = Task {
+            defer {
+                snapWorker = nil
+                isSnapping = false
             }
-            snapping = false
+            while legs.count < waypoints.count - 1 {
+                let i = legs.count
+                let from = waypoints[i], to = waypoints[i + 1]
+                let options = await PathSnapper.snapAlternates(from: from, to: to)
+                // Undo may have mutated state during the await — apply the
+                // result only if this job still describes the pending leg.
+                guard i == legs.count, i + 1 < waypoints.count,
+                      waypoints[i] == from, waypoints[i + 1] == to else { continue }
+                if options.isEmpty {
+                    // No confirmed walking route (highway, river, private
+                    // land, or MKDirections unreachable): reject the dot —
+                    // nothing unwalkable is ever drawn or published.
+                    waypoints.remove(at: i + 1)
+                    showPathNotice("No walkable path to that spot.")
+                } else {
+                    legs.append(Leg(options: options, chosenIndex: 0))
+                }
+            }
         }
     }
 
+    /// Pure array surgery — zero MKDirections requests. A leg is popped only
+    /// when the removed dot's leg had settled; an in-flight result for it is
+    /// discarded by the worker's revalidation guard.
     func undoWaypoint() {
         guard !waypoints.isEmpty else { return }
         waypoints.removeLast()
-        Task { await rebuildPath() }
+        if !legs.isEmpty, legs.count == waypoints.count {
+            legs.removeLast()
+        }
     }
 
-    /// Full re-snap of the path through all remaining waypoints.
-    private func rebuildPath() async {
-        guard !snapping else { return }
-        snapping = true
-        defer { snapping = false }
-        guard let first = waypoints.first else {
-            pathCoords = []
-            unsnappedRangesM = []
-            return
+    /// "Another path": swap the most recent segment for MKDirections' next
+    /// alternate. The dots stay exactly where they are — only the connecting
+    /// line changes; a full cycle wraps back to the original.
+    func cycleAlternatePath() {
+        guard canCycleAlternate, let last = legs.indices.last else { return }
+        legs[last].chosenIndex = (legs[last].chosenIndex + 1) % legs[last].options.count
+    }
+
+    private func showPathNotice(_ text: String) {
+        pathNotice = text
+        noticeTask?.cancel()
+        noticeTask = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            pathNotice = nil
         }
-        var rebuilt = [first]
-        var ranges: [ClosedRange<Double>] = []
-        for (a, b) in zip(waypoints, waypoints.dropFirst()) {
-            let result = await PathSnapper.snapVerified(from: a, to: b)
-            let startM = RouteGeometry(coordinates: rebuilt).totalLengthM
-            rebuilt.append(contentsOf: result.path.dropFirst())
-            if !result.snapped {
-                ranges.append(startM...RouteGeometry(coordinates: rebuilt).totalLengthM)
-            }
-        }
-        pathCoords = rebuilt
-        unsnappedRangesM = ranges
     }
 
     /// Budget + spacing + rarity-position rules (docs/02), with kind rejections.
@@ -204,11 +268,10 @@ final class CreationModel {
             placementError = "Not enough rarity points left for \(selectedRarity.rawValue)."
             return
         }
+        // Every drawn stretch is a confirmed walking path by construction
+        // (unwalkable legs are rejected at draw time), so gems can go
+        // anywhere along the route that passes the rules below.
         let alongM = projection.alongRouteM
-        if unsnappedRangesM.contains(where: { $0.contains(alongM) }) {
-            placementError = "This stretch isn't a confirmed walking path — place the gem on a snapped section."
-            return
-        }
         if placedDrops.contains(where: {
             abs(Double($0.positionAlongRouteM) - alongM) < Double(PlacementBudget.minGemSpacingM)
         }) {
@@ -225,7 +288,7 @@ final class CreationModel {
         // (docs/02) approximates to: Epics only on routes ≥ 8 km. Server
         // validates against real elevation in Phase F.
         if selectedRarity == .epic, distanceM < 8_000 {
-            placementError = "Epics need a hard route — at least 8 km for now."
+            placementError = "Epics need a hard route — at least 5 miles for now."
             return
         }
         let snapped = geometry.coordinate(atDistance: alongM)

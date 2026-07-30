@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.utils import timezone
 
 
 class Profile(models.Model):
@@ -14,10 +15,6 @@ class Profile(models.Model):
     streak_shields = models.IntegerField(default=0)
     streak_last_date = models.DateField(null=True, blank=True)
     completed_sets = models.JSONField(default=list)
-    # Gem wallet: gems earned by running, available to drop. {"common": 2, ...}
-    wallet = models.JSONField(default=dict)
-    # Per-tier counts already minted, so re-syncs never double-mint.
-    wallet_minted = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -62,6 +59,16 @@ class GemDrop(models.Model):
     respawn_rule = models.CharField(max_length=16)
     placed_by = models.CharField(max_length=12, default="creator")
     active = models.BooleanField(default=True)
+    # Daily rotation input: system gems spawned before today expire on the
+    # next map open, so the world never repeats yesterday's layout.
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        # Every hot query filters active + a lat range (mile counts, warm
+        # probe, map read, spacing, rotation). `active` leads because daily
+        # rotation makes inactive rows the majority as the table ages.
+        indexes = [models.Index(fields=["active", "lat", "lng"],
+                                name="gemdrop_active_lat_lng")]
 
 
 class Run(models.Model):
@@ -87,6 +94,24 @@ class Run(models.Model):
         ]
 
 
+class Friendship(models.Model):
+    """One-directional follow (docs/03 §10): YOUR friends list is yours —
+    adding someone puts them on your weekly board, removing them only edits
+    your list. Mutual consent can layer on later without a schema change."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE,
+                                related_name="friendships")
+    friend = models.ForeignKey(Profile, on_delete=models.CASCADE,
+                               related_name="befriended_by")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["profile", "friend"],
+                                    name="uniq_friendship"),
+        ]
+
+
 class ClaimAttempt(models.Model):
     """Write-audit of the gem race (docs/13): EVERY attempt to claim a
     standalone drop is logged — winners and losers — so 'who was there and
@@ -106,10 +131,22 @@ class ClaimAttempt(models.Model):
 
 
 class StashItem(models.Model):
+    """One owned gem. The stash IS the whole gem economy — there is no
+    separate wallet: gems arrive by collecting drops on runs (source="run")
+    or as the one-time welcome gift at signup (source="gift", no gem_drop),
+    and leave by being dropped on the map for another runner (dropped_at
+    set — the row stays, so the collection record survives the give-away)."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="stash")
     gem_id = models.UUIDField()
-    gem_drop = models.ForeignKey(GemDrop, on_delete=models.CASCADE, related_name="collections")
+    # Null for welcome-gift gems (they were never on the map). SET_NULL so
+    # purging old drop rows never erases anyone's collection.
+    gem_drop = models.ForeignKey(GemDrop, null=True, blank=True,
+                                 on_delete=models.SET_NULL, related_name="collections")
     run = models.ForeignKey(Run, null=True, blank=True, on_delete=models.SET_NULL)
+    source = models.CharField(max_length=12, default="run")   # run | gift
     collected_at = models.DateTimeField()
     is_first_find = models.BooleanField(default=False)
+    # Set when this gem was given away as a map drop: no longer droppable,
+    # still shown in the collection.
+    dropped_at = models.DateTimeField(null=True, blank=True)

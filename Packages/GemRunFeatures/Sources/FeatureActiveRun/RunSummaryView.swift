@@ -3,20 +3,14 @@ import CorePersistence
 import DesignSystem
 import SwiftUI
 
-/// The reward ceremony (docs/03 §8), Daybreak Pulse: white cards on snow,
-/// gems reveal rarest-last in the pulse ramp, honest validation states.
+/// The reward ceremony (docs/03 §8), Daybreak Pulse: one flippable run
+/// card (stats on the front, the finds' real-material stories on the
+/// back), honest validation states, splits, share.
 struct RunSummaryView: View {
     let summary: RunCompletionSummary
     let onDone: () -> Void
     @State private var revealed = 0
     @State private var shareImage: Image?
-
-    private var orderedGems: [RunCompletionSummary.CollectedGem] {
-        let order: [Rarity] = [.common, .uncommon, .rare, .epic, .legendary]
-        return summary.gems.sorted {
-            (order.firstIndex(of: $0.rarity) ?? 0) < (order.firstIndex(of: $1.rarity) ?? 0)
-        }
-    }
 
     var body: some View {
         ScrollView {
@@ -26,7 +20,10 @@ struct RunSummaryView: View {
                     .foregroundStyle(DS.Colors.ink)
                     .padding(.top, 32)
 
-                gemReveal
+                RunCardView(summary: summary, revealed: revealed)
+                    .padding(.horizontal, 20)
+
+                bonusNotes
 
                 if summary.status == .flagged || summary.status == .pending {
                     Text("We're confirming your run — gems will settle into your stash shortly.")
@@ -49,8 +46,6 @@ struct RunSummaryView: View {
                         .padding(.horizontal, 32)
                 }
 
-                xpCard
-                statsCard
                 splitsCard
 
                 if let shareImage {
@@ -90,41 +85,10 @@ struct RunSummaryView: View {
         }
     }
 
-    private var gemReveal: some View {
-        VStack(spacing: 12) {
-            if summary.gems.isEmpty {
-                Text("No gems this time — the route remembers you anyway.")
-                    .font(.subheadline)
-                    .foregroundStyle(DS.Colors.inkSecondary)
-            } else {
-                HStack(spacing: 18) {
-                    ForEach(Array(orderedGems.enumerated()), id: \.element.id) { i, gem in
-                        VStack(spacing: 6) {
-                            Image(systemName: DS.rarityGlyph(gem.rarity))
-                                .font(.system(size: 40))
-                                .foregroundStyle(i < revealed
-                                    ? DS.Colors.rarity(gem.rarity)
-                                    : DS.Colors.hairline)
-                                .scaleEffect(i < revealed ? 1 : 0.7)
-                                .animation(.spring(duration: 0.5), value: revealed)
-                            Text(i < revealed ? gem.name : "?")
-                                .font(.caption2)
-                                .foregroundStyle(DS.Colors.inkSecondary)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                .airbnbCard()
-                .padding(.horizontal, 20)
-            }
-        }
-    }
-
-    private var xpCard: some View {
-        VStack(spacing: 8) {
-            Text("+\(summary.xpEarned) XP")
-                .font(DS.Typography.statLarge)
-                .foregroundStyle(DS.Colors.pulse)
+    /// Bonus context that used to live in the XP card — now a quiet row of
+    /// notes under the run card (which carries the XP number itself).
+    private var bonusNotes: some View {
+        VStack(spacing: 6) {
             if summary.multiplier > 1 {
                 Text(String(format: "includes %.1f× streak bonus", summary.multiplier))
                     .font(.caption)
@@ -135,8 +99,8 @@ struct RunSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
-            if summary.setBonusXP > 0, let setName = summary.completedSetName {
-                Label("\(setName) set complete! +\(summary.setBonusXP) XP",
+            if summary.setBonusXP > 0, let tier = summary.completedSetName {
+                Label("All \(tier) gems found! +\(summary.setBonusXP) XP",
                       systemImage: "rosette")
                     .font(.subheadline.bold())
                     .foregroundStyle(DS.Colors.pulse)
@@ -146,39 +110,13 @@ struct RunSummaryView: View {
                     .font(.subheadline.bold())
                     .foregroundStyle(DS.Colors.pulse)
             }
-        }
-        .frame(maxWidth: .infinity)
-        .airbnbCard()
-        .padding(.horizontal, 20)
-    }
-
-    /// Rough energy estimate from distance alone (no body-weight profile
-    /// yet): ~1.03 kcal/kg/km running, ~0.53 walking, 70 kg assumed.
-    private var approxCalories: Int {
-        let km = Double(summary.distanceM) / 1_000
-        return Int(km * 70 * (summary.isWalk ? 0.53 : 1.03))
-    }
-
-    private var statsCard: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 24) {
-                stat(formatDuration(summary.durationS), "Time")
-                stat(String(format: "%.2f km", Double(summary.distanceM) / 1_000), "Distance")
-                stat(summary.paceSPerKm > 0 ? formatDuration(summary.paceSPerKm) : "–", "Pace")
-            }
-            HStack(spacing: 24) {
-                if summary.steps > 0 {
-                    stat("\(summary.steps)", "Steps")
-                }
-                stat("~\(approxCalories)", "Calories")
-                if let rank = summary.leaderboardRank {
-                    stat("#\(rank)", "Route rank")
-                }
+            if let rank = summary.leaderboardRank {
+                Label("#\(rank) on this route", systemImage: "trophy")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(DS.Colors.pulse)
             }
         }
-        .frame(maxWidth: .infinity)
-        .airbnbCard()
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 32)
     }
 
     private var splitsCard: some View {
@@ -191,7 +129,7 @@ struct RunSummaryView: View {
                     let fastest = summary.splitsS.min() ?? 0
                     ForEach(Array(summary.splitsS.enumerated()), id: \.offset) { i, split in
                         HStack {
-                            Text("km \(i + 1)")
+                            Text("mi \(i + 1)")
                                 .foregroundStyle(DS.Colors.inkSecondary)
                                 .frame(width: 52, alignment: .leading)
                             Text(formatDuration(split))
@@ -215,17 +153,6 @@ struct RunSummaryView: View {
                 .airbnbCard()
                 .padding(.horizontal, 20)
             }
-        }
-    }
-
-    private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(DS.Typography.statMedium)
-                .foregroundStyle(DS.Colors.ink)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(DS.Colors.inkSecondary)
         }
     }
 

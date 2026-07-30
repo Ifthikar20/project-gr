@@ -44,7 +44,8 @@ class Command(BaseCommand):
         w(f"  standalone system gems ...... {system.count()} (the map's loose pins)")
         w(f"  standalone user drops ....... {user_drops.count()}")
         w(f"  presence trigger ............ {'ON' if settings.PRESENCE_DROPS else 'OFF'} "
-          f"(target {settings.PRESENCE_DROP_MAX_PER_AREA}/area)")
+          f"(mile contract: floor {settings.PRESENCE_FLOOR} / "
+          f"fill {settings.PRESENCE_FILL_TARGET} / max {settings.PRESENCE_HARD_MAX})")
         w(f"  walkability mode ............ {settings.WALKABILITY_MODE}")
         if settings.WALKABILITY_MODE == "overpass":
             verdict = walkability.is_walkable(lat, lng)
@@ -57,7 +58,7 @@ class Command(BaseCommand):
                 "→ No system gems or qualifying routes here YET — but bootstrap is "
                 f"{'ON' if settings.PRESENCE_BOOTSTRAP else 'OFF'}: the next map open "
                 "(GET /v1/drops) stocks this area itself — on OSM walkable ways when "
-                "reachable, else scattered a short walk from the user.\n"
+                "reachable; with no trusted geometry it stays empty (fail closed).\n"
                 "  Make sure the app's location matches these coordinates."))
         elif not system.exists():
             w(self.style.WARNING(

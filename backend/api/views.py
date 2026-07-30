@@ -11,13 +11,15 @@ from datetime import datetime, timedelta, timezone as tz
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Prefetch
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from . import catalog, rules, system_drops, validation, walkability
 from .geometry import RouteGeometry, polyline_decode
-from .models import ClaimAttempt, GemDrop, Profile, Route, Run, StashItem, Token
+from .models import (ClaimAttempt, Friendship, GemDrop, Profile, Route, Run,
+                     StashItem, Token)
 
 FUZZ_RADIUS_M = 150
 
@@ -44,10 +46,34 @@ def body_of(request):
         return None
 
 
+def digest(value):
+    """One-way SHA-256 of a client-held secret/identifier. Auth tokens and
+    provider user IDs are stored ONLY as digests — a leaked database holds
+    no usable bearer token and no raw Apple/Google identifier. The client
+    keeps the raw token; every lookup hashes before comparing."""
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def grant_welcome_gift(profile):
+    """First-login gift: a deterministic starter set of stash gems (3 common,
+    2 uncommon, 1 rare — same for everyone) so a brand-new player opens the
+    Stash to real gems and has something to drop for others immediately.
+    There is no wallet — these live in the stash like any collected gem."""
+    now = datetime.now(tz.utc)
+    gifts = (catalog.gems_of("common", 3) + catalog.gems_of("uncommon", 2)
+             + catalog.gems_of("rare", 1))
+    StashItem.objects.bulk_create([
+        StashItem(profile=profile, gem_id=g["id"], gem_drop=None, run=None,
+                  source="gift", collected_at=now, is_first_find=False)
+        for g in gifts
+    ])
+
+
 def profile_from(request):
     header = request.headers.get("Authorization", "")
     if header.startswith("Bearer "):
-        token = Token.objects.filter(key=header[7:]).select_related("profile").first()
+        token = (Token.objects.filter(key=digest(header[7:]))
+                 .select_related("profile").first())
         if token:
             return token.profile
     if settings.ALLOW_ALL_ACCOUNTS:
@@ -62,6 +88,7 @@ def profile_from(request):
         if profile is None:
             profile = Profile.objects.create(handle="runner", auth_provider="guest",
                                              external_user_id="dev-fallback")
+            grant_welcome_gift(profile)
         return profile
     return None
 
@@ -90,15 +117,21 @@ def drop_json(d, exact=True):
     return payload
 
 
-def route_json(route, viewer=None):
-    collected_drop_ids = set()
-    if viewer is not None:
-        collected_drop_ids = set(
-            StashItem.objects.filter(profile=viewer, gem_drop__route=route)
-            .values_list("gem_drop_id", flat=True))
+def route_json(route, viewer=None, collected_ids=None, active_drops=None):
+    """List pages pass `collected_ids` (one stash query for the whole page)
+    and `active_drops` (prefetched) so N routes cost a fixed number of
+    queries; single-route callers omit both and keep the per-route lookups."""
+    if collected_ids is None:
+        collected_ids = set()
+        if viewer is not None:
+            collected_ids = set(
+                StashItem.objects.filter(profile=viewer, gem_drop__route=route)
+                .values_list("gem_drop_id", flat=True))
+    if active_drops is None:
+        active_drops = route.gem_drops.filter(active=True)
     drops = []
-    for d in route.gem_drops.filter(active=True):
-        exact = (d.rarity in ("common", "uncommon")) or (d.id in collected_drop_ids)
+    for d in active_drops:
+        exact = (d.rarity in ("common", "uncommon")) or (d.id in collected_ids)
         drops.append(drop_json(d, exact=exact))
     return {"id": str(route.id), "name": route.name, "description": route.description,
             "polyline": route.polyline, "distance_m": route.distance_m,
@@ -125,18 +158,23 @@ def auth_provider(request, provider):
         return problem(501, "Identity token verification not yet enabled",
                        code="auth_strict_mode")
     handle = (data.get("handle") or "runner").strip() or "runner"
+    # Provider IDs are stored hashed (see digest()) — lookups hash first.
+    hashed_external = digest(external_id) if external_id else None
     profile = None
-    if external_id:
+    if hashed_external:
         profile = Profile.objects.filter(auth_provider=provider,
-                                         external_user_id=external_id).first()
+                                         external_user_id=hashed_external).first()
     if profile is None:
         profile = Profile.objects.create(handle=handle, auth_provider=provider,
-                                         external_user_id=external_id)
+                                         external_user_id=hashed_external)
+        grant_welcome_gift(profile)
     else:
         profile.handle = handle
         profile.save(update_fields=["handle"])
-    token = Token.objects.create(key=secrets.token_hex(24), profile=profile)
-    return JsonResponse({"token": token.key, "profile": profile_json(profile)})
+    # The client keeps the raw token; the DB keeps only its digest.
+    raw_token = secrets.token_hex(24)
+    Token.objects.create(key=digest(raw_token), profile=profile)
+    return JsonResponse({"token": raw_token, "profile": profile_json(profile)})
 
 
 @csrf_exempt
@@ -150,11 +188,34 @@ def me(request):
     if request.method == "PATCH":
         data = body_of(request) or {}
         if handle := (data.get("handle") or "").strip():
+            # Renames must be unique (case-insensitive) across everyone
+            # else — renaming to your own current handle is a no-op, not
+            # a conflict.
+            taken = (Profile.objects.filter(handle__iexact=handle)
+                     .exclude(id=profile.id).exists())
+            if taken:
+                return problem(409, "That username is taken",
+                               code="handle_taken")
             profile.handle = handle
             profile.save(update_fields=["handle"])
         return JsonResponse(profile_json(profile))
     profile.delete()   # DELETE — cascades runs/stash/tokens (App Store requirement)
     return JsonResponse({})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def handle_check(request):
+    """Live availability for the Settings username editor: is this handle
+    free for the CALLER to take? (Your own current handle counts as free.)"""
+    handle = (request.GET.get("handle") or "").strip()
+    if len(handle) < 3:
+        return JsonResponse({"available": False})
+    qs = Profile.objects.filter(handle__iexact=handle)
+    viewer = profile_from(request)
+    if viewer is not None:
+        qs = qs.exclude(id=viewer.id)
+    return JsonResponse({"available": not qs.exists()})
 
 
 # ---------------------------------------------------------------- routes
@@ -172,11 +233,29 @@ def routes(request):
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
         viewer = profile_from(request)
+        # Fixed query count regardless of page size: routes + creators in
+        # one, active drops prefetched in one, viewer's collected ids in
+        # one — the old shape ran two extra queries PER ROUTE, which sat
+        # directly in the map's time-to-reveal path.
         qs = (Route.objects.filter(status="published",
                                    lat__gte=lat - dlat, lat__lte=lat + dlat,
                                    lng__gte=lng - dlng, lng__lte=lng + dlng)
-              .order_by("name"))
-        return JsonResponse({"routes": [route_json(r, viewer) for r in qs]})
+              .order_by("name")
+              .select_related("creator")
+              .prefetch_related(Prefetch(
+                  "gem_drops",
+                  queryset=GemDrop.objects.filter(active=True),
+                  to_attr="active_drops")))
+        page = list(qs)
+        collected = set()
+        if viewer is not None and page:
+            collected = set(
+                StashItem.objects.filter(profile=viewer,
+                                         gem_drop__route__in=page)
+                .values_list("gem_drop_id", flat=True))
+        return JsonResponse({"routes": [
+            route_json(r, viewer, collected_ids=collected,
+                       active_drops=r.active_drops) for r in page]})
     return publish_route(request)
 
 
@@ -490,8 +569,10 @@ def stash(request):
     if profile is None:
         return problem(401, "Sign in required")
     items = [{"id": str(s.id), "gem_id": str(s.gem_id),
-              "gem_drop_id": str(s.gem_drop_id), "run_id": str(s.run_id or uuid.UUID(int=0)),
-              "collected_at": iso(s.collected_at), "is_first_find": s.is_first_find}
+              "gem_drop_id": str(s.gem_drop_id or uuid.UUID(int=0)),
+              "run_id": str(s.run_id or uuid.UUID(int=0)),
+              "collected_at": iso(s.collected_at), "is_first_find": s.is_first_find,
+              "source": s.source, "dropped": s.dropped_at is not None}
              for s in profile.stash.order_by("-collected_at")]
     return JsonResponse({"items": items})
 
@@ -535,62 +616,147 @@ def local_leaderboard(request):
         for i, (p, xp) in enumerate(rows)]})
 
 
-# ------------------------------------------------- wallet & standalone drops
+# ------------------------------------------------- my runs, players, friends
+
+def _week_start():
+    now = datetime.now(tz.utc)
+    return now - timedelta(days=now.weekday(), hours=now.hour,
+                           minutes=now.minute, seconds=now.second)
+
 
 @csrf_exempt
-@require_http_methods(["POST"])
-def wallet_sync(request):
-    """Mint wallet gems from total lifetime run distance (Apple Health,
-    client-reported — trusted while the accept-all dev flag is on)."""
+@require_http_methods(["GET"])
+def my_runs(request):
+    """Completed-run history for the Compete tab's "My Routes" cards —
+    server copy of what the phone also stores locally, so a fresh install
+    (or second device) can show history."""
     profile = profile_from(request)
     if profile is None:
         return problem(401, "Sign in required")
-    data = body_of(request) or {}
-    try:
-        total_km = max(0.0, float(data.get("total_run_km", 0)))
-    except (TypeError, ValueError):
-        return problem(400, "total_run_km must be a number")
-    wallet = dict(profile.wallet or {})
-    minted = dict(profile.wallet_minted or {})
-    for tier, threshold in rules.MINT_THRESHOLD_KM.items():
-        earned = int(total_km // threshold)
-        delta = earned - int(minted.get(tier, 0))
-        if delta > 0:
-            wallet[tier] = int(wallet.get(tier, 0)) + delta
-            minted[tier] = earned
-    profile.wallet = wallet
-    profile.wallet_minted = minted
-    profile.save(update_fields=["wallet", "wallet_minted"])
-    return JsonResponse({"wallet": wallet})
+    rows = (Run.objects.filter(profile=profile)
+            .select_related("route").order_by("-started_at")[:50])
+    return JsonResponse({"runs": [
+        {"id": str(r.id), "route_id": str(r.route_id),
+         "route_name": r.route.name, "started_at": iso(r.started_at),
+         "duration_s": r.duration_s, "distance_m": r.distance_m,
+         "pace_s_per_km": r.pace_s_per_km, "is_walk": r.is_walk,
+         "status": r.status, "xp_earned": r.xp_earned}
+        for r in rows]})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def players(request):
+    """Username search for the friends board. Case-insensitive substring
+    on handle, excluding yourself; capped at 20."""
+    profile = profile_from(request)
+    query = (request.GET.get("search") or "").strip()
+    if len(query) < 2:
+        return JsonResponse({"players": []})
+    qs = Profile.objects.filter(handle__icontains=query)
+    if profile is not None:
+        qs = qs.exclude(id=profile.id)
+    return JsonResponse({"players": [
+        {"id": str(p.id), "handle": p.handle, "level": p.level}
+        for p in qs.order_by("handle")[:20]]})
 
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
-def drops(request):
+def friends(request):
+    """GET: your friends (plus yourself) with this-week stats, ranked by
+    weekly XP — the Compete tab's "This Week" board. POST {profile_id}:
+    add a friend (one-directional; idempotent)."""
     profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+
+    if request.method == "POST":
+        data = body_of(request) or {}
+        try:
+            friend_id = uuid.UUID(str(data.get("profile_id")))
+        except (ValueError, AttributeError, TypeError):
+            return problem(400, "profile_id is required")
+        if friend_id == profile.id:
+            return problem(422, "You're already on your own board")
+        friend = Profile.objects.filter(id=friend_id).first()
+        if friend is None:
+            return problem(404, "No such player")
+        Friendship.objects.get_or_create(profile=profile, friend=friend)
+
+    week_start = _week_start()
+    members = [profile] + [f.friend for f in
+                           profile.friendships.select_related("friend")
+                           .order_by("created_at")]
+    weekly = {m.id: {"xp": 0, "distance_m": 0, "runs": 0} for m in members}
+    for run in Run.objects.filter(profile_id__in=weekly.keys(),
+                                  started_at__gte=week_start):
+        row = weekly[run.profile_id]
+        row["xp"] += run.xp_earned
+        row["distance_m"] += run.distance_m
+        row["runs"] += 1
+    members.sort(key=lambda m: -weekly[m.id]["xp"])
+    return JsonResponse({"friends": [
+        {"id": str(m.id), "handle": m.handle, "level": m.level,
+         "is_me": m.id == profile.id,
+         "weekly_xp": weekly[m.id]["xp"],
+         "weekly_distance_m": weekly[m.id]["distance_m"],
+         "weekly_runs": weekly[m.id]["runs"]}
+        for m in members]})
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def friend_detail(request, friend_id):
+    """Swipe-to-remove: deletes only YOUR follow row."""
+    profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+    Friendship.objects.filter(profile=profile, friend_id=friend_id).delete()
+    return JsonResponse({})
+
+
+# ------------------------------------------------- standalone drops
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def drops(request):
     if request.method == "GET":
+        # No profile lookup on the read path — the GET branch never uses
+        # it, and it used to cost a Token/Profile query per map open.
         try:
             lat = float(request.GET["lat"])
             lng = float(request.GET["lng"])
             radius = int(request.GET.get("radius_m", 5000))
         except (KeyError, ValueError):
             return problem(400, "lat, lng and radius_m are required")
-        # Presence trigger (docs/13): this map query's coordinates ARE the
-        # capture point — top up system gems here before answering, so gems
-        # only ever spawn where people actually use the app. Best-effort:
-        # a top-up failure must never break the map read.
+        # Presence trigger (docs/13, docs/14 §2.1): this map query's
+        # coordinates ARE the capture point. Warm miles hand rotation +
+        # top-up to a background worker and answer instantly; only
+        # first-contact bootstrap runs inline (budget-bounded) so the
+        # first-ever answer is already stocked. Best-effort: a trigger
+        # failure must never break the map read. The client's radius_m is
+        # a READ radius only — the stocking budget is the per-mile
+        # contract, independent of how much map the client wants to see.
         try:
-            system_drops.top_up_area(lat, lng, radius)
+            stocking = system_drops.presence_trigger(lat, lng)
         except Exception:
-            pass
+            stocking = False
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
         qs = GemDrop.objects.filter(route__isnull=True, active=True,
                                     lat__gte=lat - dlat, lat__lte=lat + dlat,
-                                    lng__gte=lng - dlng, lng__lte=lng + dlng)
-        return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs]})
+                                    lng__gte=lng - dlng, lng__lte=lng + dlng
+                                    ).order_by("-created_at")[:200]
+        # `stocking`: a background job is restocking/rotating this area
+        # right now — the client shows "Stocking gems near you…" and looks
+        # again in a few seconds instead of sitting on the thin answer.
+        return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs],
+                             "stocking": stocking})
 
-    # POST — drop a wallet gem anywhere on the map.
+    # POST — give one of your stash gems away as a map drop. The stash row
+    # stays (collection record) but is marked dropped and can't be re-spent.
+    profile = profile_from(request)
     if profile is None:
         return problem(401, "Sign in required")
     data = body_of(request) or {}
@@ -601,26 +767,34 @@ def drops(request):
     rarity = entry["rarity"]
     if rarity == "legendary":
         return problem(422, "Legendary gems cannot be dropped")
-    wallet = dict(profile.wallet or {})
-    if int(wallet.get(rarity, 0)) < 1:
-        return problem(422, "No gem of that rarity in your wallet",
-                       code="wallet_empty")
     try:
         lat, lng = float(data["lat"]), float(data["lng"])
     except (KeyError, TypeError, ValueError):
         return problem(400, "lat and lng are required")
     # Walkability downstream call (docs/13): only a definite "not walkable"
-    # rejects — None (check off/unreachable) keeps drops flowing.
-    if walkability.is_walkable(lat, lng) is False:
+    # rejects — None (check off/unreachable) keeps drops flowing. STRICT
+    # list: a player drop needs a real sidewalk/trail nearby; a residential
+    # road or driveway does not count.
+    if walkability.is_walkable(
+            lat, lng, highways=walkability.PEDESTRIAN_HIGHWAYS) is False:
         return problem(422, "Gems can only be dropped on walkable paths",
                        code="not_walkable")
-    wallet[rarity] = int(wallet[rarity]) - 1
-    profile.wallet = wallet
-    profile.save(update_fields=["wallet"])
-    drop = GemDrop.objects.create(
-        route=None, dropped_by=profile, gem_id=entry["id"], rarity=rarity,
-        lat=lat, lng=lng, position_along_route_m=0,
-        respawn_rule="one_time", placed_by="creator")
+    with transaction.atomic():
+        # Oldest droppable copy of this gem; locked so two racing drops of
+        # a player's single copy can't both spend it.
+        item = (StashItem.objects.select_for_update()
+                .filter(profile=profile, gem_id=entry["id"],
+                        dropped_at__isnull=True)
+                .order_by("collected_at").first())
+        if item is None:
+            return problem(422, "That gem isn't in your stash",
+                           code="not_in_stash")
+        item.dropped_at = datetime.now(tz.utc)
+        item.save(update_fields=["dropped_at"])
+        drop = GemDrop.objects.create(
+            route=None, dropped_by=profile, gem_id=entry["id"], rarity=rarity,
+            lat=lat, lng=lng, position_along_route_m=0,
+            respawn_rule="one_time", placed_by="creator")
     return JsonResponse(drop_json(drop, exact=True))
 
 
