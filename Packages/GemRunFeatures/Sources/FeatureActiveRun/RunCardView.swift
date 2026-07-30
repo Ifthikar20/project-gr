@@ -148,7 +148,7 @@ struct RunCardView: View {
                 .opacity(isFlipped ? 1 : 0)
                 .accessibilityHidden(!isFlipped)
         }
-        .frame(height: 500)
+        .frame(height: 545)
         .rotation3DEffect(.degrees(isFlipped ? 180 : 0),
                           axis: (x: 0, y: 1, z: 0), perspective: 0.3)
         .contentShape(Rectangle())
@@ -230,6 +230,13 @@ struct RunCardView: View {
                              "/mi", "AVG PACE")
                 }
 
+                HStack(alignment: .top, spacing: 10) {
+                    heroStat(summary.steps > 0
+                             ? summary.steps.formatted() : "–", "", "STEPS")
+                    heroStat("~\(summary.approxCalories)", "cal", "CALORIES")
+                    heroStat("\(summary.gems.count)", "", "GEMS")
+                }
+
                 Text(extrasLine)
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
@@ -277,15 +284,10 @@ struct RunCardView: View {
         .shadow(color: DS.Colors.ink.opacity(0.12), radius: 16, y: 6)
     }
 
-    /// Date + the quieter numbers, one line: "Jul 30 · 4,120 steps ·
-    /// ~180 cal · +75 XP".
+    /// Date + XP, one quiet line under the stat rows: "Jul 30 · +75 XP".
     private var extrasLine: String {
-        var parts = [summary.startedAt.formatted(date: .abbreviated,
-                                                 time: .omitted)]
-        if summary.steps > 0 { parts.append("\(summary.steps) steps") }
-        parts.append("~\(summary.approxCalories) cal")
-        parts.append("+\(summary.xpEarned) XP")
-        return parts.joined(separator: " · ")
+        "\(summary.startedAt.formatted(date: .abbreviated, time: .omitted))"
+        + " · +\(summary.xpEarned) XP"
     }
 
     /// Reference-style stat: small caps label above, big number with a
