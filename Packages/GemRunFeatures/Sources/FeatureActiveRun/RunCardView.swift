@@ -259,7 +259,7 @@ struct RunCardView: View {
 
                 Group {
                     if summary.gems.isEmpty {
-                        Text("No gems this time — the route remembers you anyway.")
+                        Text("No gems this time. The route remembers you anyway.")
                             .font(.caption)
                             .foregroundStyle(DS.Colors.inkSecondary)
                     } else {
@@ -367,7 +367,7 @@ struct RunCardView: View {
 
             if summary.gems.isEmpty {
                 Spacer()
-                Text("Nothing collected this run. Gems respawn where runners go — the next map open restocks the area.")
+                Text("Nothing collected this run. Fresh gems appear along popular paths every day.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -384,7 +384,7 @@ struct RunCardView: View {
                         }
                     }
                 }
-                Text("Every gem is a real material — its story travels with it.")
+                Text("Every gem is a real material. Its story travels with it.")
                     .font(.caption2)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .frame(maxWidth: .infinity)

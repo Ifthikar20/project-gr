@@ -9,7 +9,8 @@ public enum GemCatalog {
         /// Real, short facts about the material — the gem info card cycles
         /// through them so the popup isn't the same line every time. Facts
         /// describe the real-world gem behind the name (a "Neon Ruby" gets
-        /// ruby facts). Never empty for catalog entries.
+        /// ruby facts), written as plain sentences (no dashes). Never empty
+        /// for catalog entries.
         public var facts: [String] = []
         /// Lead fact — the legacy one-liner surface (run-card back).
         public var blurb: String { facts.first ?? "" }
@@ -28,21 +29,21 @@ public enum GemCatalog {
         Entry(gem: Gem(id: uuid(10), name: "Trail Quartz", rarity: .common,
                        setID: trailblazerSet, iconRef: "gem.quartz"), setName: "Trailblazer",
               facts: [
-                "Quartz is one of the most common minerals in Earth's crust — most beach sand is tiny quartz grains.",
-                "Quartz crystals vibrate at an exact frequency under voltage — that's how quartz watches keep time.",
+                "Quartz is one of the most common minerals in Earth's crust. Most beach sand is tiny quartz grains.",
+                "Quartz crystals vibrate at an exact frequency under voltage. That is how quartz watches keep time.",
                 "Ancient Greeks called clear quartz \"krystallos,\" believing it was ice frozen too hard to ever melt.",
               ]),
         Entry(gem: Gem(id: uuid(11), name: "Moss Emerald", rarity: .uncommon,
                        setID: trailblazerSet, iconRef: "gem.emerald"), setName: "Trailblazer",
               facts: [
                 "Emerald is the green form of the mineral beryl, tinted by traces of chromium or vanadium.",
-                "Most emeralds hold tiny internal gardens of inclusions — jewelers call them the \"jardin.\"",
+                "Most emeralds hold tiny internal gardens of inclusions. Jewelers call them the \"jardin.\"",
                 "Egypt mined emeralds over 2,000 years ago; Cleopatra famously claimed the mines as her own.",
               ]),
         Entry(gem: Gem(id: uuid(12), name: "Ridge Sapphire", rarity: .rare,
                        setID: trailblazerSet, iconRef: "gem.sapphire"), setName: "Trailblazer",
               facts: [
-                "Sapphire is corundum — after diamond, one of the hardest natural gem materials on Earth.",
+                "Sapphire is corundum, one of the hardest natural gem materials on Earth after diamond.",
                 "Sapphires come in every color except red: a red corundum is called a ruby instead.",
                 "Star sapphires shine with a six-rayed star, drawn by needle-thin inclusions inside the stone.",
               ]),
@@ -50,20 +51,20 @@ public enum GemCatalog {
                        setID: trailblazerSet, iconRef: "gem.amethyst"), setName: "Trailblazer",
               facts: [
                 "Amethyst is quartz turned violet by traces of iron and natural radiation underground.",
-                "The Greeks named it \"amethystos\" — \"not drunk\" — believing it protected against intoxication.",
+                "The Greeks named it \"amethystos,\" meaning not drunk, believing it protected against intoxication.",
                 "Brazilian geodes can hide amethyst crystal caves taller than a person.",
               ]),
         Entry(gem: Gem(id: uuid(14), name: "First Light Ember", rarity: .legendary,
                        setID: trailblazerSet, iconRef: "gem.ember"), setName: "Trailblazer",
               facts: [
-                "Its real-world cousin is fire opal — a Mexican gem that glows orange like a caught flame.",
-                "Opal never forms crystals: it's hardened silica gel, and can hold up to a tenth of its weight in water.",
+                "Its real-world cousin is fire opal, a Mexican gem that glows orange like a caught flame.",
+                "Opal never forms crystals: it is hardened silica gel, and can hold up to a tenth of its weight in water.",
                 "Aztec fire opals were treasured centuries before Europeans ever saw one.",
               ]),
         Entry(gem: Gem(id: uuid(20), name: "Harbor Quartz", rarity: .common,
                        setID: harborSet, iconRef: "gem.quartz"), setName: "Harbor Lights",
               facts: [
-                "Quartz rates 7 on the Mohs hardness scale — hard enough to scratch window glass.",
+                "Quartz rates 7 on the Mohs hardness scale, hard enough to scratch window glass.",
                 "Pure quartz is colorless; stray atoms tint it purple, pink, smoky, or golden.",
                 "Early radios relied on quartz crystals to hold their broadcast frequency steady.",
               ]),
@@ -71,41 +72,41 @@ public enum GemCatalog {
                        setID: harborSet, iconRef: "gem.emerald"), setName: "Harbor Lights",
               facts: [
                 "Colombia produces more fine emeralds than anywhere else on Earth.",
-                "Emeralds have been gently oiled to improve clarity for centuries — an accepted jeweler's practice.",
+                "Emeralds have been gently oiled to improve clarity for centuries, an accepted jeweler's practice.",
                 "Aquamarine is emerald's sibling: the very same beryl mineral, colored ocean blue.",
               ]),
         Entry(gem: Gem(id: uuid(22), name: "Deepwater Sapphire", rarity: .rare,
                        setID: harborSet, iconRef: "gem.sapphire"), setName: "Harbor Lights",
               facts: [
-                "Many scratchproof watch faces are synthetic sapphire — the same crystal as the gem.",
+                "Many scratchproof watch faces are synthetic sapphire, the same crystal as the gem.",
                 "Kashmir's \"cornflower blue\" sapphires are among the most valuable gems ever auctioned.",
-                "The padparadscha, a rare pink-orange sapphire, is named after the lotus blossom.",
+                "The padparadscha, a rare pink and orange sapphire, is named after the lotus blossom.",
               ]),
         Entry(gem: Gem(id: uuid(30), name: "Streetlight Quartz", rarity: .common,
                        setID: cityLightsSet, iconRef: "gem.quartz"), setName: "City Lights",
               facts: [
-                "Quartz is piezoelectric: squeeze it and it makes a tiny voltage — tap it and it can spark.",
+                "Quartz is piezoelectric: squeeze it and it makes a tiny voltage. Tap it and it can spark.",
                 "Amethyst and citrine are both just quartz wearing different trace elements.",
                 "Some of the world's largest natural crystals ever found are quartz.",
               ]),
         Entry(gem: Gem(id: uuid(31), name: "Neon Ruby", rarity: .uncommon,
                        setID: cityLightsSet, iconRef: "gem.ruby"), setName: "City Lights",
               facts: [
-                "Ruby is corundum made red by chromium — the same element that turns emeralds green.",
+                "Ruby is corundum made red by chromium, the same element that turns emeralds green.",
                 "Fine rubies can sell for more per carat than diamonds.",
                 "The first working laser, built in 1960, had a synthetic ruby crystal at its heart.",
               ]),
         Entry(gem: Gem(id: uuid(32), name: "Skyline Topaz", rarity: .rare,
                        setID: cityLightsSet, iconRef: "gem.topaz"), setName: "City Lights",
               facts: [
-                "Topaz grows some of the largest gem crystals on Earth — museum pieces weigh kilograms.",
-                "Pure topaz is colorless; the rare imperial topaz glows orange-pink.",
-                "Most blue topaz in shops started out colorless — its color comes from careful irradiation.",
+                "Topaz grows some of the largest gem crystals on Earth. Museum pieces weigh kilograms.",
+                "Pure topaz is colorless; the rare imperial topaz glows in orange and pink.",
+                "Most blue topaz in shops started out colorless. The color comes from careful irradiation.",
               ]),
         Entry(gem: Gem(id: uuid(33), name: "Midnight Amethyst", rarity: .epic,
                        setID: cityLightsSet, iconRef: "gem.amethyst"), setName: "City Lights",
               facts: [
-                "Amethyst was once as precious as ruby — until huge Brazilian finds made it plentiful.",
+                "Amethyst was once as precious as ruby, until huge Brazilian finds made it plentiful.",
                 "Heat an amethyst and it turns golden: much commercial citrine begins life purple.",
                 "Amethyst is February's birthstone.",
               ]),
@@ -113,7 +114,7 @@ public enum GemCatalog {
         Entry(gem: Gem(id: uuid(40), name: "Bone", rarity: .common,
                        setID: relicsSet, iconRef: "gem.bone"), setName: "Ancient Relics",
               facts: [
-                "Polished bone — one of humanity's oldest ornament materials.",
+                "Polished bone is one of humanity's oldest ornament materials.",
                 "Ice Age people carved bone into beads, needles, and even flutes tens of thousands of years ago.",
                 "Under a lens, worked bone shows the tiny channels that once carried blood.",
               ]),
@@ -121,14 +122,14 @@ public enum GemCatalog {
                        setID: relicsSet, iconRef: "gem.copal"), setName: "Ancient Relics",
               facts: [
                 "Young tree resin: amber in the making, only a few thousand years old.",
-                "Copal is still burned as incense in Mexico and Central America — a Maya and Aztec tradition.",
+                "Copal is still burned as incense in Mexico and Central America, a Maya and Aztec tradition.",
                 "Jewelers tell copal from amber with a solvent drop: it softens young copal, not true amber.",
               ]),
         Entry(gem: Gem(id: uuid(42), name: "Sponge Coral", rarity: .common,
                        setID: relicsSet, iconRef: "gem.spongecoral"), setName: "Ancient Relics",
               facts: [
-                "Porous coral with a sponge-like pattern in warm orange-red tones.",
-                "Corals are animals, not plants — colonies of tiny polyps building limestone homes.",
+                "Porous coral with a spongy pattern in warm orange and red tones.",
+                "Corals are animals, not plants. They are colonies of tiny polyps building limestone homes.",
                 "Polishing reveals its lacy web of channels, no two pieces alike.",
               ]),
         Entry(gem: Gem(id: uuid(43), name: "Mother-of-Pearl", rarity: .common,
@@ -141,28 +142,28 @@ public enum GemCatalog {
         Entry(gem: Gem(id: uuid(44), name: "Amber", rarity: .uncommon,
                        setID: relicsSet, iconRef: "gem.amber"), setName: "Ancient Relics",
               facts: [
-                "Fossilized tree resin, millions of years old — sometimes holding ancient insects.",
-                "Rubbed amber crackles with static — the Greek word for it, \"elektron,\" gave us \"electricity.\"",
+                "Fossilized tree resin, millions of years old, sometimes holding ancient insects.",
+                "Rubbed amber crackles with static. The Greek word for it, \"elektron,\" gave us \"electricity.\"",
                 "Baltic amber washes ashore after storms; traders once carried it across Europe on \"Amber Roads.\"",
               ]),
         Entry(gem: Gem(id: uuid(45), name: "Ammonite", rarity: .uncommon,
                        setID: relicsSet, iconRef: "gem.ammonite"), setName: "Ancient Relics",
               facts: [
                 "A spiral fossil of a sea creature that swam over 66 million years ago.",
-                "Ammonites grew their shells in near-perfect logarithmic spirals.",
+                "Ammonites grew their shells in nearly perfect logarithmic spirals.",
                 "They vanished in the same extinction that ended the dinosaurs.",
               ]),
         Entry(gem: Gem(id: uuid(46), name: "Jet", rarity: .uncommon,
                        setID: relicsSet, iconRef: "gem.jet"), setName: "Ancient Relics",
               facts: [
-                "A deep-black gem formed from driftwood fossilized under pressure.",
+                "A deep black gem formed from driftwood fossilized under pressure.",
                 "Whitby jet from England became famous as Queen Victoria's mourning jewelry.",
                 "Jet is warm to the touch and so light it was once nicknamed \"black amber.\"",
               ]),
         Entry(gem: Gem(id: uuid(47), name: "Fossil Coral", rarity: .uncommon,
                        setID: relicsSet, iconRef: "gem.fossilcoral"), setName: "Ancient Relics",
               facts: [
-                "Ancient coral turned to agate, its flower-like pattern frozen in stone.",
+                "Ancient coral turned to agate, with a pattern of tiny flowers frozen in stone.",
                 "Each tiny \"bloom\" in the stone is one coral polyp's fossilized home.",
                 "Over millions of years, silica replaced the living coral almost cell by cell.",
               ]),
@@ -184,29 +185,29 @@ public enum GemCatalog {
                        setID: relicsSet, iconRef: "gem.tektite"), setName: "Ancient Relics",
               facts: [
                 "Natural glass forged when meteorite impacts hurled molten earth skyward.",
-                "Many tektites are aerodynamically shaped — they hardened while flying through the air.",
+                "Many tektites are aerodynamically shaped because they hardened while flying through the air.",
                 "Moldavite, a green tektite from the Czech Republic, formed in an impact about 15 million years ago.",
               ]),
         Entry(gem: Gem(id: uuid(51), name: "Ammolite", rarity: .epic,
                        setID: relicsSet, iconRef: "gem.ammolite"), setName: "Ancient Relics",
               facts: [
-                "A rainbow-iridescent gem formed from fossilized ammonite shells.",
-                "Nearly all gem-grade ammolite comes from one place: southern Alberta, Canada.",
-                "It was only recognized as an official gemstone in 1981 — one of the youngest gems there is.",
+                "An iridescent rainbow gem formed from fossilized ammonite shells.",
+                "Nearly all gem quality ammolite comes from one place: southern Alberta, Canada.",
+                "It was only recognized as an official gemstone in 1981, one of the youngest gems there is.",
               ]),
         Entry(gem: Gem(id: uuid(52), name: "Dinosaur Bone", rarity: .epic,
                        setID: relicsSet, iconRef: "gem.dinobone"), setName: "Ancient Relics",
               facts: [
-                "Agatized dinosaur bone — fossil bone whose cells filled with colorful quartz.",
+                "Agatized dinosaur bone is fossil bone whose cells filled with colorful quartz.",
                 "Minerals replaced the original bone over tens of millions of years.",
                 "Polished slices show the honeycomb of real bone cells, preserved in stone.",
               ]),
         Entry(gem: Gem(id: uuid(53), name: "Ivory (historical)", rarity: .epic,
                        setID: relicsSet, iconRef: "gem.ivory"), setName: "Ancient Relics",
               facts: [
-                "A gem material of the past — prized historically, protected today.",
+                "A gem material of the past, prized historically and protected today.",
                 "Piano keys and billiard balls were once ivory; early plastics were invented partly to replace it.",
-                "International ivory trade is banned — antique pieces now live on in museums.",
+                "International ivory trade is banned. Antique pieces now live on in museums.",
               ]),
     ]
 

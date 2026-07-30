@@ -30,12 +30,12 @@ struct GemInfoSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            GemIcon(gemID: drop.gemID, size: 72)
-                .padding(.top, 28)
+        VStack(spacing: 16) {
+            GemIcon(gemID: drop.gemID, size: 92)
+                .padding(.top, 30)
 
             Text(entry?.gem.name ?? "Mystery Gem")
-                .font(DS.Typography.display(24))
+                .font(DS.Typography.display(27))
                 .foregroundStyle(DS.Colors.ink)
 
             HStack(spacing: 8) {
@@ -51,9 +51,9 @@ struct GemInfoSheet: View {
                         factIndex = bumpFactCounter()
                     }
                 } label: {
-                    VStack(spacing: 5) {
+                    VStack(spacing: 6) {
                         Text(facts[factIndex % facts.count])
-                            .font(.subheadline)
+                            .font(.callout)
                             .foregroundStyle(DS.Colors.inkSecondary)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)

@@ -166,20 +166,21 @@ public struct ExploreRootView: View {
                             .accessibilityLabel("Show my current location and refresh gems")
                             .transition(.opacity)
                         }
-                        // Honest states: while the server restocks this
-                        // area in the background, say so (pins pop in on
-                        // the automatic second look); a truly bare area
-                        // (fail-closed spawning found no trusted walkable
-                        // geometry) says that instead of a silently bare
-                        // map.
+                        // While the server restocks this area in the
+                        // background, show a neutral updating note (pins
+                        // pop in on the automatic second look) — never
+                        // the stocking machinery itself. A truly bare
+                        // area (fail-closed spawning found no trusted
+                        // walkable geometry) says so instead of a
+                        // silently bare map.
                         if isStockingArea {
-                            Text("Stocking gems near you…")
+                            Text("Updating your map…")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(DS.Colors.ink)
                                 .airbnbCard(padding: 12)
                                 .transition(.opacity)
                         } else if nearbyDrops.isEmpty {
-                            Text("No gems in this area yet — check back soon")
+                            Text("No gems in this area yet. Check back soon")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(DS.Colors.ink)
                                 .airbnbCard(padding: 12)
@@ -198,7 +199,7 @@ public struct ExploreRootView: View {
                 GemInfoSheet(drop: drop) {
                     await runToGem(drop)
                 }
-                .presentationDetents([.height(320)])
+                .presentationDetents([.height(430)])
             }
             .sheet(item: $pendingDropSpot) { spot in
                 DropGemSheet(coordinate: spot.coordinate) { newDrop in
@@ -257,7 +258,7 @@ public struct ExploreRootView: View {
                 Text("Turn on location")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
-                Text("Gems spawn on real sidewalks and trails around you — GemRun needs your location to stock the map.")
+                Text("Gems live on real sidewalks and trails around you. GemRun needs your location to find them.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -301,12 +302,14 @@ public struct ExploreRootView: View {
                     .tint(DS.Colors.pulse)
                     .scaleEffect(1.4)
                     .padding(.bottom, 4)
-                Text(firstLoad == .locating ? "Finding you…" : "Stocking gems near you…")
+                // Never expose the stocking machinery — as far as the
+                // runner knows, gems are simply out there to be found.
+                Text(firstLoad == .locating ? "Finding you…" : "Getting your map ready…")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                 Text(firstLoad == .locating
-                     ? "Gems spawn where you are — waiting for a GPS fix."
-                     : "Placing gems on sidewalks and trails around you.")
+                     ? "Waiting for a GPS fix."
+                     : "Loading the world around you.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -947,13 +950,13 @@ struct DropGemSheet: View {
                 .foregroundStyle(DS.Colors.ink)
                 .padding(.top, 20)
             if available.isEmpty {
-                Text("Nothing to drop yet — gems you collect on runs (and your welcome gift) can be left here for another runner to find.")
+                Text("Nothing to drop yet. Gems you collect on runs (and your welcome gift) can be left here for another runner to find.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             } else {
-                Text("From your stash — first runner to pass within 100 ft takes it.")
+                Text("From your stash. First runner to pass within 100 ft takes it.")
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
                 ScrollView(.horizontal, showsIndicators: false) {

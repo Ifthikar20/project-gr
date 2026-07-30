@@ -191,7 +191,7 @@ struct GemDetailSheet: View {
                 .padding(.horizontal, 32)
             VStack(spacing: 4) {
                 if item.routeName == "Welcome gift" {
-                    Label("Welcome gift — free gems for joining", systemImage: "gift.fill")
+                    Label("Welcome gift, free gems for joining", systemImage: "gift.fill")
                         .foregroundStyle(DS.Colors.pulse)
                 } else {
                     Text("Collected on \(item.routeName)")
