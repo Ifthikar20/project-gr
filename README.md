@@ -139,6 +139,9 @@ Read in order — each doc only depends on lower-numbered ones.
 | [11 — Dummy API](docs/11-dummy-api.md) | The in-app mock + endpoint-by-endpoint contract |
 | [12 — How It Works & Gem Creation](docs/12-how-the-app-works-and-gem-creation.md) | Orientation: architecture, every gem-creation path, call chains |
 | [13 — System Drops & Walkability](docs/13-system-drops-and-walkability.md) | Presence-triggered spawning, walkability checks, master table, race audit |
+| [14 — System-Drop Pipeline End-to-End](docs/14-system-drop-pipeline-end-to-end.md) | The full stocking pipeline: per-mile contract, tiers, cap atomicity |
+| [15 — Completed Features](docs/15-completed-features.md) | Screen-by-screen inventory of what exists today |
+| [16 — Architecture Deep-Dive](docs/16-architecture-deep-dive.md) | Illustrated: full-stack architecture, design system & every screen, frameworks, scaling to 10k concurrent users |
 
 ## The two hard problems (named up front)
 
