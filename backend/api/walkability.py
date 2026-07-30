@@ -73,43 +73,56 @@ _down_until = 0.0
 CIRCUIT_COOLDOWN_S = 120
 
 
-def query_overpass(query, timeout, deadline=None):
+def query_overpass(query, timeout, deadline=None, purpose="query"):
     """POST a query to the first Overpass mirror that answers. The main
     public instance rate-limits aggressively, so single-endpoint calls
     failed often; None when every mirror fails. `deadline` (monotonic) caps
     the per-mirror timeout to the caller's remaining budget and skips
     mirrors entirely when under ~1 s remains — inline bootstrap must never
-    outlive the map request it rides in."""
+    outlive the map request it rides in.
+
+    `purpose` tags every vendor-call log line with WHY we're calling
+    (point-check / ways-fetch + coordinates), so a slow map open can be
+    traced to the exact upstream request. GEMRUN_LOG_LEVEL=DEBUG shows the
+    per-attempt lines; successes/failures log at INFO/WARNING regardless."""
     global _down_until
     if time.monotonic() < _down_until:
+        log.debug("overpass[%s]: circuit open for %.0fs more — skipped",
+                  purpose, _down_until - time.monotonic())
         return None            # circuit open — recent total failure
     for url in settings.OVERPASS_URLS:
         effective_timeout = timeout
         if deadline is not None:
             remaining = deadline - time.monotonic()
             if remaining < 1:
+                log.debug("overpass[%s]: %.1fs budget left — mirror %s "
+                          "skipped", purpose, remaining, url)
                 return None    # out of budget — behaves like unreachable
             effective_timeout = min(timeout, remaining)
         request = urllib.request.Request(
             url, data=urllib.parse.urlencode({"data": query}).encode(),
             headers={"User-Agent": "GemRun/0.1 (walkability)"})
+        log.debug("overpass[%s]: → POST %s (timeout %.1fs, %d-byte query)",
+                  purpose, url, effective_timeout, len(query))
         started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=effective_timeout,
                                         context=_SSL_CONTEXT) as response:
                 payload = json.load(response)
-            log.info("overpass: %s answered in %.1fs (%d elements)",
-                     url, time.monotonic() - started, len(payload.get("elements", [])))
+            log.info("overpass[%s]: %s answered in %.1fs (%d elements)",
+                     purpose, url, time.monotonic() - started,
+                     len(payload.get("elements", [])))
             return payload
         except (OSError, ValueError) as exc:
             # The exact reason matters — SSL cert failures, timeouts, and
             # rate limits all look like "unreachable" without this line.
-            log.warning("overpass: %s failed after %.1fs: %r",
-                        url, time.monotonic() - started, exc)
+            log.warning("overpass[%s]: %s failed after %.1fs: %r",
+                        purpose, url, time.monotonic() - started, exc)
     _down_until = time.monotonic() + CIRCUIT_COOLDOWN_S
-    log.warning("overpass: all %d mirror(s) failed (rate limit?) — pausing "
-                "checks for %ds; spawning proceeds on trusted placements",
-                len(settings.OVERPASS_URLS), CIRCUIT_COOLDOWN_S)
+    log.warning("overpass[%s]: all %d mirror(s) failed (rate limit?) — "
+                "pausing checks for %ds; spawning proceeds on trusted "
+                "placements", purpose, len(settings.OVERPASS_URLS),
+                CIRCUIT_COOLDOWN_S)
     return None
 
 
@@ -125,8 +138,9 @@ def fetch_walkable_ways(lat, lng, radius_m=2500, highways=WALKABLE_HIGHWAYS,
     query = WAYS_QUERY_TEMPLATE.format(
         timeout=int(settings.WALKABILITY_TIMEOUT_S) * 2, radius=int(radius_m),
         lat=lat, lng=lng, highways=highways)
-    payload = query_overpass(query, timeout=settings.WALKABILITY_TIMEOUT_S * 2,
-                             deadline=deadline)
+    payload = query_overpass(
+        query, timeout=settings.WALKABILITY_TIMEOUT_S * 2, deadline=deadline,
+        purpose=f"ways-fetch ({lat:.4f},{lng:.4f}) r={int(radius_m)}m")
     if payload is None:
         return []
     # Drop closed-ring ways (park loops, roundabouts) — they show as
@@ -154,10 +168,15 @@ def is_walkable(lat, lng, radius_m=None, highways=WALKABLE_HIGHWAYS):
     if settings.WALKABILITY_MODE != "overpass":
         return None
     timeout = settings.WALKABILITY_TIMEOUT_S
+    radius = int(radius_m or settings.WALKABILITY_RADIUS_M)
     query = QUERY_TEMPLATE.format(
-        timeout=int(timeout), radius=int(radius_m or settings.WALKABILITY_RADIUS_M),
+        timeout=int(timeout), radius=radius,
         lat=lat, lng=lng, highways=highways)
-    payload = query_overpass(query, timeout=timeout)
+    strict = highways == PEDESTRIAN_HIGHWAYS
+    payload = query_overpass(
+        query, timeout=timeout,
+        purpose=f"point-check ({lat:.4f},{lng:.4f}) r={radius}m "
+                f"{'strict' if strict else 'full'}")
     if payload is None:
         return None   # every mirror failed — never guess
     return bool(payload.get("elements"))

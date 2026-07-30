@@ -852,13 +852,21 @@ public enum PathSnapper {
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: a.cl))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: b.cl))
         request.transportType = .walking
+        let started = Date()
         do {
             let response = try await MKDirections(request: request).calculate()
-            guard let poly = response.routes.first?.polyline else { return ([a, b], false) }
+            let ms = Int(Date().timeIntervalSince(started) * 1_000)
+            guard let poly = response.routes.first?.polyline else {
+                print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): no route in \(ms) ms")
+                return ([a, b], false)
+            }
             var coords = [CLLocationCoordinate2D](repeating: .init(), count: poly.pointCount)
             poly.getCoordinates(&coords, range: NSRange(location: 0, length: poly.pointCount))
+            print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): \(poly.pointCount) pts in \(ms) ms")
             return (coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }, true)
         } catch {
+            let ms = Int(Date().timeIntervalSince(started) * 1_000)
+            print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)) FAILED after \(ms) ms: \(error.localizedDescription)")
             return ([a, b], false)
         }
     }
@@ -875,9 +883,12 @@ public enum PathSnapper {
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: b.cl))
         request.transportType = .walking
         request.requestsAlternateRoutes = true
+        let started = Date()
         guard let response = try? await MKDirections(request: request).calculate() else {
+            print("[Vendor] MKDirections alternates (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)) FAILED after \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
             return []
         }
+        print("[Vendor] MKDirections alternates (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): \(response.routes.count) route(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         var options: [[Coordinate]] = []
         for route in response.routes {
             let poly = route.polyline

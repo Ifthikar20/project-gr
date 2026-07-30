@@ -595,8 +595,13 @@ public struct ExploreRootView: View {
         defer { isGeocodingLabel = false }
         lastGeocodedCoord = fix
         let location = CLLocation(latitude: fix.lat, longitude: fix.lng)
+        let started = Date()
         guard let mark = try? await CLGeocoder()
-            .reverseGeocodeLocation(location).first else { return }
+            .reverseGeocodeLocation(location).first else {
+            print("[Vendor] CLGeocoder reverse (\(fix.lat), \(fix.lng)) FAILED after \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+            return
+        }
+        print("[Vendor] CLGeocoder reverse (\(fix.lat), \(fix.lng)): '\(mark.thoroughfare ?? mark.locality ?? "?")' in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         var parts = [mark.thoroughfare ?? mark.subLocality ?? mark.name,
                      mark.locality ?? mark.subAdministrativeArea]
             .compactMap { $0 }
@@ -1136,7 +1141,9 @@ enum DropValidator {
         request.pointOfInterestFilter = MKPointOfInterestFilter(
             including: allowedCategories + forbiddenCategories)
 
+        let started = Date()
         let response = try? await MKLocalSearch(request: request).start()
+        print("[Vendor] MKLocalSearch POIs (\(c.lat), \(c.lng)): \(response?.mapItems.count ?? -1) item(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         guard let items = response?.mapItems, !items.isEmpty else {
             return .denied(reason: "Drop only on trails you've run or a public spot (park, cafe, transit).")
         }
