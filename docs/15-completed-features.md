@@ -257,8 +257,12 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 - **Design system**: Daybreak Pulse — snow surfaces, ink text, one pulse
   accent (#FC4C02); rarity = pulse-opacity ramp + distinct glyphs (never
   color alone).
-- **Custom gem art seam**: `GemIcon` prefers a catalog-named PNG, falls
-  back to emoji — the PNG set drops in with no code change.
+- **Custom gem art pipeline**: drop PNGs into `GEMS_REPO/` (named by
+  material — "Emerald_Gem.png") and build: `scripts/import-gem-art.sh`
+  downscales each once to 216 px (72 pt @3x, the largest in-app render)
+  and writes the imagesets; `GemIcon` prefers the PNG, falls back to
+  emoji, and caches existence verdicts per launch so missing art never
+  costs repeated bundle probes.
 - **No-lag practices**: warm map answers never wait on stocking; guide-line
   math is incremental; images/annotations reuse identity; network calls
   carry strict timeouts.
@@ -268,7 +272,9 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 
 ## 11. Deliberately not built yet
 
-- Custom PNG gem art (waiting on the image set; seam ready).
+- Custom PNG gem art: the import pipeline is built and the first material
+  (emerald) is in hand — the remaining 20 materials are waiting on art
+  (see GEMS_REPO/README.md for the list and naming).
 - Per-cell walkable-ways cache / Postgres + PostGIS / self-hosted Overpass
   (the documented scaling ladder — not needed at current load).
 - `/v1/routes` N+1 read optimization; respawn windows within a single day;

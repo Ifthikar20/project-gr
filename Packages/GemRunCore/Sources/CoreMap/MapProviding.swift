@@ -93,8 +93,9 @@ public enum MapPalette {
 /// PNG from the asset catalog — asset name = the catalog `iconRef`, e.g.
 /// "gem.amber" — and falls back to the emoji until one exists. Dropping
 /// the PNG collection into Assets.xcassets under those names upgrades the
-/// whole app at once, no code changes. UIImage(named:) is cached by the
-/// system, so the existence probe costs nothing per frame.
+/// whole app at once, no code changes (scripts/import-gem-art.sh does the
+/// drop: downscales GEMS_REPO/*.png once and writes the imagesets).
+/// Existence verdicts are cached per launch — see GemArtProbe below.
 public struct GemIcon: View {
     let gemID: UUID
     let size: CGFloat
@@ -106,7 +107,7 @@ public struct GemIcon: View {
 
     public var body: some View {
         if let ref = GemCatalog.entry(forGemID: gemID)?.gem.iconRef,
-           UIImage(named: ref) != nil {
+           GemArtProbe.exists(ref) {
             Image(ref)
                 .resizable()
                 .scaledToFit()
@@ -115,6 +116,23 @@ public struct GemIcon: View {
             Text(MapPalette.emoji(forGemID: gemID))
                 .font(.system(size: size * 0.82))
         }
+    }
+}
+
+/// One bundle probe per icon ref per launch. UIImage(named:) caches
+/// decoded HITS system-wide, but a MISS re-searches the bundle on every
+/// call — and until the full art set ships most refs are misses, with
+/// dozens of pins re-rendering on every map change. The verdict cache
+/// makes the miss path a dictionary hit.
+@MainActor
+private enum GemArtProbe {
+    private static var verdicts: [String: Bool] = [:]
+
+    static func exists(_ ref: String) -> Bool {
+        if let known = verdicts[ref] { return known }
+        let present = UIImage(named: ref) != nil
+        verdicts[ref] = present
+        return present
     }
 }
 

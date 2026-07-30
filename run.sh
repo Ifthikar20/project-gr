@@ -152,6 +152,10 @@ run_app() {
     [ -n "$UDID" ] && echo "Simulator: $UDID" \
         || { echo "No available iPhone simulator found."; exit 1; }
 
+    # Custom gem art: PNGs dropped in GEMS_REPO/ become catalog imagesets
+    # (downscaled once at import so in-app decode stays cheap).
+    if [ -f scripts/import-gem-art.sh ]; then bash scripts/import-gem-art.sh; fi
+
     say "Building (first build takes a few minutes)"
     # Build number = git commit count: every commit bumps it, so each build
     # is identifiable — Settings > About shows "0.1.0 (<build>)".
@@ -281,6 +285,10 @@ EOF
     # (FinderInfo, fpfs#P) that codesign refuses to sign around.
     xattr -cr App Packages 2>/dev/null || true
     rm -rf /tmp/gemrun-build-device
+
+    # Custom gem art: PNGs dropped in GEMS_REPO/ become catalog imagesets
+    # (downscaled once at import so in-app decode stays cheap).
+    if [ -f scripts/import-gem-art.sh ]; then bash scripts/import-gem-art.sh; fi
 
     say "Building (signed for device — first build takes a few minutes)"
     # Build number = git commit count: every commit bumps it, so each build
