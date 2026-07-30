@@ -67,9 +67,17 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
   private-looking places are denied with a human-readable reason.
 
 **Freshness.**
-- Refetch when GPS first lands, after a >1.5 km move, and every time the
-  app returns to the foreground — collected gems vanish, new spawns appear,
-  no relaunch needed.
+- Refetch when GPS first lands, after a >1.5 km move, every time the app
+  returns to the foreground, and on a **location-capsule tap** (recenter +
+  reload in one gesture — the drive-somewhere-new fix) — collected gems
+  vanish, new spawns appear, no relaunch needed.
+- When the server answers instantly while still restocking the area in the
+  background, the response says so (`stocking: true`): the map shows
+  "Stocking gems near you…" and refetches automatically a few seconds
+  later, so fresh pins appear with zero user action.
+- Reveal is gated only on the drops call — routes fetch concurrently, the
+  routes endpoint answers in a fixed number of queries regardless of page
+  size, and responses are gzipped.
 
 ## 2. Plan Route (the + button)
 

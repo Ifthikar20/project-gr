@@ -20,6 +20,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Routes payloads carry polylines + elevation profiles — the chunkiest
+    # JSON we serve; gzip cuts them to a fraction on the wire.
+    "django.middleware.gzip.GZipMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
 

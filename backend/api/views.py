@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone as tz
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Prefetch
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -107,15 +108,21 @@ def drop_json(d, exact=True):
     return payload
 
 
-def route_json(route, viewer=None):
-    collected_drop_ids = set()
-    if viewer is not None:
-        collected_drop_ids = set(
-            StashItem.objects.filter(profile=viewer, gem_drop__route=route)
-            .values_list("gem_drop_id", flat=True))
+def route_json(route, viewer=None, collected_ids=None, active_drops=None):
+    """List pages pass `collected_ids` (one stash query for the whole page)
+    and `active_drops` (prefetched) so N routes cost a fixed number of
+    queries; single-route callers omit both and keep the per-route lookups."""
+    if collected_ids is None:
+        collected_ids = set()
+        if viewer is not None:
+            collected_ids = set(
+                StashItem.objects.filter(profile=viewer, gem_drop__route=route)
+                .values_list("gem_drop_id", flat=True))
+    if active_drops is None:
+        active_drops = route.gem_drops.filter(active=True)
     drops = []
-    for d in route.gem_drops.filter(active=True):
-        exact = (d.rarity in ("common", "uncommon")) or (d.id in collected_drop_ids)
+    for d in active_drops:
+        exact = (d.rarity in ("common", "uncommon")) or (d.id in collected_ids)
         drops.append(drop_json(d, exact=exact))
     return {"id": str(route.id), "name": route.name, "description": route.description,
             "polyline": route.polyline, "distance_m": route.distance_m,
@@ -190,11 +197,29 @@ def routes(request):
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
         viewer = profile_from(request)
+        # Fixed query count regardless of page size: routes + creators in
+        # one, active drops prefetched in one, viewer's collected ids in
+        # one — the old shape ran two extra queries PER ROUTE, which sat
+        # directly in the map's time-to-reveal path.
         qs = (Route.objects.filter(status="published",
                                    lat__gte=lat - dlat, lat__lte=lat + dlat,
                                    lng__gte=lng - dlng, lng__lte=lng + dlng)
-              .order_by("name"))
-        return JsonResponse({"routes": [route_json(r, viewer) for r in qs]})
+              .order_by("name")
+              .select_related("creator")
+              .prefetch_related(Prefetch(
+                  "gem_drops",
+                  queryset=GemDrop.objects.filter(active=True),
+                  to_attr="active_drops")))
+        page = list(qs)
+        collected = set()
+        if viewer is not None and page:
+            collected = set(
+                StashItem.objects.filter(profile=viewer,
+                                         gem_drop__route__in=page)
+                .values_list("gem_drop_id", flat=True))
+        return JsonResponse({"routes": [
+            route_json(r, viewer, collected_ids=collected,
+                       active_drops=r.active_drops) for r in page]})
     return publish_route(request)
 
 
@@ -678,16 +703,20 @@ def drops(request):
         # a READ radius only — the stocking budget is the per-mile
         # contract, independent of how much map the client wants to see.
         try:
-            system_drops.presence_trigger(lat, lng)
+            stocking = system_drops.presence_trigger(lat, lng)
         except Exception:
-            pass
+            stocking = False
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
         qs = GemDrop.objects.filter(route__isnull=True, active=True,
                                     lat__gte=lat - dlat, lat__lte=lat + dlat,
                                     lng__gte=lng - dlng, lng__lte=lng + dlng
                                     ).order_by("-created_at")[:200]
-        return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs]})
+        # `stocking`: a background job is restocking/rotating this area
+        # right now — the client shows "Stocking gems near you…" and looks
+        # again in a few seconds instead of sitting on the thin answer.
+        return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs],
+                             "stocking": stocking})
 
     # POST — give one of your stash gems away as a map drop. The stash row
     # stays (collection record) but is marked dropped and can't be re-spent.

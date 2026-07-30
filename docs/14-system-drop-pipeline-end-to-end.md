@@ -173,12 +173,21 @@ active standalone drop in the bbox (system *and* player-placed) and returns:
 {"drops": [{"id": "...", "gem_id": "00000000-…-0028", "rarity": "uncommon",
             "lat": 32.97, "lng": -96.65, "position_along_route_m": 0,
             "respawn_rule": "one_time", "placed_by": "system",
-            "fuzz_radius_m": null}]}
+            "fuzz_radius_m": null}],
+ "stocking": false}
 ```
 
 Map drops are sent `exact=True`. (Route-detail payloads use the fuzzed
 variant — deterministic ≤75 m jitter — but the standalone map list does
 not; you run to the true point.)
+
+`stocking` is true when a warm answer shipped while a background job is
+still restocking/rotating this mile (`presence_trigger` returns pending =
+sub-floor count OR yesterday's gems still active). The client shows
+"Stocking gems near you…" and automatically refetches (~4 s, once more at
+~6 s if still flagged, then stops — so a geometry-poor mile that can never
+reach the floor doesn't loop). Inline paths always send false: their
+answer already reflects the restock.
 
 ## 4. iOS: fetch → state (`FeatureExplore/ExploreRootView.swift`)
 

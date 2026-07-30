@@ -64,6 +64,13 @@ public struct ExploreRootView: View {
     /// Bumped when the location capsule is tapped — ExploreMapView watches
     /// it and snaps the camera back to the user's current position.
     @State private var recenterTick = 0
+    /// Server said this area is being restocked in the background right
+    /// now — show the stocking banner and look again shortly. Capped at 2
+    /// follow-ups per episode so a geometry-poor area that can never
+    /// reach the floor doesn't refetch forever.
+    @State private var isStockingArea = false
+    @State private var stockingRefetches = 0
+    @State private var stockingRefetchPending = false
 
     public init() {}
 
@@ -132,9 +139,13 @@ public struct ExploreRootView: View {
                     VStack(spacing: 8) {
                         if let locationLabel {
                             // Tapping the capsule snaps the map back to
-                            // where you're standing.
+                            // where you're standing AND refreshes the gems
+                            // there — drove somewhere new, tap once, the
+                            // area loads (and stocks server-side if this
+                            // spot has never been opened).
                             Button {
                                 recenterTick += 1
+                                Task { await loadNearby() }
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "location.fill")
@@ -152,14 +163,22 @@ public struct ExploreRootView: View {
                                 .shadow(color: DS.Colors.ink.opacity(0.08), radius: 5, y: 2)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("Show my current location")
+                            .accessibilityLabel("Show my current location and refresh gems")
                             .transition(.opacity)
                         }
-                        // Honest empty state: fail-closed spawning means an
-                        // area with no trusted walkable geometry legitimately
-                        // has zero gems — say so instead of showing a
-                        // silently bare map.
-                        if nearbyDrops.isEmpty {
+                        // Honest states: while the server restocks this
+                        // area in the background, say so (pins pop in on
+                        // the automatic second look); a truly bare area
+                        // (fail-closed spawning found no trusted walkable
+                        // geometry) says that instead of a silently bare
+                        // map.
+                        if isStockingArea {
+                            Text("Stocking gems near you…")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(DS.Colors.ink)
+                                .airbnbCard(padding: 12)
+                                .transition(.opacity)
+                        } else if nearbyDrops.isEmpty {
                             Text("No gems in this area yet — check back soon")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(DS.Colors.ink)
@@ -739,17 +758,42 @@ public struct ExploreRootView: View {
             return
         }
         isLoadingNearby = true
-        defer { isLoadingNearby = false }
         if firstLoad != .ready { firstLoad = .stocking }
         lastFetchCenter = center
         // Covers the cached-CLLocationManager path, where the live-fix
         // onChange (the usual geocode trigger) hasn't fired yet.
         Task { await updateLocationLabel(for: center) }
         print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
+        let t0 = Date()
 
-        do {
-            let fetched = try await API.shared.nearbyRoutes(
+        // Routes and drops go out TOGETHER; only drops gates the reveal —
+        // the routes call (and its cache upsert) lands whenever it lands.
+        let routesTask = Task {
+            try? await API.shared.nearbyRoutes(
                 lat: center.lat, lng: center.lng, radiusM: 8_000)
+        }
+        var revealMs = 0
+        do {
+            let page = try await API.shared.nearbyDrops(
+                lat: center.lat, lng: center.lng, radiusM: 8_000)
+            revealMs = Int(Date().timeIntervalSince(t0) * 1_000)
+            print("[Explore] drops: \(page.drops.count)")
+            // Reveal the map only now — pins land in the same frame, so an
+            // unstocked map is never on screen.
+            withAnimation {
+                nearbyDrops = page.drops
+                firstLoad = .ready
+            }
+            handleStocking(page.stocking)
+        } catch {
+            print("[Explore] nearbyDrops FAILED: \(error)")
+            // Keep the cover up with a Retry — a bare map with zero gems
+            // must never stand in for a failed fetch. Refreshes after the
+            // first reveal keep the stale pins instead.
+            if firstLoad != .ready { firstLoad = .failed }
+        }
+
+        if let fetched = await routesTask.value {
             print("[Explore] routes: \(fetched.count)")
             // Refresh, not just insert: re-encoding cached rows picks up
             // server-side changes AND migrates gem blobs stored under the
@@ -771,29 +815,36 @@ public struct ExploreRootView: View {
                 }
             }
             try? context.save()
-        } catch {
-            print("[Explore] nearbyRoutes FAILED: \(error)")
+        } else {
+            print("[Explore] nearbyRoutes FAILED")
         }
-        do {
-            let drops = try await API.shared.nearbyDrops(
-                lat: center.lat, lng: center.lng, radiusM: 8_000)
-            print("[Explore] drops: \(drops.count)")
-            // Reveal the map only now — pins land in the same frame, so an
-            // unstocked map is never on screen.
-            withAnimation {
-                nearbyDrops = drops
-                firstLoad = .ready
-            }
-        } catch {
-            print("[Explore] nearbyDrops FAILED: \(error)")
-            // Keep the cover up with a Retry — a bare map with zero gems
-            // must never stand in for a failed fetch. Refreshes after the
-            // first reveal keep the stale pins instead.
-            if firstLoad != .ready { firstLoad = .failed }
+        let totalMs = Int(Date().timeIntervalSince(t0) * 1_000)
+        print("[Explore] reveal in \(revealMs) ms; full load \(totalMs) ms")
+        isLoadingNearby = false
+        // Recommendations run OUTSIDE the guarded section: their several
+        // MKDirections calls take seconds, and holding isLoadingNearby
+        // through them silently swallowed any refetch tapped meanwhile.
+        Task { await regenerateRecommendations(force: false) }
+    }
+
+    /// React to the server's `stocking` flag: keep the banner up and look
+    /// again shortly (once at ~4 s, once more at ~6 s if still flagged) so
+    /// freshly stocked pins appear with zero user action.
+    private func handleStocking(_ stocking: Bool) {
+        withAnimation { isStockingArea = stocking }
+        guard stocking else {
+            stockingRefetches = 0
+            return
         }
-        // Recommendations key off the fresh drop list — regenerate here so
-        // the carousel updates in the same pass as everything else.
-        await regenerateRecommendations(force: false)
+        guard !stockingRefetchPending, stockingRefetches < 2 else { return }
+        stockingRefetchPending = true
+        stockingRefetches += 1
+        let delay: Double = stockingRefetches == 1 ? 4 : 6
+        Task {
+            try? await Task.sleep(for: .seconds(delay))
+            stockingRefetchPending = false
+            await loadNearby()
+        }
     }
 
     /// Client-side route synthesis: 4 walking routes starting at the user's

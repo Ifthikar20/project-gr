@@ -281,12 +281,12 @@ public actor MockGemRunAPI: GemRunAPI {
         }
     }
 
-    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
+    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> DropsPage {
         await call("GET /v1/drops?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
         // No phantom seeding: real gem placement lives on the backend and
         // is verified walkable. A fixed offset pattern here once produced
         // "the same 3 gems, equally spaced, anywhere" — sometimes on water.
-        return Array(standaloneDrops.values)
+        return DropsPage(drops: Array(standaloneDrops.values), stocking: false)
     }
 
     public func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop {

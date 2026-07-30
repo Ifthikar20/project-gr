@@ -358,23 +358,48 @@ def _background_job(key, lat, lng):
             _inflight.discard(key)
 
 
+def has_pending_restock(lat, lng, count):
+    """True when the world within this mile is about to change after an
+    instant warm answer: the mile is sub-floor (top-up incoming) or
+    yesterday's system gems are still active (daily rotation incoming).
+    Drives the read response's `stocking` flag so clients look again in a
+    few seconds instead of sitting on the thin/stale answer."""
+    if count < settings.PRESENCE_FLOOR:
+        return True
+    dlat, dlng = bbox_deltas(lat, settings.PRESENCE_RADIUS_M)
+    today_start = timezone.now().replace(hour=0, minute=0,
+                                         second=0, microsecond=0)
+    return GemDrop.objects.filter(
+        route__isnull=True, active=True, placed_by="system",
+        created_at__lt=today_start,
+        lat__gte=lat - dlat, lat__lte=lat + dlat,
+        lng__gte=lng - dlng, lng__lte=lng + dlng).exists()
+
+
 def presence_trigger(lat, lng):
     """Entry point for GET /v1/drops. Warm mile → background job (instant
     answer); cold mile → inline bootstrap (first answer arrives stocked,
     bounded by PRESENCE_INLINE_BUDGET_S). settings.PRESENCE_ASYNC=False
     forces inline everywhere — tests need it because their in-memory
-    SQLite can't be shared across threads."""
+    SQLite can't be shared across threads.
+
+    Returns True when restocking is still PENDING after this call (a
+    background job is queued/running for a mile that will change); inline
+    paths return False because the answer already reflects the restock."""
     if not settings.PRESENCE_DROPS:
-        return
-    warm = mile_count(lat, lng) > 0
+        return False
+    count = mile_count(lat, lng)
+    warm = count > 0
     if not warm or not settings.PRESENCE_ASYNC:
         rotate_and_top_up(lat, lng,
                           budget_s=settings.PRESENCE_INLINE_BUDGET_S
                           if settings.PRESENCE_ASYNC else None)
-        return
+        return False
+    pending = has_pending_restock(lat, lng, count)
     key = _cell_key(lat, lng)
     with _inflight_lock:
         if key in _inflight:
-            return                       # this cell is already being stocked
+            return pending               # this cell is already being stocked
         _inflight.add(key)
     _executor.submit(_background_job, key, lat, lng)
+    return pending

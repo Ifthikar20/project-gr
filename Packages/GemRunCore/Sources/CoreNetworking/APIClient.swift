@@ -119,13 +119,16 @@ public final class HTTPGemRunAPI: GemRunAPI {
 
     private struct DropsResponse: Decodable {
         let drops: [GemDrop]
+        // Optional so older server builds (no flag) still decode.
+        let stocking: Bool?
     }
 
-    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
+    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> DropsPage {
         let response: DropsResponse = try await get("drops", query: [
             "lat": "\(lat)", "lng": "\(lng)", "radius_m": "\(radiusM)",
         ])
-        return response.drops
+        return DropsPage(drops: response.drops,
+                         stocking: response.stocking ?? false)
     }
 
     private struct DropRequest: Encodable {

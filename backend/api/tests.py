@@ -165,6 +165,40 @@ class ApiTests(TestCase):
                              HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
         self.assertEqual(me["streak_count"], 1)   # same day: no double count
 
+    def test_drops_response_carries_stocking_flag(self):
+        # Inline mode (tests) answers pre-stocked, so the flag is False —
+        # but the key must always be present for the client.
+        body = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                             "radius_m": 1000}).json()
+        self.assertIn("stocking", body)
+        self.assertFalse(body["stocking"])
+
+    def test_pending_restock_covers_sub_floor_and_stale_rotation(self):
+        with self.settings(PRESENCE_FLOOR=2, PRESENCE_FILL_TARGET=3,
+                           PRESENCE_HARD_MAX=5):
+            # Sub-floor mile → top-up incoming.
+            self.assertTrue(system_drops.has_pending_restock(37.0, -122.0, 1))
+            # At-floor mile, all gems fresh → nothing pending.
+            self.assertFalse(system_drops.has_pending_restock(37.0, -122.0, 2))
+            # Yesterday's system gem still active → rotation incoming.
+            GemDrop.objects.create(
+                route=None, gem_id=catalog.gem_of("common")["id"],
+                rarity="common", lat=37.0, lng=-122.0,
+                position_along_route_m=0, respawn_rule="one_time",
+                placed_by="system",
+                created_at=timezone.now() - timedelta(days=1))
+            self.assertTrue(system_drops.has_pending_restock(37.0, -122.0, 2))
+
+    def test_routes_list_query_count_is_flat(self):
+        for _ in range(3):
+            self.assertEqual(self.publish_route().status_code, 200)
+        # Token + routes(+creators) + drops prefetch + viewer stash = 4,
+        # independent of how many routes the page holds.
+        with self.assertNumQueries(4):
+            self.client.get("/v1/routes", {"lat": 37.0, "lng": -122.0,
+                                           "radius_m": 8000},
+                            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
     # ---- stash, welcome gift & standalone drops
 
     def test_welcome_gift_stocks_a_new_stash(self):

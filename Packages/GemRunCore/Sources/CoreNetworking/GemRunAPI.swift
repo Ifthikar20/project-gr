@@ -132,6 +132,19 @@ public enum LeaderboardWindow: String, Codable, Sendable {
     case month
 }
 
+/// One page of the drops read. `stocking` mirrors the server's flag: a
+/// background job is restocking/rotating this area right now, so the pins
+/// in hand are about to change — refetch in a few seconds.
+public struct DropsPage: Sendable {
+    public let drops: [GemDrop]
+    public let stocking: Bool
+
+    public init(drops: [GemDrop], stocking: Bool = false) {
+        self.drops = drops
+        self.stocking = stocking
+    }
+}
+
 
 public struct DropCollectResult: Sendable {
     public let awardedDrops: [GemDrop]
@@ -253,8 +266,9 @@ public protocol GemRunAPI: Sendable {
     func gemCatalog() async throws -> [Gem]
 
     // Standalone drops — GET/POST /v1/drops, POST /v1/drops/collect
-    /// Standalone drops other runners left near this location.
-    func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop]
+    /// Standalone drops near this location, plus whether the server is
+    /// still restocking the area in the background (look again shortly).
+    func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> DropsPage
     /// Give one of your stash gems away as a map drop (one-time; first
     /// finder takes it; the stash row stays as the collection record).
     func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop
