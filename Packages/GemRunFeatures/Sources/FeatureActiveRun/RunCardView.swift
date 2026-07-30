@@ -2,6 +2,7 @@ import CoreMap
 import CoreModels
 import CorePersistence
 import DesignSystem
+import MapKit
 import SwiftUI
 
 /// Rough energy estimate from distance alone (no body-weight profile yet):
@@ -68,11 +69,68 @@ struct RouteShapeView: View {
     }
 }
 
+/// The run drawn on a real, muted street map — the card's hero. Static:
+/// no interaction, no controls; just streets for context, the pulse route
+/// line, an ink start dot and a pulse finish dot.
+struct RunRouteMap: View {
+    let coords: [Coordinate]
+
+    var body: some View {
+        Map(initialPosition: .region(region), interactionModes: []) {
+            MapPolyline(coordinates: coords.map {
+                CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng)
+            })
+            .stroke(DS.Colors.pulse,
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round,
+                                       lineJoin: .round))
+            if let first = coords.first {
+                Annotation("", coordinate: CLLocationCoordinate2D(
+                    latitude: first.lat, longitude: first.lng)) {
+                    Circle()
+                        .fill(DS.Colors.ink)
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(DS.Colors.snowCard, lineWidth: 2))
+                }
+            }
+            if let last = coords.last, coords.count > 1 {
+                Annotation("", coordinate: CLLocationCoordinate2D(
+                    latitude: last.lat, longitude: last.lng)) {
+                    Circle()
+                        .fill(DS.Colors.pulse)
+                        .frame(width: 11, height: 11)
+                        .overlay(Circle().stroke(DS.Colors.snowCard, lineWidth: 2))
+                }
+            }
+        }
+        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+    }
+
+    /// Route bounds + 45% breathing room, with a floor so a short loop
+    /// doesn't zoom into a single intersection.
+    private var region: MKCoordinateRegion {
+        let lats = coords.map(\.lat)
+        let lngs = coords.map(\.lng)
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLng = lngs.min(), let maxLng = lngs.max() else {
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 0, longitude: 0),
+                span: MKCoordinateSpan(latitudeDelta: 90, longitudeDelta: 90))
+        }
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2,
+                                           longitude: (minLng + maxLng) / 2),
+            span: MKCoordinateSpan(
+                latitudeDelta: max(0.004, (maxLat - minLat) * 1.45),
+                longitudeDelta: max(0.004, (maxLng - minLng) * 1.45)))
+    }
+}
+
 /// The run card (docs/03 §8), Daybreak Pulse: a single flippable card.
-/// Front = the run's numbers, from steps to calories to collected gems,
-/// plus the shape of the path you completed. Back = the finds themselves —
-/// each gem's emoji, rarity, set, and its real-material blurb. Tap (or the
-/// corner button) flips with a 3D spring.
+/// Front = the route on a real muted street map (full-bleed hero) over
+/// three headline stats — distance, duration, avg pace — with the quieter
+/// numbers (steps, calories, XP) on one caption line and the gem reveal
+/// strip. Back = the finds themselves — each gem's icon, tier, and its
+/// real-material blurb. Tap flips with a 3D spring.
 struct RunCardView: View {
     let summary: RunCompletionSummary
     /// Sequential-reveal counter owned by RunSummaryView's ceremony timer:
@@ -118,152 +176,140 @@ struct RunCardView: View {
         return PolylineCodec.decode(polyline)
     }
 
-    // MARK: front — trading-card anatomy
+    // MARK: front — real map hero, three headline stats
 
-    /// Hero panel (the "player photo"): the shape of the path you actually
-    /// ran, drawn large, with the headline distance overlaid. Falls back to
-    /// a faint diamond watermark when no track exists.
-    private var hero: some View {
-        ZStack {
-            if pathCoords.count > 1 {
-                RouteShapeView(coords: pathCoords)
-            } else {
+    /// The hero: the route you actually ran drawn on a real, muted street
+    /// map (full-bleed to the card's top edge, non-interactive so the
+    /// card's tap-to-flip still works). Faint diamond watermark when the
+    /// run has no track.
+    @ViewBuilder private var mapHero: some View {
+        if pathCoords.count > 1 {
+            RunRouteMap(coords: pathCoords)
+                .frame(height: 240)
+                .allowsHitTesting(false)
+        } else {
+            ZStack {
+                DS.Colors.snow
                 Image(systemName: "diamond.fill")
                     .font(.system(size: 70))
                     .foregroundStyle(DS.Colors.pulse.opacity(0.10))
             }
-            VStack {
-                Spacer()
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(UnitFormat.milesText(fromMeters: Double(summary.distanceM)))
-                        .font(DS.Typography.statLarge)
-                        .foregroundStyle(DS.Colors.ink)
-                        .monospacedDigit()
-                    Text("mi")
-                        .font(DS.Typography.heading)
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                    Spacer()
-                }
-            }
-            .padding(12)
+            .frame(height: 240)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 148)
-        .background(DS.Colors.snow, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16)
-            .stroke(DS.Colors.hairline, lineWidth: 1))
     }
 
     private var front: some View {
-        VStack(spacing: 10) {
-            HStack {
-                HStack(spacing: 5) {
-                    Image(systemName: "diamond.fill")
-                        .font(.caption)
-                        .foregroundStyle(DS.Colors.pulse)
-                    Text("GEMRUN")
-                        .font(.caption.bold())
-                        .kerning(1.2)
-                        .foregroundStyle(DS.Colors.pulse)
+        VStack(spacing: 0) {
+            mapHero
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Text(summary.routeName)
+                        .font(DS.Typography.heading)
+                        .foregroundStyle(DS.Colors.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Spacer()
+                    Text(summary.isWalk ? "WALK" : "RUN")
+                        .font(.system(size: 10, weight: .heavy))
+                        .kerning(0.8)
+                        .foregroundStyle(DS.Colors.snowCard)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(DS.Colors.pulse, in: Capsule())
                 }
-                Spacer()
-                Text(summary.startedAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption2)
+
+                HStack(alignment: .top, spacing: 10) {
+                    heroStat(UnitFormat.milesText(fromMeters: Double(summary.distanceM)),
+                             "mi", "DISTANCE")
+                    heroStat(formatDuration(summary.durationS),
+                             summary.durationS >= 3_600 ? "hr" : "min", "DURATION")
+                    heroStat(summary.paceSPerKm > 0
+                             ? formatDuration(UnitFormat.paceSecPerMile(
+                                fromSecPerKm: summary.paceSPerKm)) : "–",
+                             "/mi", "AVG PACE")
+                }
+
+                Text(extrasLine)
+                    .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
-            }
-
-            hero
-
-            HStack(spacing: 8) {
-                Text(summary.routeName)
-                    .font(DS.Typography.display(20))
-                    .foregroundStyle(DS.Colors.ink)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Spacer()
-                Text(summary.isWalk ? "WALK" : "RUN")
-                    .font(.system(size: 10, weight: .heavy))
-                    .kerning(0.8)
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(DS.Colors.pulse, in: Capsule())
-            }
 
-            HStack(spacing: 8) {
-                tile(formatDuration(summary.durationS), "Time")
-                tile(summary.paceSPerKm > 0
-                     ? formatDuration(UnitFormat.paceSecPerMile(
-                        fromSecPerKm: summary.paceSPerKm)) : "–", "Pace /mi")
-                tile(summary.steps > 0 ? "\(summary.steps)" : "–", "Steps")
-            }
-            HStack(spacing: 8) {
-                tile("~\(summary.approxCalories)", "Calories")
-                tile("+\(summary.xpEarned)", "XP", accent: true)
-                tile("\(summary.gems.count)", "Gems")
-            }
-
-            Group {
-                if summary.gems.isEmpty {
-                    Text("No gems this time — the route remembers you anyway.")
-                        .font(.caption)
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                } else {
-                    HStack(spacing: 10) {
-                        ForEach(Array(orderedGems.prefix(8).enumerated()),
-                                id: \.element.id) { i, gem in
-                            GemIcon(gemID: gem.gemID, size: 26)
-                                .scaleEffect(i < revealed ? 1 : 0.3)
-                                .opacity(i < revealed ? 1 : 0)
-                                .animation(.spring(duration: 0.45), value: revealed)
-                        }
-                        if orderedGems.count > 8 {
-                            Text("+\(orderedGems.count - 8)")
-                                .font(.caption.bold())
-                                .foregroundStyle(DS.Colors.inkSecondary)
+                Group {
+                    if summary.gems.isEmpty {
+                        Text("No gems this time — the route remembers you anyway.")
+                            .font(.caption)
+                            .foregroundStyle(DS.Colors.inkSecondary)
+                    } else {
+                        HStack(spacing: 10) {
+                            ForEach(Array(orderedGems.prefix(8).enumerated()),
+                                    id: \.element.id) { i, gem in
+                                GemIcon(gemID: gem.gemID, size: 26)
+                                    .scaleEffect(i < revealed ? 1 : 0.3)
+                                    .opacity(i < revealed ? 1 : 0)
+                                    .animation(.spring(duration: 0.45), value: revealed)
+                            }
+                            if orderedGems.count > 8 {
+                                Text("+\(orderedGems.count - 8)")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(DS.Colors.inkSecondary)
+                            }
                         }
                     }
                 }
-            }
-            .frame(maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            HStack(spacing: 5) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.caption2.bold())
-                Text(summary.gems.isEmpty ? "Tap to flip" : "Tap to meet your finds")
-                    .font(.caption2.weight(.semibold))
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.caption2.bold())
+                    Text(summary.gems.isEmpty ? "Tap to flip" : "Tap to meet your finds")
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(DS.Colors.pulse)
+                .frame(maxWidth: .infinity)
             }
-            .foregroundStyle(DS.Colors.pulse)
-            .frame(maxWidth: .infinity)
+            .padding(16)
         }
-        .padding(18)
-        .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 22))
+        .background(DS.Colors.snowCard)
+        .clipShape(RoundedRectangle(cornerRadius: 22))
         .overlay(RoundedRectangle(cornerRadius: 22)
             .stroke(DS.Colors.hairline, lineWidth: 1))
         .shadow(color: DS.Colors.ink.opacity(0.12), radius: 16, y: 6)
     }
 
-    /// Baseball-card stat tile: small caps label on top, the number under
-    /// it, on its own soft panel — snow on snow-card, hairline stroked.
-    private func tile(_ value: String, _ label: String,
-                      accent: Bool = false) -> some View {
-        VStack(spacing: 3) {
-            Text(label.uppercased())
-                .font(.system(size: 9, weight: .bold))
-                .kerning(0.8)
+    /// Date + the quieter numbers, one line: "Jul 30 · 4,120 steps ·
+    /// ~180 cal · +75 XP".
+    private var extrasLine: String {
+        var parts = [summary.startedAt.formatted(date: .abbreviated,
+                                                 time: .omitted)]
+        if summary.steps > 0 { parts.append("\(summary.steps) steps") }
+        parts.append("~\(summary.approxCalories) cal")
+        parts.append("+\(summary.xpEarned) XP")
+        return parts.joined(separator: " · ")
+    }
+
+    /// Reference-style stat: small caps label above, big number with a
+    /// quiet unit suffix under it.
+    private func heroStat(_ value: String, _ unit: String,
+                          _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .kerning(1.0)
                 .foregroundStyle(DS.Colors.inkSecondary)
-            Text(value)
-                .font(DS.Typography.statMedium)
-                .foregroundStyle(accent ? DS.Colors.pulse : DS.Colors.ink)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.55)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(DS.Typography.statMedium)
+                    .foregroundStyle(DS.Colors.ink)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text(unit)
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 9)
-        .background(DS.Colors.snow, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
-            .stroke(DS.Colors.hairline, lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var cardDivider: some View {
