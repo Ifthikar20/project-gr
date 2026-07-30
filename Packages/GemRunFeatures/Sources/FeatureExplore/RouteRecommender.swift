@@ -98,7 +98,10 @@ public enum RouteRecommender {
         var lastPoint = origin
         for drop in drops {
             let target = drop.coordinate
-            let (path, _) = await PathSnapper.snapVerified(from: lastPoint, to: target)
+            let (path, snapped) = await PathSnapper.snapVerified(from: lastPoint, to: target)
+            // An unconfirmed leg is a straight line through who-knows-what —
+            // drop the whole candidate route instead of drawing it.
+            guard snapped else { return nil }
             coords.append(contentsOf: path.dropFirst())
             lastPoint = target
         }

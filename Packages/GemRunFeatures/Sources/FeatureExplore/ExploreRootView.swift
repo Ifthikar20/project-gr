@@ -540,8 +540,24 @@ public struct ExploreRootView: View {
         let start = Coordinate(lat: here.coordinate.latitude, lng: here.coordinate.longitude)
         isPlanningPath = true
         defer { isPlanningPath = false }
-        let segment = await PathSnapper.snap(from: start, to: destination)
-        destinationPath = segment
+        // A real walking path or nothing: a straight line between the two
+        // pins is never shown (it could cross water, highways, private
+        // land). MKDirections hiccups (throttling, network blips) get one
+        // retry before we surface the failure in the banner.
+        var verified = await PathSnapper.snapVerified(from: start, to: destination)
+        if !verified.snapped {
+            try? await Task.sleep(for: .seconds(0.8))
+            verified = await PathSnapper.snapVerified(from: start, to: destination)
+        }
+        // The user may have re-tapped while we were routing — never
+        // overwrite a newer pin's plan with this stale result.
+        guard self.destination == destination else { return }
+        if verified.snapped {
+            destinationPath = verified.path
+        } else {
+            destinationPath = []
+            planError = "No walking route found there — try another spot."
+        }
     }
 
     /// Reverse-geocode the fix into the top capsule's "Street · City"
@@ -582,16 +598,19 @@ public struct ExploreRootView: View {
         } else {
             return   // map is only revealed after a fix, so this is rare
         }
-        var path = await PathSnapper.snap(from: here, to: drop.coordinate)
-        if path.count < 2 {
-            // Snapper came up empty (offline, or no walkable route found):
-            // fall back to a straight guide line so the run still starts —
-            // collection is proximity-based, not path-based.
-            path = [here, drop.coordinate]
+        var verified = await PathSnapper.snapVerified(from: here, to: drop.coordinate)
+        if !verified.snapped {
+            try? await Task.sleep(for: .seconds(0.8))
+            verified = await PathSnapper.snapVerified(from: here, to: drop.coordinate)
         }
         infoDrop = nil
         let gemName = GemCatalog.entry(forGemID: drop.gemID)?.gem.name ?? "a Gem"
-        session.startFreeRun(drops: nearbyDrops, plannedPath: path,
+        // Guide line only when it's a confirmed walking path — otherwise
+        // the run starts guideless (the gem pin stays on the run map, and
+        // collection is proximity-based) rather than drawing a straight
+        // line through who-knows-what.
+        session.startFreeRun(drops: nearbyDrops,
+                             plannedPath: verified.snapped ? verified.path : [],
                              runName: "Run to \(gemName)")
     }
 

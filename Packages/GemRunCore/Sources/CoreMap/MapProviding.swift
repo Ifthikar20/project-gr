@@ -274,7 +274,7 @@ public struct ExploreMapView: View {
             if previewPath.count > 1 {
                 MapPolyline(coordinates: previewPath.map(\.cl))
                     .stroke(MapPalette.pulse,
-                            style: StrokeStyle(lineWidth: 4, dash: [8, 5]))
+                            style: StrokeStyle(lineWidth: 3, dash: [8, 5]))
             }
             if let destinationPin {
                 Annotation("", coordinate: destinationPin.cl) {
@@ -805,12 +805,13 @@ func region(for coords: [Coordinate]) -> MKCoordinateRegion {
 }
 
 /// Snap consecutive waypoints to walkable paths via MKDirections (docs/03 §4).
-/// Falls back to a straight segment when routing fails — callers that place
-/// gems must use `snapVerified` and treat `snapped == false` segments as
-/// unconfirmed (they may cross private land; docs/13 §2).
+/// Every caller must honor the `snapped` flag: `false` means the returned
+/// pair is a straight-line placeholder, NOT a walkable path — never draw it
+/// (it may cross water, highways, private land; docs/13 §2). There is
+/// deliberately no unchecked convenience API.
 public enum PathSnapper {
     /// The snapped path plus whether MKDirections actually confirmed it as a
-    /// walking route (`false` = straight-line fallback, NOT a walkable path).
+    /// walking route (`false` = straight-line placeholder, NOT a walkable path).
     public static func snapVerified(from a: Coordinate,
                                     to b: Coordinate) async -> (path: [Coordinate],
                                                                 snapped: Bool) {
@@ -827,11 +828,6 @@ public enum PathSnapper {
         } catch {
             return ([a, b], false)
         }
-    }
-
-    /// Path-only convenience for previews, where verification doesn't matter.
-    public static func snap(from a: Coordinate, to b: Coordinate) async -> [Coordinate] {
-        await snapVerified(from: a, to: b).path
     }
 
     /// Every alternate walking path MKDirections offers between two points,
