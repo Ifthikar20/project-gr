@@ -99,8 +99,8 @@ struct RunSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
-            if summary.setBonusXP > 0, let setName = summary.completedSetName {
-                Label("\(setName) set complete! +\(summary.setBonusXP) XP",
+            if summary.setBonusXP > 0, let tier = summary.completedSetName {
+                Label("All \(tier) gems found! +\(summary.setBonusXP) XP",
                       systemImage: "rosette")
                     .font(.subheadline.bold())
                     .foregroundStyle(DS.Colors.pulse)
@@ -129,7 +129,7 @@ struct RunSummaryView: View {
                     let fastest = summary.splitsS.min() ?? 0
                     ForEach(Array(summary.splitsS.enumerated()), id: \.offset) { i, split in
                         HStack {
-                            Text("km \(i + 1)")
+                            Text("mi \(i + 1)")
                                 .foregroundStyle(DS.Colors.inkSecondary)
                                 .frame(width: 52, alignment: .leading)
                             Text(formatDuration(split))

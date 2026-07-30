@@ -54,7 +54,8 @@ def validate(track, geom: RouteGeometry):
     distance_m = 0.0
     teleport_run_s = 0.0
     flags = []
-    splits, next_split, last_split_t = [], 1000.0, track[0]["t"]
+    # Mile splits (the app displays imperial units; models stay metric).
+    splits, next_split, last_split_t = [], 1609.344, track[0]["t"]
 
     for i, s in enumerate(track):
         cross, along = geom.project(s["lat"], s["lng"])
@@ -69,7 +70,7 @@ def validate(track, geom: RouteGeometry):
             while distance_m >= next_split:
                 splits.append(int(s["t"] - last_split_t))
                 last_split_t = s["t"]
-                next_split += 1000.0
+                next_split += 1609.344
             if d / dt > rules.TELEPORT_SPEED:
                 teleport_run_s += dt
                 if teleport_run_s >= rules.TELEPORT_SUSTAIN_S and "teleport" not in flags:

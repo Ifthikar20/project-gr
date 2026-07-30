@@ -26,24 +26,60 @@ single vertical slice, current as of 2026-07-27.
 There is **no cron, no scheduled spawner**. The map query *is* the trigger.
 
 `GET /v1/drops?lat&lng&radius_m` (`backend/api/views.py → drops()`) calls
-`system_drops.top_up_area(lat, lng, radius)` **synchronously, before
-answering**, wrapped in a bare `try/except` so a top-up failure can never
-break the map read. Consequences:
+`system_drops.presence_trigger(lat, lng, radius)`, wrapped in a bare
+`try/except` so a trigger failure can never break the map read. The
+trigger picks one of two paths:
+
+- **Warm area** (already holds active system gems): rotation + top-up are
+  handed to a small background executor (2 workers, per-cell in-flight
+  dedupe on a ~550 m grid) and the request **answers immediately** — that
+  one response may show yesterday's layout a final time; the next refresh
+  shows the rotated world.
+- **Cold area** (nothing here at all): bootstrap runs **inline**, so the
+  first-ever answer for a new area arrives already stocked — the iOS
+  first-load cover exists for exactly this wait.
+
+`PRESENCE_ASYNC=False` forces inline everywhere (tests need it — their
+in-memory SQLite is per-thread). Consequences:
 
 - Gems exist only where someone has actually opened the map. A region with
   zero app usage has zero gems, forever, by design.
-- The *first* map open in a new area stocks it (bootstrap); a map open
-  after a gem is collected restocks the freed slot.
-- The user's own request pays the placement latency (see §9).
+- The *first* map open in a new area stocks it (bootstrap); later opens
+  restock freed slots in the background at zero request cost.
+- **Daily rotation** (`expire_stale`): uncollected *system* gems spawned
+  before today free their slots on the next map open, and the top-up that
+  follows restocks the area at fresh positions — the world never repeats
+  yesterday's layout. Player-placed drops are exempt: a runner chose
+  those spots. `GemDrop.created_at` (migration 0004) is the input.
 
 ## 2. Placement algorithm (`backend/api/system_drops.py → top_up_area`)
 
-### 2.1 Budget
+### 2.1 Budget — the per-mile contract
 
-Count active standalone system drops inside the query bbox
-(`route__isnull=True, active=True, placed_by="system"`). Spawn only the
-shortfall up to `PRESENCE_DROP_MAX_PER_AREA = 40` (settings.py). Zero
-shortfall → the request does nothing and answers immediately.
+All counts are **radial** within `PRESENCE_RADIUS_M = 1609` (one mile) of
+the map-open point (`mile_count`: indexed bbox prefilter + planar
+distance), over active standalone SYSTEM drops only — player wallet drops
+neither satisfy the floor nor consume the cap, so littering can't suppress
+system stock.
+
+    count < PRESENCE_FLOOR (20)   → restock up to PRESENCE_FILL_TARGET (35)
+    20 ≤ count ≤ HARD_MAX (50)    → do nothing (someone else's gems ARE stock)
+    PRESENCE_HARD_MAX (50)        → never exceeded, counting everyone's gems
+
+The fill target sits mid-band so two overlapping users' spawns still land
+under the cap. Every insert goes through a **guarded create**: inside a
+write-serialized transaction (SQLite `BEGIN IMMEDIATE`, settings OPTIONS)
+it freshly re-counts BOTH the requester's mile and the candidate gem's own
+mile and aborts the pass at 50 — no writer can inject rows between the
+check and the insert, so the cap holds under concurrent overlapping
+top-ups. Belt and suspenders: `enforce_hard_max` runs on every open
+(read-time enforcement) — whatever concurrent neighbors spilled into your
+mile while nobody was looking, it is trimmed back to 50 (newest system
+gems first) before the restock logic runs, making the guarantee literal at
+every observation. Cold-inline bootstrap is bounded by
+`PRESENCE_INLINE_BUDGET_S = 12`; the budget is checked before every Overpass call and placement
+attempt, and an expired budget simply leaves the mile short (later opens
+retry — the floor keeps firing).
 
 ### 2.2 Tier 1 — popular routes (`drop_gem_on_route`)
 
@@ -53,15 +89,24 @@ Published routes in the bbox with `run_count ≥ PRESENCE_DROP_MIN_RUNS`
 
 1. Sample a uniform-random distance along the route polyline and
    interpolate the coordinate (`RouteGeometry.coordinate_at`). Route
-   polylines are **walking-directions-snapped**, so the point is on a path
-   humans actually walked — construction vouches for it.
-2. Reject if farther than `NEAR_LIMIT_M = 800` from the map-open point
-   (gems are a walk, not a drive).
-3. Reject if within `MIN_GEM_SPACING_M = 100` of any active standalone drop
+   polylines are walking-directions-snapped — but walking directions
+   legally follow ROAD CENTERLINES where no sidewalk exists, which is how
+   gems once ended up reading as "on private property".
+2. **Snap onto the strict pedestrian network** (`PedestrianNet.snap`): the
+   candidate must project onto a sidewalk/trail way within
+   `PLACEMENT_SNAP_MAX_M = 25` and is MOVED to that projected point — the
+   gem physically sits on the public way, never a road centerline,
+   driveway, or yard. No way in range → candidate rejected. The network is
+   fetched ONCE per stocking pass (`fetch_walkable_ways` with
+   `PEDESTRIAN_PLACEMENT_HIGHWAYS`) and shared with Tier 2 — the old
+   per-candidate `is_walkable` HTTP calls are gone. Empty network
+   (Overpass down): raw route points are trusted so new areas still
+   bootstrap; the next daily rotation re-places them snapped.
+3. Reject if farther than `PRESENCE_RADIUS_M = 1609` from the map-open
+   point (the mile is both the counting and the placement circle — a mile
+   is still a walk, not a drive).
+4. Reject if within `MIN_GEM_SPACING_M = 100` of any active standalone drop
    (`near_existing_drop`, planar-meters check over a bbox prefilter).
-4. Veto only on an explicit `walkability.is_walkable(...) is False`; `None`
-   (check off / Overpass unreachable) is accepted because the point came
-   from a trusted polyline.
 
 One gem max per route per top-up.
 
@@ -74,26 +119,33 @@ random scatter tier**: a rate-limited walkability check fails open and
 lands gems on private land, so empty beats misplaced (pinned by test
 `test_map_open_without_walkable_geometry_spawns_nothing`).
 
-1. **Fetch**: `walkability.fetch_walkable_ways(lat, lng,
-   min(radius, NEAR_LIMIT_M), with_tags=True,
-   highways=PEDESTRIAN_HIGHWAYS)` — one Overpass query, mirrors tried in
-   order, 120 s circuit breaker after total failure.
-2. **Way filter** (in the Overpass query itself):
-   - `highway ~ ^(footway|pedestrian|path|steps)$` — sidewalks
-     (`footway`), walking/running trails (`path`), promenades
-     (`pedestrian`), stairs. Driveways (`service`), farm tracks (`track`),
-     cycleways, bridleways, and all road centerlines are excluded — each of
+1. **Fetch**: the pass-shared strict network (`fetch_walkable_ways(lat,
+   lng, PRESENCE_RADIUS_M, highways=PEDESTRIAN_PLACEMENT_HIGHWAYS,
+   deadline=…)`, fetched once in `top_up_area`) — one Overpass query,
+   mirrors tried in order (each capped to the remaining placement budget),
+   120 s circuit breaker after total failure.
+2. **Way filter**:
+   - `highway ~ ^(footway|pedestrian|path)$` — sidewalks (`footway`),
+     walking/running trails (`path`), promenades (`pedestrian`).
+     Driveways (`service`), farm tracks (`track`), cycleways, bridleways,
+     all road centerlines, and `steps` (building-entrance stairs read as
+     private, and stairs are poor run-past spots) are excluded — each of
      those produced gems that read as sitting on private property.
+     (`PEDESTRIAN_HIGHWAYS`, which keeps `steps`, remains the VALIDATION
+     list for player-drop checks.)
    - `foot` and `access` must not be `no`/`private`.
-   - Closed rings (park loops, roundabouts) dropped in post.
+   - Closed rings (park loops, roundabouts), parking-lot access aisles
+     (`footway=access_aisle`), and indoor corridors (`indoor=yes`)
+     dropped in post.
 3. **Way choice**: distance-weighted toward the user —
    `weight = (250 / (250 + d_min))²` where `d_min` is the nearest node's
    planar distance. A path 100 m away is ~9× likelier than one 800 m away.
 4. **Point sample**: random segment of the chosen way, random `t ∈ [0,1)`
    lerp between its endpoints.
-5. **Reject** if beyond `NEAR_LIMIT_M` (long ways can lerp past the circle
-   — pinned by `test_bootstrap_never_places_beyond_near_limit`) or within
-   100 m of an existing drop. Up to `count × 8` attempts total.
+5. **Reject** if beyond the mile (long ways can lerp past the circle —
+   pinned by `test_bootstrap_never_places_beyond_near_limit`) or within
+   100 m of an existing drop. Up to `count × 8` attempts total; every
+   accepted point commits through the guarded create (§2.1).
 
 Slots still empty after both tiers stay empty, with an explicit log line —
 never filled by guessing.
@@ -135,12 +187,21 @@ active standalone drop in the bbox (system *and* player-placed) and returns:
 {"drops": [{"id": "...", "gem_id": "00000000-…-0028", "rarity": "uncommon",
             "lat": 32.97, "lng": -96.65, "position_along_route_m": 0,
             "respawn_rule": "one_time", "placed_by": "system",
-            "fuzz_radius_m": null}]}
+            "fuzz_radius_m": null}],
+ "stocking": false}
 ```
 
 Map drops are sent `exact=True`. (Route-detail payloads use the fuzzed
 variant — deterministic ≤75 m jitter — but the standalone map list does
 not; you run to the true point.)
+
+`stocking` is true when a warm answer shipped while a background job is
+still restocking/rotating this mile (`presence_trigger` returns pending =
+sub-floor count OR yesterday's gems still active). The client shows
+"Stocking gems near you…" and automatically refetches (~4 s, once more at
+~6 s if still flagged, then stops — so a geometry-poor mile that can never
+reach the floor doesn't loop). Inline paths always send false: their
+answer already reflects the restock.
 
 ## 4. iOS: fetch → state (`FeatureExplore/ExploreRootView.swift`)
 
@@ -208,10 +269,11 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 
 ## 6. Collection closes the loop
 
-- **During a route run**: `CollectionEngine` awards at ≤ 25 m
+- **During a route run**: `CollectionEngine` awards at ≤ 100 ft / 30.5 m
   (`collectionRadiusM`) with progress + hysteresis rules.
-- **During a free run**: pure proximity, ≤ 30.5 m (`dropCollectRadiusM`)
-  ≈ 100 ft, so "50 ft away" always collects.
+- **During a free run**: pure proximity, the same ≤ 100 ft / 30.5 m
+  (`dropCollectRadiusM`) — one capture distance everywhere, mirrored by
+  the server's `COLLECTION_RADIUS_M` / `DROP_COLLECT_RADIUS_M`.
 - Server side, `POST /v1/drops/collect` (or route completion crossing a
   standalone drop) validates the GPS track, awards **first-come**, and
   deactivates the row atomically. `respawn_rule="one_time"` means the row
@@ -225,6 +287,7 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 |---|---|
 | Overpass mirror down | next mirror; all down → 120 s circuit breaker |
 | No walkable ways answer | Tier 2 spawns **nothing** (fail closed) |
+| Background top-up job raises | logged; slot for that cell frees; next map open retries |
 | Walkability check `None` on a route point | accepted (polyline is trusted) |
 | top_up_area raises | swallowed; map read still answers |
 | Unknown gem_id on client | "Mystery Gem" fallback in sheet & pin |
@@ -232,13 +295,19 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 | Location permission denied | cover becomes a "Turn on location" → Settings prompt |
 | First drops fetch fails | cover stays up with Retry — a bare map never stands in for an error |
 | Legitimately empty area | map reveals with a "No gems in this area yet" banner |
+| Two overlapping top-ups race the cap | per-insert fresh counts + INSERT in one write-serialized transaction; any residual overshoot is trimmed at the next observation of that mile (`enforce_hard_max`) |
+| Inline bootstrap budget expires | placement stops mid-pass; mile sits below floor; next open retries |
 
 ## 8. Tuning knobs
 
 | Knob | Where | Value |
 |---|---|---|
-| Area budget | `settings.PRESENCE_DROP_MAX_PER_AREA` | 40 |
-| Near-me limit | `system_drops.NEAR_LIMIT_M` | 800 m |
+| Mile radius | `settings.PRESENCE_RADIUS_M` | 1 609 m |
+| Restock floor | `settings.PRESENCE_FLOOR` | 20 / mile |
+| Fill target | `settings.PRESENCE_FILL_TARGET` | 35 / mile |
+| Hard max | `settings.PRESENCE_HARD_MAX` | 50 / mile, everyone's gems |
+| Inline bootstrap budget | `settings.PRESENCE_INLINE_BUDGET_S` | 12 s |
+| Client HTTP timeouts | `APIClient.swift` | 15 s request / 30 s resource |
 | Min gem spacing | `rules.MIN_GEM_SPACING_M` | 100 m |
 | Placement ways | `walkability.PEDESTRIAN_HIGHWAYS` | footway\|pedestrian\|path\|steps |
 | Rarity mix | `system_drops.WEIGHTS` / `HIGH_TRAFFIC_WEIGHTS` | 40/30/20/10 (sidewalk fills) · 15/45/27/13 (popular routes) |
@@ -248,29 +317,34 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 
 ## 9. Known limitations (why this isn't the final design)
 
-1. **The user pays for placement.** The top-up runs inside the map request;
-   a cold area costs one Overpass round-trip (seconds when mirrors are
-   slow) before the map answers. The client's first-load cover makes that
-   wait an explicit "Stocking gems near you…" instead of a bare map, but
-   the latency itself remains. Better: answer immediately and top up in a
-   background task / queue keyed by an area cell.
+1. **Only first contact pays for placement.** Warm areas answer instantly
+   (background top-up); a genuinely cold area still pays one inline
+   Overpass round-trip, made explicit by the client's "Stocking gems near
+   you…" cover. Remaining better: pre-warm cells server-side (the
+   walkable-way cache of §9.2) so even first contact is a local read.
 2. **Overpass is a hard dependency for Tier 2.** Keyless, aggressively
    rate-limited, and its data quality *is* our placement quality — suburbs
    with unmapped sidewalks get few or no gems. Better: pre-download way
    geometry per visited cell (cache table keyed by H3/geohash, refreshed
    weekly), so placement is a local read.
-3. **The budget is a moving box, not a grid.** "40 per area" is counted in
-   the *query* bbox; two users straddling adjacent, overlapping boxes can
-   each trigger spawns whose union exceeds any single box's intent.
-   Better: fixed spatial cells (H3 res ~8) with per-cell budgets.
+3. **~~The budget is a moving box~~ — resolved.** The budget is now the
+   radial per-mile contract with per-insert guarded creates inside a
+   write-serialized transaction (§2.1): overlapping users see each other's
+   committed gems and throttle. Honest residual: a never-opened point
+   BETWEEN two spawn centers can, in adversarial geometry, exceed 50 —
+   bounded by the candidate-mile check, trimmed by `enforce_hard_max` the
+   moment anyone observes that mile, and healed outright by daily
+   rotation. The permanent fix (and the Postgres/MVCC requirement, where a
+   COUNT inside a transaction no longer serializes) is fixed grid cells
+   with a per-cell budget row.
 4. **Spacing check is O(drops) per candidate** with a bbox prefilter — fine
    at 40, wrong at scale. Better: PostGIS + spatial index, or the cell
    cache above.
-5. **No respawn cadence.** Collected slots refill only on the *next* map
-   open, so a lone player in an area sees restocks exactly when they look —
-   which reads as "gems appear when I open the app" rather than a living
-   world. Better: cell-level respawn windows (e.g. refill at most N per
-   hour).
+5. **Respawn cadence is daily-or-on-look.** Daily rotation now guarantees
+   the world changes across days, and background restocks decouple the
+   refill from the answering request — but within a day, a lone player
+   still sees restocks land right after they look. Better: cell-level
+   respawn windows (e.g. refill at most N per hour, jittered).
 6. **`random.Random()` is unseeded per request** — placements are not
    reproducible for debugging. Passing a seed derived from (cell, day)
    would make spawn layouts deterministic and testable in the field.

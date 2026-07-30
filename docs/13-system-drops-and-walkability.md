@@ -44,9 +44,12 @@ Spawn placement is tiered, best ground first:
    flags any misplaced stragglers.
 
 The top-up is **self-limiting**, so repeated map opens never pile gems up:
-the target is one active system drop per popular route in the queried area,
-capped at `PRESENCE_DROP_MAX_PER_AREA` (default 3). At or above target the
-trigger is two cheap count queries and exits.
+the budget is the per-mile contract (docs/14 §2.1) — radial within
+`PRESENCE_RADIUS_M` of the map-open point, restock below `PRESENCE_FLOOR`
+(20) up to `PRESENCE_FILL_TARGET` (35), hard-capped at `PRESENCE_HARD_MAX`
+(50) counting everyone's system gems, re-checked inside a write-serialized
+transaction on every insert. In the 20–50 band the trigger is one cheap
+indexed count and exits.
 
 ### Popularity: "being walked by many people"
 
@@ -90,13 +93,23 @@ indirectly through routing. So walkability is layered:
   excluded by omission. OSM is the only real "walkable path list" data
   source. ODbL attribution applies (already planned in docs/10).
 
-`is_walkable(lat, lng)` is deliberately three-valued:
+**System placement no longer uses a fuzzy nearby-check at all**: every
+system gem must SNAP onto the strict pedestrian network
+(`PEDESTRIAN_PLACEMENT_HIGHWAYS = footway|pedestrian|path`, fetched once
+per stocking pass) within `PLACEMENT_SNAP_MAX_M = 25` — the gem is moved
+onto the way itself, or the candidate is rejected. Only when Overpass is
+entirely unreachable are raw route points trusted (bootstrap must work),
+and the next daily rotation re-places those snapped.
+
+`is_walkable(lat, lng, highways=…)` remains for PLAYER drops and is
+deliberately three-valued (POST /v1/drops passes the strict
+`PEDESTRIAN_HIGHWAYS` list — a nearby residential road no longer counts):
 
 | Result | Meaning | Caller policy |
 |---|---|---|
-| `True` | walkable way within radius | drop / accept |
-| `False` | Overpass answered: nothing walkable (highway median, private land, water) | **skip / reject 422 `not_walkable`** |
-| `None` | check disabled or Overpass unreachable/rate-limited | accepted for system drops (candidates are route-polyline-sampled, walkable by construction) and for user drops — only an explicit `False` ever vetoes |
+| `True` | qualifying way within radius | accept |
+| `False` | Overpass answered: nothing qualifying (highway median, private land, water) | **reject 422 `not_walkable`** |
+| `None` | check disabled or Overpass unreachable/rate-limited | accepted — only an explicit `False` ever vetoes |
 
 Configuration (`gemrun/settings.py`): `WALKABILITY_MODE` — default
 `"overpass"` (ON), overridable via the `WALKABILITY_MODE` env var (`"off"`
@@ -105,10 +118,15 @@ plus `OVERPASS_URL`, `WALKABILITY_RADIUS_M` (25, matches the collection
 radius), `WALKABILITY_TIMEOUT_S`. The same check gates user standalone drops
 in `POST /v1/drops`.
 
-The client closes the remaining leak at the source: `PathSnapper.snapVerified`
-reports whether MKDirections actually confirmed each segment, the creation
-flow records straight-line-fallback stretches (`unsnappedRangesM`), and gem
-placement on an unverified stretch is refused with an inline error.
+The client closes the remaining leak at the source: the creation flow now
+**rejects** any dot or destination pin MKDirections can't reach on foot at
+draw time (`PathSnapper.snapAlternates` / `snapVerified` — the dot bounces
+off with "No walkable path to that spot"), so an unverified stretch can no
+longer exist in a drawn route. The old `unsnappedRangesM` bookkeeping and
+its gem-placement guard are gone — the invariant moved upstream. Each
+verified segment also carries MKDirections' alternate walking routes, and
+the draw step's "Another path" button cycles the latest segment through
+them with the numbered dots held fixed.
 
 A future alternative provider is the Apple Maps Server API
 (`transportType=Walking`, 25k free calls/day): validate a point by routing

@@ -33,6 +33,10 @@ public struct RunCompletionSummary: Sendable {
     public let splitsS: [Int]
     public let leaderboardRank: Int?
     public let routeName: String
+    /// Encoded shape of the run for the summary card: always the actual
+    /// traveled track when samples exist; a route run falls back to its
+    /// planned line only when the track didn't survive (restored run).
+    public var pathPolyline: String? = nil
     /// Filled in after completion from an Apple Health step-count read;
     /// stays 0 when Health is unavailable or hasn't flushed samples yet.
     public var steps: Int = 0
@@ -56,35 +60,79 @@ public final class SessionStore {
     /// Set by the gemrun://route/{id} deep-link handler; Explore consumes it.
     public var pendingDeepLinkRouteID: UUID?
 
-    // MARK: Gem wallet + free runs (earn-by-running)
+    // MARK: Stash + free runs
 
-    /// Gems available to drop — minted from Apple Health distance; starts at 0.
-    public private(set) var wallet: GemWallet = [:]
     /// Presents the free-run cover (collect standalone drops, no route).
     public var isFreeRunning = false
     public var freeRunDrops: [GemDrop] = []
     /// The planned walking line for free runs started from a recommended
     /// route (client-side, not stored on the backend) — drawn on the run map.
     public var freeRunPlannedPath: [Coordinate] = []
+    /// What this free run is called on the summary card, share card, and
+    /// stash rows — a recommended route's fun name ("Sidewalk Safari"),
+    /// "Run to Amber" from a gem tap, or the plain default.
+    public var freeRunName = "Free run"
 
-    /// Reads lifetime run km from Health and mints via the API.
-    public func refreshWallet() async {
-        let km = await HealthDistance.totalRunKm()
-        if let minted = try? await API.shared.syncWallet(totalRunKm: km) {
-            wallet = minted
+    /// Never a real UUID on the wire: the server's stand-in for "no drop"
+    /// (welcome-gift stash rows were never on the map).
+    private static let zeroUUID = UUID(uuid: UUID_NULL)
+
+    /// Server truth for the stash: pulls GET /v1/stash and inserts anything
+    /// this device hasn't seen — the first-login welcome gift, and gems
+    /// collected on other installs of the same account. Local rows for
+    /// just-finished runs are matched by drop id so nothing duplicates;
+    /// dropped-state syncs down so the drop sheet can't offer a spent gem.
+    public func refreshStash() async {
+        guard let context,
+              let items = try? await API.shared.stash().items else { return }
+        let existing = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        let byID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+        let byDropID = Dictionary(existing.compactMap { row in
+            row.gemDropID.map { ($0, row) }
+        }, uniquingKeysWith: { first, _ in first })
+        var changed = false
+        for item in items {
+            let dropID = item.gemDropID == Self.zeroUUID ? nil : item.gemDropID
+            if let known = byID[item.id] ?? dropID.flatMap({ byDropID[$0] }) {
+                let dropped = item.dropped ?? false
+                if known.isDropped != dropped {
+                    known.isDropped = dropped
+                    changed = true
+                }
+                continue
+            }
+            let entry = GemCatalog.entry(forGemID: item.gemID)
+            let isGift = item.source == "gift"
+            context.insert(StoredStashItem(
+                id: item.id, gemID: item.gemID, gemDropID: dropID,
+                gemName: entry?.gem.name ?? "Gem",
+                rarityRaw: entry?.gem.rarity.rawValue ?? "common",
+                setName: entry?.setName ?? "Wanderer",
+                routeID: item.runID,
+                routeName: isGift ? "Welcome gift" : "Collected on a run",
+                collectedAt: item.collectedAt, isFirstFind: item.isFirstFind,
+                isDropped: item.dropped ?? false))
+            changed = true
+        }
+        if changed { try? context.save() }
+    }
+
+    /// Flag one local copy of this gem as given away (mirror of the server
+    /// marking the stash row dropped) so the drop sheet updates instantly.
+    public func markDropped(gemID: UUID) {
+        guard let context else { return }
+        let rows = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        if let row = rows.first(where: { $0.gemID == gemID && !$0.isDropped }) {
+            row.isDropped = true
+            try? context.save()
         }
     }
 
-    /// Optimistic local decrement after a successful dropGem call.
-    public func spend(_ rarity: Rarity) {
-        if let count = wallet[rarity], count > 0 {
-            wallet[rarity] = count - 1
-        }
-    }
-
-    public func startFreeRun(drops: [GemDrop], plannedPath: [Coordinate] = []) {
+    public func startFreeRun(drops: [GemDrop], plannedPath: [Coordinate] = [],
+                             runName: String = "Free run") {
         freeRunDrops = drops
         freeRunPlannedPath = plannedPath
+        freeRunName = runName
         isFreeRunning = true
     }
 
@@ -95,6 +143,10 @@ public final class SessionStore {
                                                         track: track)
         let awarded = result?.awardedDrops ?? []
         let xp = result?.xpEarned ?? 0
+        // Named runs (recommended routes, "Run to <gem>") keep their name in
+        // the stash; anonymous free runs keep the old phrasing.
+        let stashRouteName = freeRunName == "Free run"
+            ? "Found on a free run" : freeRunName
         if let context {
             for drop in awarded {
                 let entry = GemCatalog.entry(forGemID: drop.gemID)
@@ -103,7 +155,7 @@ public final class SessionStore {
                     gemName: entry?.gem.name ?? "Gem",
                     rarityRaw: drop.rarity.rawValue,
                     setName: entry?.setName ?? "Wanderer",
-                    routeID: drop.id, routeName: "Found on a free run",
+                    routeID: drop.id, routeName: stashRouteName,
                     collectedAt: Date(), isFirstFind: true))
             }
             profile?.xp += xp
@@ -126,23 +178,22 @@ public final class SessionStore {
             multiplier: 1.0, isWalk: false, status: .valid,
             startedAt: Date().addingTimeInterval(-TimeInterval(durationS)),
             durationS: durationS, distanceM: distanceM, paceSPerKm: pace,
-            splitsS: [], leaderboardRank: nil, routeName: "Free run")
+            splitsS: [], leaderboardRank: nil, routeName: freeRunName,
+            pathPolyline: track.count > 1
+                ? PolylineCodec.encode(track.map(\.coordinate)) : nil)
     }
 
     private var context: ModelContext?
 
     public init() {
         self.isOnboarded = UserDefaults.standard.bool(forKey: "gemrun.onboarded")
-        // Starter gems so a fresh user can drop from Explore immediately —
-        // the API resyncs on Stash open, but this avoids an empty-wallet
-        // moment on first launch.
-        self.wallet = [.common: 5, .uncommon: 3, .rare: 1]
     }
 
     public func attach(context: ModelContext) {
         self.context = context
         profile = try? context.fetch(FetchDescriptor<StoredProfile>()).first
-        Task { await refreshWallet() }
+        // Pull server stash truth (welcome gift included) at launch.
+        Task { await refreshStash() }
     }
 
     public func createProfile(handle: String) {
@@ -260,7 +311,13 @@ public final class SessionStore {
             startedAt: result.startedAt, durationS: v.durationS, distanceM: v.distanceM,
             paceSPerKm: v.paceSPerKm, splitsS: v.splitsS,
             leaderboardRank: verdict?.leaderboardRank ?? nil,
-            routeName: result.route.name)
+            routeName: result.route.name,
+            // The card's map shows what you ACTUALLY ran — the traveled
+            // track; the route's planned line is only the fallback for a
+            // restored run whose samples didn't survive.
+            pathPolyline: result.track.count > 1
+                ? PolylineCodec.encode(result.track.map(\.coordinate))
+                : result.route.polyline)
     }
 
     /// Returns the name of a set completed by this run, if any (bonus already
@@ -283,17 +340,19 @@ public final class SessionStore {
                     isFirstFind: drop.rarity == .legendary))
             }
             var totalXP = xp
-            // Set-completion bonus (docs/02): all gems of a set now collected,
-            // bonus not yet awarded → +500 XP + badge (Stash shows completion).
+            // Tier-completion bonus (docs/02): all gems of a rarity tier now
+            // collected, bonus not yet awarded → +500 XP. Tiers are what the
+            // Stash groups by (the themed sets left the UI), so the bonus
+            // tracks a goal the user can actually see filling up.
             if let profile {
                 let stash = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
                 let owned = Set(stash.map(\.gemID))
-                for (setName, entries) in Dictionary(grouping: GemCatalog.entries,
-                                                     by: \.setName) {
-                    guard !profile.completedSets.contains(setName),
+                for (tier, entries) in Dictionary(grouping: GemCatalog.entries,
+                                                  by: \.gem.rarity) {
+                    guard !profile.completedSets.contains(tier.rawValue),
                           entries.allSatisfy({ owned.contains($0.gem.id) }) else { continue }
-                    profile.completedSets.insert(setName)
-                    completedSet = setName
+                    profile.completedSets.insert(tier.rawValue)
+                    completedSet = tier.rawValue.capitalized
                     totalXP += XPRules.setCompletionBonus
                     break
                 }

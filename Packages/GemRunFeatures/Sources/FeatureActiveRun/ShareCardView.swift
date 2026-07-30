@@ -12,13 +12,14 @@ struct ShareCardView: View {
     let summary: RunCompletionSummary
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "diamond.fill")
                         .foregroundStyle(DS.Colors.pulse)
-                    Text("GemRun")
+                    Text("GEMRUN")
                         .font(DS.Typography.display(20))
+                        .kerning(1.5)
                         .foregroundStyle(DS.Colors.pulse)
                 }
                 Spacer()
@@ -27,48 +28,83 @@ struct ShareCardView: View {
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
 
-            Text(summary.routeName)
-                .font(DS.Typography.display(26))
-                .foregroundStyle(DS.Colors.ink)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(String(format: "%.2f", Double(summary.distanceM) / 1_000))
-                    .font(DS.Typography.statLarge)
-                    .foregroundStyle(DS.Colors.ink)
-                    .monospacedDigit()
-                Text("km")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.inkSecondary)
-                Spacer()
-                if !summary.gems.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(summary.gems.prefix(6)) { gem in
-                            Text(MapPalette.emoji(forGemID: gem.gemID))
-                                .font(.system(size: 26))
-                        }
-                        if summary.gems.count > 6 {
-                            Text("+\(summary.gems.count - 6)")
-                                .font(.caption.bold())
-                                .foregroundStyle(DS.Colors.inkSecondary)
-                        }
+            // Hero: the run's shape with the headline distance overlaid —
+            // same trading-card anatomy as the in-app flip card.
+            ZStack {
+                if let polyline = summary.pathPolyline {
+                    let coords = PolylineCodec.decode(polyline)
+                    if coords.count > 1 {
+                        RouteShapeView(coords: coords)
                     }
+                } else {
+                    Image(systemName: "diamond.fill")
+                        .font(.system(size: 76))
+                        .foregroundStyle(DS.Colors.pulse.opacity(0.10))
+                }
+                VStack {
+                    Spacer()
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(UnitFormat.milesText(fromMeters: Double(summary.distanceM)))
+                            .font(DS.Typography.statLarge)
+                            .foregroundStyle(DS.Colors.ink)
+                            .monospacedDigit()
+                        Text("mi")
+                            .font(DS.Typography.heading)
+                            .foregroundStyle(DS.Colors.inkSecondary)
+                        Spacer()
+                    }
+                }
+                .padding(14)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 190)
+            .background(DS.Colors.snow, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16)
+                .stroke(DS.Colors.hairline, lineWidth: 1))
+
+            HStack(spacing: 8) {
+                Text(summary.routeName)
+                    .font(DS.Typography.display(24))
+                    .foregroundStyle(DS.Colors.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer()
+                Text(summary.isWalk ? "WALK" : "RUN")
+                    .font(.system(size: 11, weight: .heavy))
+                    .kerning(0.8)
+                    .foregroundStyle(DS.Colors.snowCard)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(DS.Colors.pulse, in: Capsule())
+            }
+
+            HStack(spacing: 8) {
+                tile(time(summary.durationS), "Time")
+                tile(summary.paceSPerKm > 0
+                     ? time(UnitFormat.paceSecPerMile(
+                        fromSecPerKm: summary.paceSPerKm)) : "–", "Pace /mi")
+                tile(summary.steps > 0 ? "\(summary.steps)" : "–", "Steps")
+            }
+            HStack(spacing: 8) {
+                tile("~\(summary.approxCalories)", "Calories")
+                tile("+\(summary.xpEarned)", "XP", accent: true)
+                if let rank = summary.leaderboardRank {
+                    tile("#\(rank)", "Rank")
+                } else {
+                    tile("\(summary.gems.count)", "Gems")
                 }
             }
 
-            Rectangle().fill(DS.Colors.hairline).frame(height: 1)
-
-            HStack(spacing: 0) {
-                cardStat(time(summary.durationS), "time")
-                cardStat(summary.paceSPerKm > 0 ? time(summary.paceSPerKm) : "–", "pace")
-                if summary.steps > 0 {
-                    cardStat("\(summary.steps)", "steps")
-                }
-                cardStat("~\(summary.approxCalories)", "kcal")
-                cardStat("+\(summary.xpEarned)", "XP", accent: true)
-                if let rank = summary.leaderboardRank {
-                    cardStat("#\(rank)", "rank")
+            if !summary.gems.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(summary.gems.prefix(8)) { gem in
+                        GemIcon(gemID: gem.gemID, size: 26)
+                    }
+                    if summary.gems.count > 8 {
+                        Text("+\(summary.gems.count - 8)")
+                            .font(.caption.bold())
+                            .foregroundStyle(DS.Colors.inkSecondary)
+                    }
                 }
             }
 
@@ -76,26 +112,33 @@ struct ShareCardView: View {
                 .font(.caption2)
                 .foregroundStyle(DS.Colors.inkSecondary)
         }
-        .padding(28)
+        .padding(26)
         .frame(width: 460)
         .background(DS.Colors.snowCard)
         .overlay(Rectangle().stroke(DS.Colors.hairline, lineWidth: 2))
     }
 
-    private func cardStat(_ value: String, _ label: String,
-                          accent: Bool = false) -> some View {
-        VStack(spacing: 2) {
+    /// Caps label on top, number under — the same stat-tile the in-app
+    /// card uses, so the export matches what the runner saw.
+    private func tile(_ value: String, _ label: String,
+                      accent: Bool = false) -> some View {
+        VStack(spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .kerning(0.8)
+                .foregroundStyle(DS.Colors.inkSecondary)
             Text(value)
                 .font(DS.Typography.statMedium)
                 .foregroundStyle(accent ? DS.Colors.pulse : DS.Colors.ink)
                 .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(DS.Colors.inkSecondary)
+                .minimumScaleFactor(0.55)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(DS.Colors.snow, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .stroke(DS.Colors.hairline, lineWidth: 1))
     }
 
     private func time(_ seconds: Int) -> String {

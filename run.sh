@@ -97,12 +97,21 @@ PYEOF
 
 stop_backend() {
     say "Stopping backend"
+    # The pid file goes stale the moment runserver's auto-reloader replaces
+    # its process, so kill by PORT — whatever is actually answering on 8000.
     if [ -f "$PID_FILE" ]; then
         kill "$(cat "$PID_FILE")" 2>/dev/null || true
         rm -f "$PID_FILE"
-        echo "Stopped."
+    fi
+    PIDS=$(lsof -ti tcp:"$API_PORT" 2>/dev/null || true)
+    if [ -n "$PIDS" ]; then
+        echo "$PIDS" | xargs kill 2>/dev/null || true
+        sleep 1
+    fi
+    if curl -sf "http://127.0.0.1:${API_PORT}/v1/gems/catalog" >/dev/null 2>&1; then
+        echo "WARNING: something still answers on port ${API_PORT}."
     else
-        echo "No pid file - nothing to stop."
+        echo "Stopped."
     fi
 }
 
@@ -143,13 +152,22 @@ run_app() {
     [ -n "$UDID" ] && echo "Simulator: $UDID" \
         || { echo "No available iPhone simulator found."; exit 1; }
 
+    # Custom gem art: PNGs dropped in GEMS_REPO/ become catalog imagesets
+    # (downscaled once at import so in-app decode stays cheap).
+    if [ -f scripts/import-gem-art.sh ]; then bash scripts/import-gem-art.sh; fi
+
     say "Building (first build takes a few minutes)"
+    # Build number = git commit count: every commit bumps it, so each build
+    # is identifiable — Settings > About shows "0.1.0 (<build>)".
+    BUILD_NUM=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+    echo "Build number: ${BUILD_NUM}"
     xcodebuild build \
         -project GemRun.xcodeproj \
         -scheme GemRun \
         -destination "id=${UDID}" \
         -derivedDataPath build \
         CODE_SIGNING_ALLOWED=NO \
+        CURRENT_PROJECT_VERSION="${BUILD_NUM}" \
         -quiet
 
     APP_PATH="build/Build/Products/Debug-iphonesimulator/GemRun.app"
@@ -207,12 +225,58 @@ EOF
 
     # devicectl uses a CoreDevice UUID (36 chars); xcodebuild wants the
     # hardware ECID (e.g. 00008120-000639261EF8201E) — they aren't the same.
-    DEVCTL_UDID=$(xcrun devicectl list devices 2>/dev/null \
-        | awk '/available \(paired\)/{for(i=1;i<=NF;i++)if($i~/^[0-9A-F-]{36}$/){print $i;exit}}')
+    # `|| true` everywhere: devicectl exits non-zero when CoreDevice is
+    # momentarily wedged, and set -e/pipefail would kill the script with
+    # no message at all (it did). Detection failure must never be fatal —
+    # the wait loop below is the recovery path.
+    find_device() {
+        { xcrun devicectl list devices 2>/dev/null || true; } \
+            | awk '$0 ~ /available/ && $0 !~ /unavailable/ \
+                   {for(i=1;i<=NF;i++)if($i~/^[0-9A-F-]{36}$/){print $i;exit}}'
+    }
+    DEVCTL_UDID=$(find_device)
+    if [ -z "$DEVCTL_UDID" ]; then
+        KNOWN=$({ xcrun devicectl list devices 2>/dev/null || true; } \
+            | awk '/unavailable/{print $1; exit}')
+        echo
+        if [ -n "$KNOWN" ]; then
+            echo "iPhone \"$KNOWN\" is paired but UNREACHABLE right now. To fix:"
+        else
+            echo "No iPhone is visible to this Mac yet. To fix:"
+        fi
+        echo "  1. Plug the iPhone in with a cable and UNLOCK it (most reliable), or"
+        echo "  2. for wireless: wake + unlock it on the SAME Wi-Fi as this Mac,"
+        echo "     with 'Connect via network' checked in Xcode > Window > Devices."
+        echo "  (First time on a phone: accept 'Trust This Computer' and enable"
+        echo "   Settings > Privacy & Security > Developer Mode.)"
+        echo
+        echo "Waiting up to 3 minutes for the phone to come online (Ctrl-C to stop)..."
+        for _ in $(seq 1 36); do
+            sleep 5
+            DEVCTL_UDID=$(find_device)
+            if [ -n "$DEVCTL_UDID" ]; then
+                echo "Phone is online."
+                break
+            fi
+            printf '.'
+        done
+        echo
+    fi
+    if [ -z "$DEVCTL_UDID" ]; then
+        echo "Still no reachable iPhone. Raw device status (with errors shown):"
+        xcrun devicectl list devices || true
+        echo
+        echo "If the phone is plugged in but absent/unavailable above, check:"
+        echo "  - Does macOS even see it on USB?  system_profiler SPUSBDataType | grep -i iphone"
+        echo "    (no output = cable/port problem — many cables are charge-only)"
+        echo "  - Xcode > Window > Devices and Simulators — any yellow warning on the phone?"
+        echo "    ('Developer Mode disabled' / 'not trusted' / 'preparing device')"
+        echo "  - Wedged services: sudo pkill -f usbmuxd  (it restarts), then replug."
+        exit 1
+    fi
     # Match the iOS ECID pattern (8 hex, dash, 16 hex) — unique to iPhone/iPad.
     XCODE_UDID=$(xcrun xctrace list devices 2>&1 \
         | grep -Eo '[0-9A-F]{8}-[0-9A-F]{16}' | head -1)
-    [ -n "$DEVCTL_UDID" ] || { echo "No paired iPhone found (xcrun devicectl list devices)."; exit 1; }
     [ -n "$XCODE_UDID" ] || { echo "Couldn't get hardware UDID from xctrace."; exit 1; }
     DEV_NAME=$(xcrun devicectl list devices 2>/dev/null | awk -v u="$DEVCTL_UDID" '$0 ~ u {print $1; exit}')
     echo "Device: ${DEV_NAME:-<unknown>}  (build id ${XCODE_UDID}, install id ${DEVCTL_UDID})"
@@ -222,13 +286,22 @@ EOF
     xattr -cr App Packages 2>/dev/null || true
     rm -rf /tmp/gemrun-build-device
 
+    # Custom gem art: PNGs dropped in GEMS_REPO/ become catalog imagesets
+    # (downscaled once at import so in-app decode stays cheap).
+    if [ -f scripts/import-gem-art.sh ]; then bash scripts/import-gem-art.sh; fi
+
     say "Building (signed for device — first build takes a few minutes)"
+    # Build number = git commit count: every commit bumps it, so each build
+    # is identifiable — Settings > About shows "0.1.0 (<build>)".
+    BUILD_NUM=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+    echo "Build number: ${BUILD_NUM}"
     xcodebuild build \
         -project GemRun.xcodeproj \
         -scheme GemRun \
         -destination "platform=iOS,id=${XCODE_UDID}" \
         -derivedDataPath /tmp/gemrun-build-device \
         -allowProvisioningUpdates \
+        CURRENT_PROJECT_VERSION="${BUILD_NUM}" \
         -quiet
 
     APP_PATH="/tmp/gemrun-build-device/Build/Products/Debug-iphoneos/GemRun.app"
@@ -238,11 +311,36 @@ EOF
     xcrun devicectl device install app --device "$DEVCTL_UDID" "$APP_PATH"
 
     say "Launching"
-    xcrun devicectl device process launch \
-        --device "$DEVCTL_UDID" \
-        --environment-variables "{\"GEMRUN_API_URL\":\"${API_URL}\"}" \
-        com.gemrun.GemRun 2>/dev/null || \
-    xcrun devicectl device process launch --device "$DEVCTL_UDID" com.gemrun.GemRun
+    # iOS denies remote launches while the phone is locked ("Locked" /
+    # RequestDenied). The app is already installed by now, so coach and
+    # retry instead of dying; worst case the user taps the icon — the API
+    # URL is baked into the build via DevAPI.xcconfig, so a manual tap
+    # works identically.
+    LAUNCHED=""
+    COACHED=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if xcrun devicectl device process launch \
+              --device "$DEVCTL_UDID" \
+              --environment-variables "{\"GEMRUN_API_URL\":\"${API_URL}\"}" \
+              com.gemrun.GemRun >/dev/null 2>&1 \
+           || xcrun devicectl device process launch \
+              --device "$DEVCTL_UDID" com.gemrun.GemRun >/dev/null 2>&1; then
+            LAUNCHED=1
+            break
+        fi
+        if [ -z "$COACHED" ]; then
+            echo "Launch refused — your iPhone is probably locked."
+            echo "Unlock it now; retrying for ~90 seconds..."
+            COACHED=1
+        fi
+        sleep 5
+    done
+    if [ -n "$LAUNCHED" ]; then
+        echo "Launched."
+    else
+        echo "Couldn't auto-launch, but the app IS installed."
+        echo "Unlock your iPhone and tap the GemRun icon to open it."
+    fi
 
     echo
     echo "GemRun is on ${DEV_NAME:-your iPhone} → ${API_URL}. Tips:"

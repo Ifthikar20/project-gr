@@ -23,7 +23,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         lat, lng, radius = opts["lat"], opts["lng"], opts["radius"]
-        created = system_drops.top_up_area(lat, lng, radius)
+        # Stocking follows the per-mile contract; --radius only widens the
+        # inventory report below.
+        created = system_drops.top_up_area(lat, lng)
 
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))

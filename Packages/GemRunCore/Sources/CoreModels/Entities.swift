@@ -191,26 +191,35 @@ public struct Run: Codable, Identifiable, Sendable {
 public struct StashItem: Codable, Identifiable, Sendable {
     public let id: UUID
     public let gemID: UUID
+    /// Zero-UUID for welcome-gift gems — they were never a map drop.
     public let gemDropID: UUID
     public let runID: UUID
     public let collectedAt: Date
     public let isFirstFind: Bool
+    /// "run" (collected on a run) or "gift" (first-login welcome gift).
+    public let source: String?
+    /// True once this gem was given away as a map drop — it stays in the
+    /// collection but can't be dropped again.
+    public let dropped: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, collectedAt, isFirstFind
+        case id, collectedAt, isFirstFind, source, dropped
         case gemID = "gemId"
         case gemDropID = "gemDropId"
         case runID = "runId"
     }
 
     public init(id: UUID, gemID: UUID, gemDropID: UUID, runID: UUID,
-                collectedAt: Date, isFirstFind: Bool = false) {
+                collectedAt: Date, isFirstFind: Bool = false,
+                source: String? = "run", dropped: Bool? = false) {
         self.id = id
         self.gemID = gemID
         self.gemDropID = gemDropID
         self.runID = runID
         self.collectedAt = collectedAt
         self.isFirstFind = isFirstFind
+        self.source = source
+        self.dropped = dropped
     }
 }
 

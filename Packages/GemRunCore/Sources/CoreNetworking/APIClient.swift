@@ -6,7 +6,7 @@ import Foundation
 /// MockGemRunAPI until then, against these exact shapes.
 public final class HTTPGemRunAPI: GemRunAPI {
     private let baseURL: URL
-    private let session = URLSession.shared
+    private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
     /// JWT from /v1/auth/apple; attach to every request. Keychain in Phase F polish.
@@ -14,6 +14,15 @@ public final class HTTPGemRunAPI: GemRunAPI {
 
     public init(baseURL: URL) {
         self.baseURL = baseURL
+        // Explicit timeouts instead of URLSession's 60 s default: the
+        // server bounds first-contact stocking (PRESENCE_INLINE_BUDGET_S)
+        // so an honest answer always arrives well inside 15 s — anything
+        // slower is a dead network, and the first-load cover's Retry
+        // screen is a better answer than a minute-long hang.
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        self.session = URLSession(configuration: config)
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -41,6 +50,16 @@ public final class HTTPGemRunAPI: GemRunAPI {
 
     public func deleteAccount() async throws {
         let _: Empty = try await send("DELETE", "users/me", body: Empty())
+    }
+
+    private struct HandleCheckResponse: Decodable {
+        let available: Bool
+    }
+
+    public func checkHandle(_ handle: String) async throws -> Bool {
+        let response: HandleCheckResponse = try await get(
+            "handles/check", query: ["handle": handle])
+        return response.available
     }
 
     private struct RoutesResponse: Decodable {
@@ -106,31 +125,20 @@ public final class HTTPGemRunAPI: GemRunAPI {
         return response.gems
     }
 
-    // MARK: - Gem wallet + standalone drops
-
-    private struct WalletResponse: Decodable {
-        let wallet: [String: Int]
-    }
-
-    public func syncWallet(totalRunKm: Double) async throws -> GemWallet {
-        let response: WalletResponse = try await send("POST", "wallet/sync",
-                                                      body: ["total_run_km": totalRunKm])
-        var wallet: GemWallet = [:]
-        for (key, count) in response.wallet {
-            if let rarity = Rarity(rawValue: key) { wallet[rarity] = count }
-        }
-        return wallet
-    }
+    // MARK: - Standalone drops
 
     private struct DropsResponse: Decodable {
         let drops: [GemDrop]
+        // Optional so older server builds (no flag) still decode.
+        let stocking: Bool?
     }
 
-    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
+    public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> DropsPage {
         let response: DropsResponse = try await get("drops", query: [
             "lat": "\(lat)", "lng": "\(lng)", "radius_m": "\(radiusM)",
         ])
-        return response.drops
+        return DropsPage(drops: response.drops,
+                         stocking: response.stocking ?? false)
     }
 
     private struct DropRequest: Encodable {
@@ -160,6 +168,40 @@ public final class HTTPGemRunAPI: GemRunAPI {
             "POST", "drops/collect", body: CollectRequest(claimed: claimed, track: track))
         return DropCollectResult(awardedDrops: response.awardedDrops,
                                  xpEarned: response.xpEarned)
+    }
+
+    // MARK: - Compete
+
+    private struct RunsResponse: Decodable { let runs: [CompletedRun] }
+    private struct PlayersResponse: Decodable { let players: [PlayerSummary] }
+    private struct FriendsResponse: Decodable { let friends: [FriendEntry] }
+
+    public func myRuns() async throws -> [CompletedRun] {
+        let response: RunsResponse = try await get("runs/mine")
+        return response.runs
+    }
+
+    public func searchPlayers(query: String) async throws -> [PlayerSummary] {
+        let response: PlayersResponse = try await get("players",
+                                                      query: ["search": query])
+        return response.players
+    }
+
+    public func friends() async throws -> [FriendEntry] {
+        let response: FriendsResponse = try await get("friends")
+        return response.friends
+    }
+
+    public func addFriend(profileID: UUID) async throws -> [FriendEntry] {
+        let response: FriendsResponse = try await send(
+            "POST", "friends", body: ["profile_id": profileID.uuidString])
+        return response.friends
+    }
+
+    public func removeFriend(profileID: UUID) async throws {
+        let _: Empty = try await send("DELETE",
+                                      "friends/\(profileID.uuidString)",
+                                      body: Empty())
     }
 
     // MARK: - Plumbing

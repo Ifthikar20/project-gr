@@ -3,16 +3,19 @@ GameKitCoreTests: a straight 1 km route heading north, tracks at known paces.
 """
 import io
 import json
+import math
 import random
 import uuid
+from datetime import timedelta
 from unittest import mock
 
 from django.core.management import call_command
 from django.test import Client, TestCase, override_settings
+from django.utils import timezone
 
 from . import catalog, system_drops, walkability
 from .geometry import RouteGeometry, polyline_decode, polyline_encode
-from .models import ClaimAttempt, GemDrop, Route
+from .models import ClaimAttempt, GemDrop, Profile, Route, Token
 
 DEG_PER_M_LAT = 1.0 / 111_320.0
 
@@ -33,10 +36,30 @@ def track(speed, length_m=1000):
 
 
 # Hermetic: no real Overpass calls from tests; the walkability/bootstrap
-# tests below opt back in with mocked transports.
-@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False)
+# tests below opt back in with mocked transports. PRESENCE_ASYNC off: the
+# background worker's own DB connection can't see the per-thread in-memory
+# test database, so the trigger must run inline here.
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
+                   PRESENCE_ASYNC=False)
 class ApiTests(TestCase):
     def setUp(self):
+        # Hermetic Overpass: the placement fetches return no geometry by
+        # default (→ trusted route points, exactly the Overpass-down
+        # fallback). Tests that need geometry set the mocks or patch
+        # locally; the real parser stays reachable via real_fetch_placement.
+        self.real_fetch_placement = walkability.fetch_placement_data
+        # Delegates to fetch_walkable_ways (below) with no no-go rings, so
+        # every test that stubs grid ways feeds the placement path too.
+        placement_patcher = mock.patch(
+            "api.walkability.fetch_placement_data",
+            side_effect=lambda lat, lng, radius_m, deadline=None:
+                (walkability.fetch_walkable_ways(lat, lng, radius_m), []))
+        self.mock_placement = placement_patcher.start()
+        self.addCleanup(placement_patcher.stop)
+        ways_patcher = mock.patch("api.walkability.fetch_walkable_ways",
+                                  return_value=[])
+        self.mock_ways = ways_patcher.start()
+        self.addCleanup(ways_patcher.stop)
         self.client = Client()
         response = self.post("/v1/auth/apple", {"handle": "tester"})
         self.assertEqual(response.status_code, 200)
@@ -123,7 +146,8 @@ class ApiTests(TestCase):
         self.assertEqual(first, again)
         stash = self.client.get("/v1/stash",
                                 HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
-        self.assertEqual(len(stash["items"]), 1)
+        runs = [i for i in stash["items"] if i["source"] == "run"]
+        self.assertEqual(len(runs), 1)   # gift items aside, the claim is single
 
     def test_claim_without_track_support_is_revoked(self):
         gem = self.gem("common", 900)
@@ -159,38 +183,123 @@ class ApiTests(TestCase):
                              HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
         self.assertEqual(me["streak_count"], 1)   # same day: no double count
 
-    # ---- gem wallet + standalone drops (earn-by-running)
+    def test_tokens_and_provider_ids_are_hashed_at_rest(self):
+        import hashlib
+        # The raw bearer token the client holds never appears in the DB —
+        # only its SHA-256 digest does, and auth still works through it.
+        raw = self.token
+        self.assertFalse(Token.objects.filter(key=raw).exists())
+        expected = hashlib.sha256(raw.encode()).hexdigest()
+        self.assertTrue(Token.objects.filter(key=expected).exists())
+        me = self.client.get("/v1/users/me",
+                             HTTP_AUTHORIZATION=f"Bearer {raw}")
+        self.assertEqual(me.status_code, 200)
+        # Provider IDs are hashed too, and repeat sign-ins still map to
+        # the same profile via the hashed lookup.
+        first = self.client.post(
+            "/v1/auth/apple",
+            data=json.dumps({"handle": "hasher", "external_user_id": "apple-123"}),
+            content_type="application/json").json()
+        again = self.client.post(
+            "/v1/auth/apple",
+            data=json.dumps({"handle": "hasher", "external_user_id": "apple-123"}),
+            content_type="application/json").json()
+        self.assertEqual(first["profile"]["id"], again["profile"]["id"])
+        self.assertFalse(Profile.objects.filter(
+            external_user_id="apple-123").exists())
 
-    def wallet_sync(self, km):
-        return self.post("/v1/wallet/sync", {"total_run_km": km}, auth=True).json()
+    def test_username_change_checks_availability(self):
+        self.client.post("/v1/auth/apple", data=json.dumps({"handle": "taken_name"}),
+                         content_type="application/json")
+        check = self.client.get("/v1/handles/check", {"handle": "taken_name"},
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        self.assertFalse(check["available"])
+        check = self.client.get("/v1/handles/check", {"handle": "fresh_name"},
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        self.assertTrue(check["available"])
+        self.assertFalse(self.client.get(
+            "/v1/handles/check", {"handle": "ab"}).json()["available"])  # too short
+        denied = self.client.patch(
+            "/v1/users/me", data=json.dumps({"handle": "taken_name"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(denied.status_code, 409)
+        self.assertEqual(denied.json()["code"], "handle_taken")
+        ok = self.client.patch(
+            "/v1/users/me", data=json.dumps({"handle": "fresh_name"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json()["handle"], "fresh_name")
 
-    def test_wallet_mints_from_distance_and_never_double_mints(self):
-        self.assertEqual(self.wallet_sync(0)["wallet"], {})          # start at 0
-        wallet = self.wallet_sync(11)["wallet"]
-        self.assertEqual(wallet["common"], 5)                        # 11 // 2
-        self.assertEqual(wallet["uncommon"], 2)                      # 11 // 5
-        self.assertNotIn("rare", wallet)
-        again = self.wallet_sync(11)["wallet"]                       # re-sync: no change
-        self.assertEqual(again, wallet)
-        more = self.wallet_sync(16)["wallet"]                        # +5 km later
-        self.assertEqual(more["common"], 8)                          # 16 // 2
-        self.assertEqual(more["rare"], 1)                            # 16 // 15
+    def test_drops_response_carries_stocking_flag(self):
+        # Inline mode (tests) answers pre-stocked, so the flag is False —
+        # but the key must always be present for the client.
+        body = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                             "radius_m": 1000}).json()
+        self.assertIn("stocking", body)
+        self.assertFalse(body["stocking"])
 
-    def test_drop_requires_wallet_gem(self):
+    def test_pending_restock_covers_sub_floor_and_stale_rotation(self):
+        with self.settings(PRESENCE_FLOOR=2, PRESENCE_FILL_TARGET=3,
+                           PRESENCE_HARD_MAX=5):
+            # Sub-floor mile → top-up incoming.
+            self.assertTrue(system_drops.has_pending_restock(37.0, -122.0, 1))
+            # At-floor mile, all gems fresh → nothing pending.
+            self.assertFalse(system_drops.has_pending_restock(37.0, -122.0, 2))
+            # Yesterday's system gem still active → rotation incoming.
+            GemDrop.objects.create(
+                route=None, gem_id=catalog.gem_of("common")["id"],
+                rarity="common", lat=37.0, lng=-122.0,
+                position_along_route_m=0, respawn_rule="one_time",
+                placed_by="system",
+                created_at=timezone.now() - timedelta(days=1))
+            self.assertTrue(system_drops.has_pending_restock(37.0, -122.0, 2))
+
+    def test_routes_list_query_count_is_flat(self):
+        for _ in range(3):
+            self.assertEqual(self.publish_route().status_code, 200)
+        # Token + routes(+creators) + drops prefetch + viewer stash = 4,
+        # independent of how many routes the page holds.
+        with self.assertNumQueries(4):
+            self.client.get("/v1/routes", {"lat": 37.0, "lng": -122.0,
+                                           "radius_m": 8000},
+                            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    # ---- stash, welcome gift & standalone drops
+
+    def test_welcome_gift_stocks_a_new_stash(self):
+        stash = self.client.get("/v1/stash",
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        gifts = [i for i in stash["items"] if i["source"] == "gift"]
+        self.assertEqual(len(gifts), 6)          # 3 common + 2 uncommon + 1 rare
+        rarities = sorted(catalog.entry_for(uuid.UUID(i["gem_id"]))["rarity"]
+                          for i in gifts)
+        self.assertEqual(rarities, ["common"] * 3 + ["rare"] + ["uncommon"] * 2)
+        self.assertTrue(all(not i["dropped"] for i in gifts))
+
+    def test_drop_spends_a_stash_gem_and_keeps_the_record(self):
         gem_id = str(catalog.gem_of("common")["id"])
-        denied = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
-                           auth=True)
-        self.assertEqual(denied.status_code, 422)                    # wallet empty
-        self.wallet_sync(2)                                          # mint 1 common
+        # The welcome gift holds exactly one copy of this gem: first drop OK.
         ok = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
                        auth=True)
         self.assertEqual(ok.status_code, 200)
         nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
                                                "radius_m": 1000}).json()
         self.assertEqual(len(nearby["drops"]), 1)
+        # The stash row survives as the collection record, marked dropped.
+        stash = self.client.get("/v1/stash",
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        mine = [i for i in stash["items"] if i["gem_id"] == gem_id]
+        self.assertEqual(len(mine), 1)
+        self.assertTrue(mine[0]["dropped"])
+        # No second copy → a repeat drop is refused.
+        again = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
+                          auth=True)
+        self.assertEqual(again.status_code, 422)
+        self.assertEqual(again.json()["code"], "not_in_stash")
 
     def test_collect_drop_is_one_time_and_never_own(self):
-        self.wallet_sync(2)
         gem_id = str(catalog.gem_of("common")["id"])
         drop = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.001, "lng": -122.0},
                          auth=True).json()
@@ -253,34 +362,133 @@ class ApiTests(TestCase):
                                                    "radius_m": 5000}).json()
         self.assertEqual(len(nearby["drops"]), 1)
 
-    def test_drop_gems_skips_unwalkable_points(self):
+    def test_drop_gems_skips_points_off_the_pedestrian_network(self):
+        """A route stretch with NO sidewalk/trail within PLACEMENT_SNAP_MAX_M
+        spawns nothing — the strict network is the placement authority, not
+        a fuzzy any-road-nearby check. (This is the private-property guard:
+        a route along a bare residential street gets no gems.)"""
         self.seed_popular_route()
-        with mock.patch("api.walkability.is_walkable", return_value=False):
-            call_command("drop_gems", seed=7, stdout=io.StringIO())
+        offset = 200 / (111_320 * math.cos(math.radians(37.0)))   # 200 m east
+        self.mock_ways.return_value = [[(37.0, -122.0 + offset),
+                                        (37.02, -122.0 + offset)]]
+        call_command("drop_gems", seed=7, stdout=io.StringIO())
         self.assertEqual(
             GemDrop.objects.filter(route__isnull=True, placed_by="system").count(), 0)
 
-    def test_system_drops_trust_route_snap_when_check_unanswerable(self):
-        """Candidates come from walking-snapped route polylines, so an
-        unanswerable walkability check (None — Overpass down/rate-limited)
-        must NOT block gem spawning; only an explicit False vetoes."""
+    def test_route_gems_snap_onto_the_pedestrian_network(self):
+        """Routes legally follow road centerlines; gems must not. A sidewalk
+        15 m east of the route pulls every placement onto itself."""
+        route = Route.objects.get(id=self.seed_popular_route())
+        offset = 15 / (111_320 * math.cos(math.radians(37.0)))
+        net = system_drops.PedestrianNet(
+            [[(37.0, -122.0 + offset), (37.01, -122.0 + offset)]])
+        drop = system_drops.drop_gem_on_route(route, random.Random(1),
+                                              net=net, near=(37.0, -122.0))
+        self.assertIsNotNone(drop)
+        self.assertAlmostEqual(drop.lng, -122.0 + offset, places=6)
+
+    def test_system_drops_trust_route_snap_when_network_unanswerable(self):
+        """Route candidates come from walking-snapped polylines, so an
+        unreachable Overpass (no pedestrian network at all — the setUp
+        default here) must NOT block spawning: the raw route point is
+        trusted, and the next daily rotation re-places it snapped. A
+        reachable network with nothing in snap range DOES veto (test
+        above)."""
         self.seed_popular_route()
         system = GemDrop.objects.filter(route__isnull=True, placed_by="system")
         with self.settings(WALKABILITY_MODE="overpass"):
             with mock.patch("api.walkability.is_walkable", return_value=None):
                 call_command("drop_gems", seed=7, stdout=io.StringIO())
                 self.assertEqual(system.count(), 1)          # trusted, spawns
-                self.wallet_sync(2)                          # user drop: fail open
-                ok = self.post("/v1/drops",
+                ok = self.post("/v1/drops",                  # user drop: fail open
                                {"gem_id": str(catalog.gem_of("common")["id"]),
                                 "lat": 37.0, "lng": -122.0}, auth=True)
                 self.assertEqual(ok.status_code, 200)
-            with mock.patch("api.walkability.is_walkable", return_value=False):
-                call_command("drop_gems", seed=8, stdout=io.StringIO())
-                self.assertEqual(system.count(), 1)          # False still vetoes
+
+    def test_player_drop_check_uses_strict_pedestrian_list(self):
+        with mock.patch("api.views.walkability.is_walkable",
+                        return_value=None) as check:
+            ok = self.post("/v1/drops",
+                           {"gem_id": str(catalog.gem_of("common")["id"]),
+                            "lat": 37.0, "lng": -122.0}, auth=True)
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(check.call_args.kwargs.get("highways"),
+                         walkability.PEDESTRIAN_HIGHWAYS)
+
+    def test_stocking_pass_fetches_the_placement_network_once(self):
+        self.mock_placement.reset_mock()
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=5, PRESENCE_BOOTSTRAP=True):
+            system_drops.top_up_area(37.0, -122.0, random.Random(1))
+        self.assertEqual(self.mock_placement.call_count, 1)
+        self.assertEqual(self.mock_placement.call_args.args[2], 1609)
+
+    def test_gems_never_spawn_inside_no_go_grounds(self):
+        """A mapped footpath through a golf course / gated grounds is real
+        geometry, but the polygon vetoes it — in BOTH tiers."""
+        route = Route.objects.get(id=self.seed_popular_route())
+        offset = 5 / (111_320 * math.cos(math.radians(37.0)))
+        sidewalk = [[(36.999, -122.0 + offset), (37.011, -122.0 + offset)]]
+        # A no-go ring swallowing the whole route + sidewalk.
+        ring = [(36.998, -122.001), (37.012, -122.001),
+                (37.012, -121.999), (36.998, -121.999), (36.998, -122.001)]
+        net = system_drops.PedestrianNet(sidewalk)
+        zones = walkability.NoGoZones([ring])
+        drop = system_drops.drop_gem_on_route(route, random.Random(1),
+                                              net=net, no_go=zones,
+                                              near=(37.0, -122.0))
+        self.assertIsNone(drop)
+        made = system_drops.drop_on_walkable_ways(
+            37.0, -122.0, 1, random.Random(1), ways=sidewalk, no_go=zones)
+        self.assertEqual(made, 0)
+        # Same geometry without the ring: both tiers place happily.
+        empty = walkability.NoGoZones([])
+        self.assertIsNotNone(system_drops.drop_gem_on_route(
+            route, random.Random(1), net=net, no_go=empty,
+            near=(37.0, -122.0)))
+        self.assertEqual(system_drops.drop_on_walkable_ways(
+            37.0, -122.0, 1, random.Random(2), ways=sidewalk,
+            no_go=empty), 1)
+
+    def test_placement_data_splits_network_from_no_go_rings(self):
+        payload = {"elements": [
+            {"type": "way", "tags": {"highway": "footway"},
+             "geometry": [{"lat": 37.0, "lon": -122.0},
+                          {"lat": 37.001, "lon": -122.0}]},
+            {"type": "way", "tags": {"leisure": "golf_course"},
+             "geometry": [{"lat": 37.0, "lon": -122.0},
+                          {"lat": 37.001, "lon": -122.0},
+                          {"lat": 37.001, "lon": -121.999},
+                          {"lat": 37.0, "lon": -121.999},
+                          {"lat": 37.0, "lon": -122.0}]},
+            # Private footpath: excluded from the network, not closed, so
+            # it lands in neither bucket.
+            {"type": "way", "tags": {"highway": "footway", "access": "private"},
+             "geometry": [{"lat": 37.0, "lon": -122.0},
+                          {"lat": 37.002, "lon": -122.0}]},
+        ]}
+        with mock.patch("api.walkability.query_overpass",
+                        return_value=payload):
+            ways, rings = self.real_fetch_placement(37.0, -122.0, 1609)
+        self.assertEqual(len(ways), 1)
+        self.assertEqual(len(rings), 1)
+        zones = walkability.NoGoZones(rings)
+        self.assertTrue(zones.contains(37.0005, -121.9995))
+        self.assertFalse(zones.contains(37.0005, -122.002))
+
+    def test_point_check_vetoes_inside_no_go_area(self):
+        with self.settings(WALKABILITY_MODE="overpass"):
+            inside = {"elements": [{"type": "way", "id": 1},
+                                   {"type": "area", "id": 2}]}
+            with mock.patch("api.walkability.query_overpass",
+                            return_value=inside):
+                self.assertIs(walkability.is_walkable(37.0, -122.0), False)
+            clear = {"elements": [{"type": "way", "id": 1}]}
+            with mock.patch("api.walkability.query_overpass",
+                            return_value=clear):
+                self.assertIs(walkability.is_walkable(37.0, -122.0), True)
 
     def test_drop_rejected_on_unwalkable_coordinate(self):
-        self.wallet_sync(2)
         gem_id = str(catalog.gem_of("common")["id"])
         with mock.patch("api.views.walkability.is_walkable", return_value=False):
             denied = self.post("/v1/drops",
@@ -341,7 +549,6 @@ class ApiTests(TestCase):
             self.assertLess(closest, 1.0)   # both tracks were right on it
 
     def test_claim_attempts_log_too_far_and_bad_gps(self):
-        self.wallet_sync(2)
         gem_id = str(catalog.gem_of("common")["id"])
         drop = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.001,
                                        "lng": -122.0}, auth=True).json()
@@ -392,7 +599,8 @@ class ApiTests(TestCase):
 
     def test_stock_gems_spawns_at_startup_and_reports(self):
         self.seed_popular_route(run_count=5)
-        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=1):
             out = io.StringIO()
             call_command("stock_gems", lat=37.0, lng=-122.0, stdout=out)
             self.assertIn("Stocked 1 new system gem(s)", out.getvalue())
@@ -406,9 +614,10 @@ class ApiTests(TestCase):
 
     def test_presence_trigger_spawns_and_replenishes_gems(self):
         self.seed_popular_route(run_count=5)
-        with self.settings(PRESENCE_DROP_MAX_PER_AREA=1):
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=1):
             # Opening the map IS the trigger: the query's own coordinates get
-            # topped up (1 popular route → target 1 system drop).
+            # topped up (mile below floor → fill to target).
             nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
                                                    "radius_m": 5000}).json()
             self.assertEqual(len(nearby["drops"]), 1)
@@ -440,7 +649,8 @@ class ApiTests(TestCase):
         step = 500 * DEG_PER_M_LAT
         ways = [[(64.2 + i * step, -149.4937), (64.2 + (i + 1) * step, -149.4937)]
                 for i in range(8)]
-        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=3,
+                           PRESENCE_FILL_TARGET=3, PRESENCE_HARD_MAX=5), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
@@ -449,15 +659,180 @@ class ApiTests(TestCase):
             self.assertAlmostEqual(d["lng"], -149.4937, places=5)
 
     def test_bootstrap_never_places_beyond_near_limit(self):
-        """Gems are a walk, not a drive: ways farther than NEAR_LIMIT_M from
-        the map-open point never receive gems, whatever the query radius."""
+        """Gems are a walk, not a drive: ways farther than the mile
+        (PRESENCE_RADIUS_M) from the map-open point never receive gems,
+        whatever the client's read radius."""
         far = 2_000 * DEG_PER_M_LAT
         ways = [[(64.2008 + far, -149.4937), (64.2008 + far * 2, -149.4937)]]
-        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_DROP_MAX_PER_AREA=3), \
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=3,
+                           PRESENCE_FILL_TARGET=3, PRESENCE_HARD_MAX=5), \
              mock.patch("api.walkability.fetch_walkable_ways", return_value=ways):
             drops = self.client.get("/v1/drops", {"lat": 64.2008, "lng": -149.4937,
                                                   "radius_m": 5000}).json()["drops"]
         self.assertEqual(drops, [])
+
+    def test_daily_rotation_respawns_system_gems_elsewhere(self):
+        """Uncollected system gems expire after their spawn day: the next
+        map open frees their slots and restocks fresh, so the world never
+        repeats yesterday's layout. Player-placed drops are exempt."""
+        self.seed_popular_route(run_count=5)
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=1):
+            first = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                  "radius_m": 5000}).json()["drops"]
+            self.assertEqual(len(first), 1)
+            yesterday = timezone.now() - timedelta(days=1)
+            GemDrop.objects.update(created_at=yesterday)
+            player = GemDrop.objects.create(
+                route=None, dropped_by=None,
+                gem_id=catalog.gem_of("common")["id"], rarity="common",
+                lat=37.004, lng=-122.0, position_along_route_m=0,
+                respawn_rule="one_time", placed_by="creator",
+                created_at=yesterday)
+            refreshed = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                      "radius_m": 5000}).json()["drops"]
+        ids = {d["id"] for d in refreshed}
+        self.assertNotIn(first[0]["id"], ids)          # yesterday's spot freed
+        self.assertIn(str(player.id), ids)             # player drop survives
+        self.assertEqual(
+            sum(1 for d in refreshed if d["placed_by"] == "system"), 1,
+            "rotation should restock the freed slot with a fresh gem")
+
+    # ── Per-mile contract (docs/14 §2.1) ─────────────────────────────────
+
+    @staticmethod
+    def grid_ways(lat, lng, lines=3):
+        """A synthetic sidewalk grid: `lines` parallel 3 km vertical ways
+        centered on the open point — ample capacity for fill tests."""
+        step = 500 * DEG_PER_M_LAT
+        spacing_lng = 300 / (111_320 * 0.55)     # ~300 m apart at lat 64
+        ways = []
+        for j in range(lines):
+            offset = (j - lines // 2) * spacing_lng
+            ways.append([(lat - 3 * step + i * step, lng + offset)
+                         for i in range(7)])
+        return ways
+
+    @staticmethod
+    def prefill_system(lat, lng, count, spacing_m=150):
+        """Spaced active system gems marching north from the open point."""
+        made = []
+        for i in range(count):
+            made.append(GemDrop.objects.create(
+                route=None, dropped_by=None,
+                gem_id=catalog.gem_of("common")["id"], rarity="common",
+                lat=lat + i * spacing_m * DEG_PER_M_LAT, lng=lng,
+                position_along_route_m=0, respawn_rule="one_time",
+                placed_by="system"))
+        return made
+
+    def test_floor_triggers_restock_and_band_does_not(self):
+        """Below PRESENCE_FLOOR a map open restocks to FILL_TARGET; at or
+        above the floor the mile is left alone (someone else's gems count
+        as stock — the shared-world band)."""
+        lat, lng = 64.2008, -149.4937
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=3,
+                           PRESENCE_FILL_TARGET=5, PRESENCE_HARD_MAX=8), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=self.grid_ways(lat, lng)):
+            self.prefill_system(lat, lng, 2)
+            made = system_drops.top_up_area(lat, lng, rng=random.Random(7))
+            self.assertEqual(made, 3)                    # 2 → fill to 5
+            self.assertEqual(system_drops.mile_count(lat, lng), 5)
+            # At the floor (and anywhere in the band): no action.
+            self.assertEqual(
+                system_drops.top_up_area(lat, lng, rng=random.Random(8)), 0)
+            self.assertEqual(system_drops.mile_count(lat, lng), 5)
+
+    def test_hard_cap_holds_when_neighbors_already_stocked(self):
+        """The cap is re-checked inside every guarded insert: a fill pass
+        that starts legitimately still stops the moment the mile reaches
+        PRESENCE_HARD_MAX."""
+        lat, lng = 64.2008, -149.4937
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=6,
+                           PRESENCE_FILL_TARGET=8, PRESENCE_HARD_MAX=6), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=self.grid_ways(lat, lng)):
+            self.prefill_system(lat, lng, 5)
+            made = system_drops.top_up_area(lat, lng, rng=random.Random(7))
+            self.assertLessEqual(made, 1)
+            self.assertLessEqual(system_drops.mile_count(lat, lng), 6)
+
+    def test_overlapping_top_ups_respect_every_mile(self):
+        """Two map opens ~800 m apart, both stocking: every mile — each
+        open point's and the midpoint's — stays at or under the hard max,
+        because each insert freshly counts both the requester's and the
+        candidate's mile."""
+        lat, lng = 64.2008, -149.4937
+        lat2 = lat + 800 * DEG_PER_M_LAT
+        mid = (lat + lat2) / 2
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=5,
+                           PRESENCE_FILL_TARGET=5, PRESENCE_HARD_MAX=5), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        side_effect=lambda la, ln, *a, **k:
+                        self.grid_ways(la, ln)):
+            system_drops.top_up_area(lat, lng, rng=random.Random(1))
+            system_drops.top_up_area(lat2, lng, rng=random.Random(2))
+        for point_lat in (lat, lat2, mid):
+            self.assertLessEqual(
+                system_drops.mile_count(point_lat, lng), 5,
+                f"mile at lat {point_lat} exceeded the hard max")
+
+    def test_observed_mile_is_trimmed_to_hard_max(self):
+        """Read-time enforcement: whatever concurrent neighbors spilled in
+        while nobody was looking, opening the map trims YOUR mile back to
+        the hard max before restock logic runs."""
+        lat, lng = 64.2008, -149.4937
+        with self.settings(PRESENCE_FLOOR=2, PRESENCE_FILL_TARGET=3,
+                           PRESENCE_HARD_MAX=6), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=[]):
+            self.prefill_system(lat, lng, 9)
+            self.assertEqual(system_drops.mile_count(lat, lng), 9)
+            system_drops.rotate_and_top_up(lat, lng)
+            self.assertEqual(system_drops.mile_count(lat, lng), 6)
+
+    def test_player_drops_do_not_count_toward_system_contract(self):
+        """Player wallet drops neither satisfy the floor nor consume the
+        system cap — littering can't suppress system stock."""
+        lat, lng = 64.2008, -149.4937
+        for i in range(3):                     # player drops 500 m east
+            GemDrop.objects.create(
+                route=None, dropped_by=None,
+                gem_id=catalog.gem_of("common")["id"], rarity="common",
+                lat=lat + i * 200 * DEG_PER_M_LAT,
+                lng=lng + 500 / (111_320 * 0.55),
+                position_along_route_m=0, respawn_rule="one_time",
+                placed_by="creator")
+        self.assertEqual(system_drops.mile_count(lat, lng), 0)
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=2,
+                           PRESENCE_FILL_TARGET=2, PRESENCE_HARD_MAX=4), \
+             mock.patch("api.walkability.fetch_walkable_ways",
+                        return_value=self.grid_ways(lat, lng)):
+            made = system_drops.top_up_area(lat, lng, rng=random.Random(7))
+        self.assertEqual(made, 2)
+        self.assertEqual(system_drops.mile_count(lat, lng), 2)
+
+    def test_mile_count_is_radial_not_bbox(self):
+        """A gem in the bbox corner (~2.2 km away) is outside the mile; a
+        gem 1.6 km straight north is inside."""
+        lat, lng = 64.2008, -149.4937
+        dlat, dlng = system_drops.bbox_deltas(lat, 1609)
+        corner = GemDrop.objects.create(
+            route=None, dropped_by=None,
+            gem_id=catalog.gem_of("common")["id"], rarity="common",
+            lat=lat + dlat * 0.97, lng=lng + dlng * 0.97,
+            position_along_route_m=0, respawn_rule="one_time",
+            placed_by="system")
+        self.assertEqual(system_drops.mile_count(lat, lng), 0)
+        corner.delete()
+        GemDrop.objects.create(
+            route=None, dropped_by=None,
+            gem_id=catalog.gem_of("common")["id"], rarity="common",
+            lat=lat + 1_600 * DEG_PER_M_LAT, lng=lng,
+            position_along_route_m=0, respawn_rule="one_time",
+            placed_by="system")
+        self.assertEqual(system_drops.mile_count(lat, lng), 1)
 
     def test_rarity_bonus_follows_route_traffic_not_way_class(self):
         """Rarer loot tracks proven foot traffic, not scenery: gems on
@@ -479,7 +854,7 @@ class ApiTests(TestCase):
         with mock.patch("api.system_drops.create_system_drop") as spawn, \
              mock.patch("api.walkability.fetch_walkable_ways",
                         return_value=trail):
-            made = system_drops.drop_on_walkable_ways(37.0, -122.0, 5000, 1,
+            made = system_drops.drop_on_walkable_ways(37.0, -122.0, 1,
                                                       random.Random(1))
         self.assertEqual(made, 1)
         self.assertIsNone(spawn.call_args.kwargs.get("weights"))
@@ -548,6 +923,63 @@ class ApiTests(TestCase):
         self.assertFalse(Route.objects.filter(creator__isnull=True).exists())
         self.assertFalse(GemDrop.objects.filter(route__isnull=True,
                                                 dropped_by__isnull=True).exists())
+
+    def test_my_runs_lists_completed_history(self):
+        gem = self.gem("common", 500)
+        route = self.publish_route(gems=[gem]).json()
+        self.complete(route["id"], track(3.0), [gem["id"]])
+        runs = self.client.get(
+            "/v1/runs/mine",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["runs"]
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["route_name"], "Test Route")
+        self.assertGreaterEqual(runs[0]["distance_m"], 990)   # sampled track
+        self.assertGreater(runs[0]["xp_earned"], 0)
+
+    def test_friends_search_add_weekly_rank_and_remove(self):
+        """The whole friends loop: search by handle → follow → they appear
+        on the weekly board with their stats → swipe-remove deletes only my
+        follow row."""
+        rival_token = self.client.post(
+            "/v1/auth/apple", data=json.dumps({"handle": "gemhunter"}),
+            content_type="application/json").json()["token"]
+        # The rival completes a run this week and collects a gem, so
+        # their weekly XP is non-zero (runs without gems score 0).
+        gem = self.gem("common", 500)
+        route = self.publish_route(gems=[gem]).json()
+        self.client.post(
+            f"/v1/runs/{route['id']}/complete",
+            data=json.dumps({"idempotency_key": str(uuid.uuid4()),
+                             "started_at": timezone.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                             "track": track(3.0),
+                             "claimed_collections": [gem["id"]]}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {rival_token}")
+
+        found = self.client.get(
+            "/v1/players", {"search": "GEMH"},
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["players"]
+        self.assertEqual([p["handle"] for p in found], ["gemhunter"])
+
+        added = self.client.post(
+            "/v1/friends", data=json.dumps({"profile_id": found[0]["id"]}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["friends"]
+        self.assertEqual([f["handle"] for f in added if not f["is_me"]],
+                         ["gemhunter"])
+        rival_row = next(f for f in added if f["handle"] == "gemhunter")
+        self.assertGreater(rival_row["weekly_xp"], 0)
+        self.assertEqual(rival_row["weekly_runs"], 1)
+        # Rival out-ran me this week → ranked above my row.
+        self.assertEqual(added[0]["handle"], "gemhunter")
+
+        self.client.delete(
+            f"/v1/friends/{found[0]['id']}",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        after = self.client.get(
+            "/v1/friends",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["friends"]
+        self.assertEqual([f["is_me"] for f in after], [True])
 
     def test_dev_fallback_survives_duplicate_profiles(self):
         """The app fires routes+drops concurrently; a get_or_create race once

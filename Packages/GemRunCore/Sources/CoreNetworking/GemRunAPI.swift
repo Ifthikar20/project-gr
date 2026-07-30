@@ -132,17 +132,19 @@ public enum LeaderboardWindow: String, Codable, Sendable {
     case month
 }
 
-/// Gems earned by running (wallet), keyed by rarity. Users start at 0;
-/// total lifetime run distance (Apple Health) mints gems at per-tier
-/// thresholds — see MintRules.
-public typealias GemWallet = [Rarity: Int]
+/// One page of the drops read. `stocking` mirrors the server's flag: a
+/// background job is restocking/rotating this area right now, so the pins
+/// in hand are about to change — refetch in a few seconds.
+public struct DropsPage: Sendable {
+    public let drops: [GemDrop]
+    public let stocking: Bool
 
-public enum MintRules {
-    /// One gem per this many lifetime kilometers, per tier (server-mirrored).
-    public static let thresholdKm: [Rarity: Double] = [
-        .common: 2, .uncommon: 5, .rare: 15, .epic: 40,
-    ]
+    public init(drops: [GemDrop], stocking: Bool = false) {
+        self.drops = drops
+        self.stocking = stocking
+    }
 }
+
 
 public struct DropCollectResult: Sendable {
     public let awardedDrops: [GemDrop]
@@ -154,9 +156,81 @@ public struct DropCollectResult: Sendable {
     }
 }
 
+/// A player found by handle search (Compete → friends board).
+public struct PlayerSummary: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let handle: String
+    public let level: Int
+
+    public init(id: UUID, handle: String, level: Int) {
+        self.id = id
+        self.handle = handle
+        self.level = level
+    }
+}
+
+/// One row of the weekly friends board — you plus everyone you follow,
+/// with this week's totals (Monday 00:00 UTC onward), ranked by XP.
+public struct FriendEntry: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let handle: String
+    public let level: Int
+    public let isMe: Bool
+    public let weeklyXp: Int
+    public let weeklyDistanceM: Int
+    public let weeklyRuns: Int
+
+    public init(id: UUID, handle: String, level: Int, isMe: Bool,
+                weeklyXp: Int, weeklyDistanceM: Int, weeklyRuns: Int) {
+        self.id = id
+        self.handle = handle
+        self.level = level
+        self.isMe = isMe
+        self.weeklyXp = weeklyXp
+        self.weeklyDistanceM = weeklyDistanceM
+        self.weeklyRuns = weeklyRuns
+    }
+}
+
+/// A completed run from the server's history (Compete → "My Routes").
+/// The phone's own SwiftData copy is richer (gems collected, free runs);
+/// this fills in history on a fresh install or second device.
+public struct CompletedRun: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let routeId: UUID
+    public let routeName: String
+    public let startedAt: Date
+    public let durationS: Int
+    public let distanceM: Int
+    public let paceSPerKm: Int
+    public let isWalk: Bool
+    public let status: String
+    public let xpEarned: Int
+
+    public init(id: UUID, routeId: UUID, routeName: String, startedAt: Date,
+                durationS: Int, distanceM: Int, paceSPerKm: Int, isWalk: Bool,
+                status: String, xpEarned: Int) {
+        self.id = id
+        self.routeId = routeId
+        self.routeName = routeName
+        self.startedAt = startedAt
+        self.durationS = durationS
+        self.distanceM = distanceM
+        self.paceSPerKm = paceSPerKm
+        self.isWalk = isWalk
+        self.status = status
+        self.xpEarned = xpEarned
+    }
+}
+
 // MARK: - The contract
 
 public protocol GemRunAPI: Sendable {
+    /// Live availability for the Settings username editor (GET
+    /// /v1/handles/check): free for THIS caller to take? Your own current
+    /// handle counts as free.
+    func checkHandle(_ handle: String) async throws -> Bool
+
     // Auth & user — POST /v1/auth/apple, GET/PATCH/DELETE /v1/users/me
     func auth(handle: String) async throws -> AuthResponse
     func me() async throws -> UserProfile
@@ -180,16 +254,28 @@ public protocol GemRunAPI: Sendable {
     func routeLeaderboard(routeID: UUID, window: LeaderboardWindow) async throws -> [LeaderboardEntry]
     func localLeaderboard(geohash: String) async throws -> [LeaderboardEntry]
 
+    // Compete — GET /v1/runs/mine, GET /v1/players?search=,
+    //           GET/POST /v1/friends, DELETE /v1/friends/{id}
+    /// My completed-run history (server copy of the local StoredRun list).
+    func myRuns() async throws -> [CompletedRun]
+    /// Case-insensitive handle search, excluding me. Empty under 2 chars.
+    func searchPlayers(query: String) async throws -> [PlayerSummary]
+    /// The weekly board: me + everyone I follow, ranked by this week's XP.
+    func friends() async throws -> [FriendEntry]
+    /// Follow a player; returns the refreshed board. Idempotent.
+    func addFriend(profileID: UUID) async throws -> [FriendEntry]
+    /// Unfollow — removes only MY follow row.
+    func removeFriend(profileID: UUID) async throws
+
     // Catalog — GET /v1/gems/catalog
     func gemCatalog() async throws -> [Gem]
 
-    // Gem wallet + standalone drops (earn-by-running)
-    // POST /v1/wallet/sync, GET/POST /v1/drops, POST /v1/drops/collect
-    /// Mints wallet gems from total lifetime run km (Apple Health).
-    func syncWallet(totalRunKm: Double) async throws -> GemWallet
-    /// Standalone drops other runners left near this location.
-    func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop]
-    /// Drop one wallet gem anywhere on the map (one-time; first finder takes it).
+    // Standalone drops — GET/POST /v1/drops, POST /v1/drops/collect
+    /// Standalone drops near this location, plus whether the server is
+    /// still restocking the area in the background (look again shortly).
+    func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> DropsPage
+    /// Give one of your stash gems away as a map drop (one-time; first
+    /// finder takes it; the stash row stays as the collection record).
     func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop
     /// Claim standalone drops passed during a free run; server checks the track.
     func collectDrops(claimed: [UUID], track: [TrackSample]) async throws -> DropCollectResult

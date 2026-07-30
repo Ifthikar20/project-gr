@@ -4,9 +4,11 @@ import Foundation
 /// Collection + validity constants from docs/04 — the single source of truth
 /// shared by the engine, tests, and (as documented values) the server pipeline.
 public enum CollectionRules {
-    public static let collectionRadiusM: Double = 25
-    /// Standalone (walk-near) drops capture at 100 ft — more forgiving than
-    /// route gems because there's no route geometry to corroborate position.
+    /// Route-gem capture: within 100 ft (~30.5 m), matching standalone
+    /// drops — "close enough to see it" collects, on every run type.
+    /// Server mirror: rules.COLLECTION_RADIUS_M.
+    public static let collectionRadiusM: Double = 30.5
+    /// Standalone (walk-near) drops capture at the same 100 ft.
     /// Server mirror: rules.DROP_COLLECT_RADIUS_M.
     public static let dropCollectRadiusM: Double = 30.5
     public static let hysteresisExitRadiusM: Double = 40
@@ -23,7 +25,7 @@ public enum CollectionRules {
     public static let walkPaceThresholdSPerKm = 600      // 10:00 — slower is a walk (0.5× XP)
 }
 
-/// Per-sample collection decisions (docs/04): 25 m threshold + hysteresis +
+/// Per-sample collection decisions (docs/04): 100 ft threshold + hysteresis +
 /// monotonic route progress. Pure and synchronous — ActiveRunEngine feeds it
 /// live samples; tests feed it fixture tracks; the server replays full tracks.
 public struct CollectionEngine: Sendable {

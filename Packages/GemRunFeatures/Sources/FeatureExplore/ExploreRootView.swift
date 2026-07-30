@@ -61,6 +61,16 @@ public struct ExploreRootView: View {
     @State private var locationLabel: String?
     @State private var lastGeocodedCoord: Coordinate?
     @State private var isGeocodingLabel = false
+    /// Bumped when the location capsule is tapped — ExploreMapView watches
+    /// it and snaps the camera back to the user's current position.
+    @State private var recenterTick = 0
+    /// Server said this area is being restocked in the background right
+    /// now — show the stocking banner and look again shortly. Capped at 2
+    /// follow-ups per episode so a geometry-poor area that can never
+    /// reach the floor doesn't refetch forever.
+    @State private var isStockingArea = false
+    @State private var stockingRefetches = 0
+    @State private var stockingRefetchPending = false
 
     public init() {}
 
@@ -96,7 +106,8 @@ public struct ExploreRootView: View {
                     userCoordinate: live.coordinate,
                     onSelect: { detailRoute = $0 },
                     onTapCoordinate: mapTapHandler,
-                    onSelectDrop: { infoDrop = $0 }
+                    onSelectDrop: { infoDrop = $0 },
+                    recenterTick: recenterTick
                 )
                 .ignoresSafeArea()
 
@@ -127,28 +138,49 @@ public struct ExploreRootView: View {
                 if firstLoad == .ready {
                     VStack(spacing: 8) {
                         if let locationLabel {
-                            HStack(spacing: 6) {
-                                Image(systemName: "location.fill")
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(DS.Colors.pulse)
-                                Text(locationLabel)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(DS.Colors.ink)
-                                    .lineLimit(1)
+                            // Tapping the capsule snaps the map back to
+                            // where you're standing AND refreshes the gems
+                            // there — drove somewhere new, tap once, the
+                            // area loads (and stocks server-side if this
+                            // spot has never been opened).
+                            Button {
+                                recenterTick += 1
+                                Task { await loadNearby() }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "location.fill")
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(DS.Colors.pulse)
+                                    Text(locationLabel)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(DS.Colors.ink)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
+                                .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+                                .shadow(color: DS.Colors.ink.opacity(0.08), radius: 5, y: 2)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
-                            .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
-                            .shadow(color: DS.Colors.ink.opacity(0.08), radius: 5, y: 2)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Show my current location and refresh gems")
                             .transition(.opacity)
                         }
-                        // Honest empty state: fail-closed spawning means an
-                        // area with no trusted walkable geometry legitimately
-                        // has zero gems — say so instead of showing a
+                        // While the server restocks this area in the
+                        // background, show a neutral updating note (pins
+                        // pop in on the automatic second look) — never
+                        // the stocking machinery itself. A truly bare
+                        // area (fail-closed spawning found no trusted
+                        // walkable geometry) says so instead of a
                         // silently bare map.
-                        if nearbyDrops.isEmpty {
-                            Text("No gems in this area yet — check back soon")
+                        if isStockingArea {
+                            Text("Updating your map…")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(DS.Colors.ink)
+                                .airbnbCard(padding: 12)
+                                .transition(.opacity)
+                        } else if nearbyDrops.isEmpty {
+                            Text("No gems in this area yet. Check back soon")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(DS.Colors.ink)
                                 .airbnbCard(padding: 12)
@@ -167,7 +199,7 @@ public struct ExploreRootView: View {
                 GemInfoSheet(drop: drop) {
                     await runToGem(drop)
                 }
-                .presentationDetents([.height(320)])
+                .presentationDetents([.height(430)])
             }
             .sheet(item: $pendingDropSpot) { spot in
                 DropGemSheet(coordinate: spot.coordinate) { newDrop in
@@ -226,7 +258,7 @@ public struct ExploreRootView: View {
                 Text("Turn on location")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
-                Text("Gems spawn on real sidewalks and trails around you — GemRun needs your location to stock the map.")
+                Text("Gems live on real sidewalks and trails around you. GemRun needs your location to find them.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -270,12 +302,14 @@ public struct ExploreRootView: View {
                     .tint(DS.Colors.pulse)
                     .scaleEffect(1.4)
                     .padding(.bottom, 4)
-                Text(firstLoad == .locating ? "Finding you…" : "Stocking gems near you…")
+                // Never expose the stocking machinery — as far as the
+                // runner knows, gems are simply out there to be found.
+                Text(firstLoad == .locating ? "Finding you…" : "Getting your map ready…")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                 Text(firstLoad == .locating
-                     ? "Gems spawn where you are — waiting for a GPS fix."
-                     : "Placing gems on sidewalks and trails around you.")
+                     ? "Waiting for a GPS fix."
+                     : "Loading the world around you.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -462,7 +496,7 @@ public struct ExploreRootView: View {
     }
 
     private func distanceLabel(_ m: Int) -> String {
-        m < 1_000 ? "\(m) m" : String(format: "%.1f km", Double(m) / 1_000)
+        UnitFormat.shortDistance(fromMeters: Double(m))
     }
 
     /// The map's tap callback: drop mode routes taps through DropValidator
@@ -528,8 +562,24 @@ public struct ExploreRootView: View {
         let start = Coordinate(lat: here.coordinate.latitude, lng: here.coordinate.longitude)
         isPlanningPath = true
         defer { isPlanningPath = false }
-        let segment = await PathSnapper.snap(from: start, to: destination)
-        destinationPath = segment
+        // A real walking path or nothing: a straight line between the two
+        // pins is never shown (it could cross water, highways, private
+        // land). MKDirections hiccups (throttling, network blips) get one
+        // retry before we surface the failure in the banner.
+        var verified = await PathSnapper.snapVerified(from: start, to: destination)
+        if !verified.snapped {
+            try? await Task.sleep(for: .seconds(0.8))
+            verified = await PathSnapper.snapVerified(from: start, to: destination)
+        }
+        // The user may have re-tapped while we were routing — never
+        // overwrite a newer pin's plan with this stale result.
+        guard self.destination == destination else { return }
+        if verified.snapped {
+            destinationPath = verified.path
+        } else {
+            destinationPath = []
+            planError = "No walking route found there — try another spot."
+        }
     }
 
     /// Reverse-geocode the fix into the top capsule's "Street · City"
@@ -545,8 +595,13 @@ public struct ExploreRootView: View {
         defer { isGeocodingLabel = false }
         lastGeocodedCoord = fix
         let location = CLLocation(latitude: fix.lat, longitude: fix.lng)
+        let started = Date()
         guard let mark = try? await CLGeocoder()
-            .reverseGeocodeLocation(location).first else { return }
+            .reverseGeocodeLocation(location).first else {
+            print("[Vendor] CLGeocoder reverse (\(fix.lat), \(fix.lng)) FAILED after \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+            return
+        }
+        print("[Vendor] CLGeocoder reverse (\(fix.lat), \(fix.lng)): '\(mark.thoroughfare ?? mark.locality ?? "?")' in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         var parts = [mark.thoroughfare ?? mark.subLocality ?? mark.name,
                      mark.locality ?? mark.subAdministrativeArea]
             .compactMap { $0 }
@@ -570,15 +625,20 @@ public struct ExploreRootView: View {
         } else {
             return   // map is only revealed after a fix, so this is rare
         }
-        var path = await PathSnapper.snap(from: here, to: drop.coordinate)
-        if path.count < 2 {
-            // Snapper came up empty (offline, or no walkable route found):
-            // fall back to a straight guide line so the run still starts —
-            // collection is proximity-based, not path-based.
-            path = [here, drop.coordinate]
+        var verified = await PathSnapper.snapVerified(from: here, to: drop.coordinate)
+        if !verified.snapped {
+            try? await Task.sleep(for: .seconds(0.8))
+            verified = await PathSnapper.snapVerified(from: here, to: drop.coordinate)
         }
         infoDrop = nil
-        session.startFreeRun(drops: nearbyDrops, plannedPath: path)
+        let gemName = GemCatalog.entry(forGemID: drop.gemID)?.gem.name ?? "a Gem"
+        // Guide line only when it's a confirmed walking path — otherwise
+        // the run starts guideless (the gem pin stays on the run map, and
+        // collection is proximity-based) rather than drawing a straight
+        // line through who-knows-what.
+        session.startFreeRun(drops: nearbyDrops,
+                             plannedPath: verified.snapped ? verified.path : [],
+                             runName: "Run to \(gemName)")
     }
 
     /// Assemble an in-memory Route from the snapped path and hand it to the
@@ -610,42 +670,48 @@ public struct ExploreRootView: View {
     /// returned, horizontally scrollable. Header row folds the carousel so
     /// the map isn't covered when you just want to look at gems.
     private var routeCards: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(routes.count) route\(routes.count == 1 ? "" : "s") nearby")
-                    .font(.footnote.bold())
-                    .foregroundStyle(DS.Colors.ink)
-                Spacer()
-                Button {
-                    Task { await regenerateRecommendations(force: true) }
-                } label: {
-                    if isRecommending {
-                        ProgressView().scaleEffect(0.7).padding(.horizontal, 4)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.footnote.bold())
-                            .foregroundStyle(DS.Colors.ink)
-                            .padding(6)
+        VStack(alignment: .trailing, spacing: 8) {
+            // No header bar — just a tiny arrowhead to fold/unfold the
+            // carousel (plus a refresh dot while it's open).
+            HStack(spacing: 8) {
+                if !isRoutesCollapsed {
+                    Button {
+                        Task { await regenerateRecommendations(force: true) }
+                    } label: {
+                        Group {
+                            if isRecommending {
+                                ProgressView().scaleEffect(0.55)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(DS.Colors.ink)
+                            }
+                        }
+                        .frame(width: 30, height: 30)
+                        .background(DS.Colors.snowCard.opacity(0.95), in: Circle())
+                        .overlay(Circle().stroke(DS.Colors.hairline, lineWidth: 1))
+                        .shadow(color: DS.Colors.ink.opacity(0.12), radius: 4, y: 1)
                     }
+                    .disabled(isRecommending)
+                    .accessibilityLabel("Refresh recommendations")
+                    .transition(.opacity)
                 }
-                .disabled(isRecommending)
-                .accessibilityLabel("Refresh recommendations")
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isRoutesCollapsed.toggle()
                     }
                 } label: {
                     Image(systemName: isRoutesCollapsed ? "chevron.up" : "chevron.down")
-                        .font(.footnote.bold())
+                        .font(.caption.bold())
                         .foregroundStyle(DS.Colors.ink)
-                        .padding(6)
+                        .frame(width: 30, height: 30)
+                        .background(DS.Colors.snowCard.opacity(0.95), in: Circle())
+                        .overlay(Circle().stroke(DS.Colors.hairline, lineWidth: 1))
+                        .shadow(color: DS.Colors.ink.opacity(0.12), radius: 4, y: 1)
                 }
                 .accessibilityLabel(isRoutesCollapsed ? "Show routes" : "Hide routes")
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 6)
-            .background(DS.Colors.snow.opacity(0.92), in: Capsule())
-            .padding(.horizontal, 16)
+            .padding(.trailing, 16)
 
             if !isRoutesCollapsed {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -700,17 +766,42 @@ public struct ExploreRootView: View {
             return
         }
         isLoadingNearby = true
-        defer { isLoadingNearby = false }
         if firstLoad != .ready { firstLoad = .stocking }
         lastFetchCenter = center
         // Covers the cached-CLLocationManager path, where the live-fix
         // onChange (the usual geocode trigger) hasn't fired yet.
         Task { await updateLocationLabel(for: center) }
         print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
+        let t0 = Date()
 
-        do {
-            let fetched = try await API.shared.nearbyRoutes(
+        // Routes and drops go out TOGETHER; only drops gates the reveal —
+        // the routes call (and its cache upsert) lands whenever it lands.
+        let routesTask = Task {
+            try? await API.shared.nearbyRoutes(
                 lat: center.lat, lng: center.lng, radiusM: 8_000)
+        }
+        var revealMs = 0
+        do {
+            let page = try await API.shared.nearbyDrops(
+                lat: center.lat, lng: center.lng, radiusM: 8_000)
+            revealMs = Int(Date().timeIntervalSince(t0) * 1_000)
+            print("[Explore] drops: \(page.drops.count)")
+            // Reveal the map only now — pins land in the same frame, so an
+            // unstocked map is never on screen.
+            withAnimation {
+                nearbyDrops = page.drops
+                firstLoad = .ready
+            }
+            handleStocking(page.stocking)
+        } catch {
+            print("[Explore] nearbyDrops FAILED: \(error)")
+            // Keep the cover up with a Retry — a bare map with zero gems
+            // must never stand in for a failed fetch. Refreshes after the
+            // first reveal keep the stale pins instead.
+            if firstLoad != .ready { firstLoad = .failed }
+        }
+
+        if let fetched = await routesTask.value {
             print("[Explore] routes: \(fetched.count)")
             // Refresh, not just insert: re-encoding cached rows picks up
             // server-side changes AND migrates gem blobs stored under the
@@ -732,29 +823,36 @@ public struct ExploreRootView: View {
                 }
             }
             try? context.save()
-        } catch {
-            print("[Explore] nearbyRoutes FAILED: \(error)")
+        } else {
+            print("[Explore] nearbyRoutes FAILED")
         }
-        do {
-            let drops = try await API.shared.nearbyDrops(
-                lat: center.lat, lng: center.lng, radiusM: 8_000)
-            print("[Explore] drops: \(drops.count)")
-            // Reveal the map only now — pins land in the same frame, so an
-            // unstocked map is never on screen.
-            withAnimation {
-                nearbyDrops = drops
-                firstLoad = .ready
-            }
-        } catch {
-            print("[Explore] nearbyDrops FAILED: \(error)")
-            // Keep the cover up with a Retry — a bare map with zero gems
-            // must never stand in for a failed fetch. Refreshes after the
-            // first reveal keep the stale pins instead.
-            if firstLoad != .ready { firstLoad = .failed }
+        let totalMs = Int(Date().timeIntervalSince(t0) * 1_000)
+        print("[Explore] reveal in \(revealMs) ms; full load \(totalMs) ms")
+        isLoadingNearby = false
+        // Recommendations run OUTSIDE the guarded section: their several
+        // MKDirections calls take seconds, and holding isLoadingNearby
+        // through them silently swallowed any refetch tapped meanwhile.
+        Task { await regenerateRecommendations(force: false) }
+    }
+
+    /// React to the server's `stocking` flag: keep the banner up and look
+    /// again shortly (once at ~4 s, once more at ~6 s if still flagged) so
+    /// freshly stocked pins appear with zero user action.
+    private func handleStocking(_ stocking: Bool) {
+        withAnimation { isStockingArea = stocking }
+        guard stocking else {
+            stockingRefetches = 0
+            return
         }
-        // Recommendations key off the fresh drop list — regenerate here so
-        // the carousel updates in the same pass as everything else.
-        await regenerateRecommendations(force: false)
+        guard !stockingRefetchPending, stockingRefetches < 2 else { return }
+        stockingRefetchPending = true
+        stockingRefetches += 1
+        let delay: Double = stockingRefetches == 1 ? 4 : 6
+        Task {
+            try? await Task.sleep(for: .seconds(delay))
+            stockingRefetchPending = false
+            await loadNearby()
+        }
     }
 
     /// Client-side route synthesis: 4 walking routes starting at the user's
@@ -799,8 +897,9 @@ struct RouteCard: View {
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                     .lineLimit(1)
-                Text(String(format: "%.1f km · %d m climb · %@",
-                            Double(route.distanceM) / 1_000, route.elevationGainM,
+                Text(String(format: "%.1f mi · %d ft climb · %@",
+                            UnitFormat.miles(fromMeters: Double(route.distanceM)),
+                            UnitFormat.feet(fromMeters: Double(route.elevationGainM)),
                             route.difficulty.rawValue.capitalized))
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
@@ -818,21 +917,34 @@ struct RouteCard: View {
     }
 }
 
-/// Pick a wallet gem for the tapped location (docs: earn-by-running wallet).
+/// Give one of your stash gems away at the tapped location. There is no
+/// wallet — the sheet lists the actual gems you own (welcome gift + run
+/// finds) that haven't already been given away; dropping one marks the
+/// stash row spent while the collection record stays.
 @MainActor
 struct DropGemSheet: View {
     let coordinate: Coordinate
     let onDropped: (GemDrop) -> Void
     @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
+    @Query private var stash: [StoredStashItem]
     @State private var isDropping = false
     @State private var error: String?
 
-    private var available: [(Rarity, Int)] {
-        [Rarity.common, .uncommon, .rare, .epic]
-            .compactMap { rarity in
-                let count = session.wallet[rarity] ?? 0
-                return count > 0 ? (rarity, count) : nil
+    private static let tierOrder: [Rarity] = [.common, .uncommon, .rare, .epic]
+
+    /// One tile per distinct droppable gem, ×count for spares. Legendaries
+    /// can never be given away.
+    private var available: [(gem: Gem, count: Int)] {
+        let droppable = stash.filter { !$0.isDropped && $0.rarity != .legendary }
+        return Dictionary(grouping: droppable, by: \.gemID)
+            .compactMap { gemID, rows in
+                GemCatalog.entry(forGemID: gemID).map { (gem: $0.gem, count: rows.count) }
+            }
+            .sorted {
+                let a = Self.tierOrder.firstIndex(of: $0.gem.rarity) ?? 0
+                let b = Self.tierOrder.firstIndex(of: $1.gem.rarity) ?? 0
+                return a == b ? $0.gem.name < $1.gem.name : a < b
             }
     }
 
@@ -843,34 +955,42 @@ struct DropGemSheet: View {
                 .foregroundStyle(DS.Colors.ink)
                 .padding(.top, 20)
             if available.isEmpty {
-                Text("Your wallet is empty. Gems are earned by running — sync with Apple Health in your Stash.")
+                Text("Nothing to drop yet. Gems you collect on runs (and your welcome gift) can be left here for another runner to find.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             } else {
-                Text("First runner to pass within 25 m takes it.")
+                Text("From your stash. First runner to pass within 100 ft takes it.")
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
-                HStack(spacing: 12) {
-                    ForEach(available, id: \.0) { rarity, count in
-                        Button {
-                            drop(rarity)
-                        } label: {
-                            VStack(spacing: 4) {
-                                RarityBadge(rarity, size: 24)
-                                Text("×\(count)")
-                                    .font(.caption)
-                                    .foregroundStyle(DS.Colors.inkSecondary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(available, id: \.gem.id) { item in
+                            Button {
+                                drop(item.gem)
+                            } label: {
+                                VStack(spacing: 4) {
+                                    GemIcon(gemID: item.gem.id, size: 26)
+                                    Text(item.gem.name)
+                                        .font(.caption2)
+                                        .foregroundStyle(DS.Colors.ink)
+                                        .lineLimit(1)
+                                    Text(item.count > 1 ? "×\(item.count)"
+                                         : item.gem.rarity.rawValue.capitalized)
+                                        .font(.caption2)
+                                        .foregroundStyle(DS.Colors.inkSecondary)
+                                }
+                                .frame(width: 84, height: 84)
+                                .background(DS.Colors.snowCard,
+                                            in: RoundedRectangle(cornerRadius: 14))
+                                .overlay(RoundedRectangle(cornerRadius: 14)
+                                    .stroke(DS.Colors.hairline, lineWidth: 1))
                             }
-                            .frame(width: 64, height: 64)
-                            .background(DS.Colors.snowCard,
-                                        in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14)
-                                .stroke(DS.Colors.hairline, lineWidth: 1))
+                            .disabled(isDropping)
                         }
-                        .disabled(isDropping)
                     }
+                    .padding(.horizontal, 20)
                 }
             }
             if let error {
@@ -883,19 +1003,20 @@ struct DropGemSheet: View {
         .frame(maxWidth: .infinity)
         .background(DS.Colors.snow)
         .task {
-            await session.refreshWallet()
+            // Sync dropped-state so a gem spent on another device (or a
+            // stale sheet) can't be offered twice.
+            await session.refreshStash()
         }
     }
 
-    private func drop(_ rarity: Rarity) {
+    private func drop(_ gem: Gem) {
         isDropping = true
         Task {
             do {
-                let gem = GemCatalog.gem(of: rarity)
                 let placed = try await API.shared.dropGem(gemID: gem.id,
                                                           lat: coordinate.lat,
                                                           lng: coordinate.lng)
-                session.spend(rarity)
+                session.markDropped(gemID: gem.id)
                 onDropped(placed)
                 dismiss()
             } catch {
@@ -1020,7 +1141,9 @@ enum DropValidator {
         request.pointOfInterestFilter = MKPointOfInterestFilter(
             including: allowedCategories + forbiddenCategories)
 
+        let started = Date()
         let response = try? await MKLocalSearch(request: request).start()
+        print("[Vendor] MKLocalSearch POIs (\(c.lat), \(c.lng)): \(response?.mapItems.count ?? -1) item(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         guard let items = response?.mapItems, !items.isEmpty else {
             return .denied(reason: "Drop only on trails you've run or a public spot (park, cafe, transit).")
         }

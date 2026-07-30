@@ -70,6 +70,12 @@ def gem_of(rarity: str):
     return next(e for e in ENTRIES if e["rarity"] == rarity)
 
 
+def gems_of(rarity: str, count: int):
+    """First `count` distinct catalog gems of a rarity, in catalog order —
+    deterministic, so the welcome gift is the same for every new player."""
+    return [e for e in ENTRIES if e["rarity"] == rarity][:count]
+
+
 def random_gem_of(rarity: str, rng):
     """A random catalog gem of the given rarity — placement uses this so the
     map shows ambers and pearls, not the same quartz/emerald every time."""

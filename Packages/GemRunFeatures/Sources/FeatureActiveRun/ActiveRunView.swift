@@ -6,6 +6,7 @@ import DesignSystem
 import GameKitCore
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// The in-run screen (docs/03 §7), Daybreak Pulse: light map, snow stats
 /// band, ink numerals, pulse for the live accent. Presented as a full-screen
@@ -19,6 +20,14 @@ public struct ActiveRunView: View {
     @State private var burst: CollectionEngine.Event?
     @State private var summary: RunCompletionSummary?
     @State private var batteryAtStart: Float = -1
+    /// Collect ceremony: the captured gem flies from mid-map into the
+    /// stash chip, which bounces as it "catches" the gem.
+    @State private var flight: CollectionEngine.Event?
+    @State private var flightLanded = false
+    @State private var stashBounce = false
+    /// Quiet receipt: a small "+1" drifts up beside the stash chip right
+    /// as it catches the flying gem, then fades.
+    @State private var stashedFloat: CollectionEngine.Event?
 
     public init(route: Route?) {
         self.route = route
@@ -37,12 +46,41 @@ public struct ActiveRunView: View {
             }
         }
         .onAppear {
+            // Pocket mode: the run keeps tracking and collecting with the
+            // screen off (background location). Ask for notification
+            // permission at run start — the one moment it's obviously
+            // useful — so a gem grabbed with the phone pocketed can say so.
+            UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound]) { _, _ in }
             engine.onCollect = { event in
+                notifyIfPocketed(event)
                 burst = event
                 HapticPlayer.shared.collection(for: event.drop.rarity)
                 Task {
                     try? await Task.sleep(for: .seconds(1.5))
                     if burst == event { burst = nil }
+                }
+                // Into-the-stash flight: launch shortly after the burst so
+                // the two read as one ceremony, then bounce the chip.
+                flight = event
+                flightLanded = false
+                Task {
+                    try? await Task.sleep(for: .seconds(0.35))
+                    guard flight == event else { return }
+                    withAnimation(.easeIn(duration: 0.6)) { flightLanded = true }
+                    try? await Task.sleep(for: .seconds(0.6))
+                    guard flight == event else { return }
+                    flight = nil
+                    stashedFloat = event
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+                        stashBounce = true
+                    }
+                    try? await Task.sleep(for: .seconds(0.3))
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        stashBounce = false
+                    }
+                    try? await Task.sleep(for: .seconds(0.9))
+                    if stashedFloat == event { stashedFloat = nil }
                 }
             }
             // Battery budget instrumentation (docs/04): delta logged at stop.
@@ -72,6 +110,55 @@ public struct ActiveRunView: View {
                 if let event = burst {
                     CollectionBurst(rarity: event.drop.rarity)
                 }
+                // Stash chip: this run's haul, top-leading (the map's
+                // recenter control owns top-trailing). Hidden until the
+                // first find — a fresh run starts with a clean map, no
+                // orange "0" badge — then pops in to catch the flying gem
+                // and stays as the live count.
+                if !engine.collectedEvents.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "diamond.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(DS.Colors.pulse)
+                        Text("\(engine.collectedEvents.count)")
+                            .font(.footnote.bold())
+                            .monospacedDigit()
+                            .foregroundStyle(DS.Colors.ink)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
+                    .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+                    .scaleEffect(stashBounce ? 1.18 : 1)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .topLeading)
+                    .padding([.top, .leading], 12)
+                    .allowsHitTesting(false)
+                    .transition(.scale(scale: 0.4, anchor: .topLeading)
+                        .combined(with: .opacity))
+                }
+                if let stashed = stashedFloat {
+                    StashedFloat(rarity: stashed.drop.rarity)
+                        .id(stashed.drop.id)   // restart per gem, even back-to-back
+                        .frame(maxWidth: .infinity, maxHeight: .infinity,
+                               alignment: .topLeading)
+                        .padding(.top, 18)
+                        .padding(.leading, 96)
+                        .allowsHitTesting(false)
+                }
+                // The gem in flight: map center → stash chip.
+                GeometryReader { geo in
+                    if let flight {
+                        GemIcon(gemID: flight.drop.gemID, size: 46)
+                            .position(flightLanded
+                                ? CGPoint(x: 52, y: 30)
+                                : CGPoint(x: geo.size.width / 2,
+                                          y: geo.size.height * 0.42))
+                            .scaleEffect(flightLanded ? 0.3 : 1.15)
+                            .opacity(flightLanded ? 0.2 : 1)
+                    }
+                }
+                .allowsHitTesting(false)
                 if engine.phase == .paused {
                     Text("Paused — resume moving")
                         .font(.footnote.bold())
@@ -83,6 +170,9 @@ public struct ActiveRunView: View {
                         .padding(.top, 8)
                 }
             }
+            // Drives the stash chip's first appearance (empty → 1 find).
+            .animation(.spring(response: 0.35, dampingFraction: 0.7),
+                       value: engine.collectedEvents.isEmpty)
             .frame(maxHeight: .infinity)
 
             statsBand
@@ -117,11 +207,12 @@ public struct ActiveRunView: View {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 HStack(spacing: 24) {
                     stat(format(seconds: Int(engine.elapsed)), "Time")
-                    stat(String(format: "%.2f", engine.distanceM / 1_000), "km")
+                    stat(UnitFormat.milesText(fromMeters: engine.distanceM), "mi")
                     stat("\(engine.liveSteps)", "Steps")
                     stat(engine.currentPaceSPerKm > 0
-                         ? format(seconds: engine.currentPaceSPerKm) : "–:––", "min/km",
-                         accent: true)
+                         ? format(seconds: UnitFormat.paceSecPerMile(
+                            fromSecPerKm: engine.currentPaceSPerKm)) : "–:––",
+                         "min/mi", accent: true)
                 }
             }
 
@@ -153,10 +244,11 @@ public struct ActiveRunView: View {
         }
     }
 
-    /// "Rare · 240 m · ~2:15" once we have a pace; falls back to "Rare · 240 m"
-    /// on the first ~50 m before pace stabilizes.
+    /// "Rare · 240 ft · ~2:15" once we have a pace; falls back to
+    /// "Rare · 240 ft" on the first stretch before pace stabilizes.
+    /// (ETA math is unit-invariant: meters × s-per-km cancels the same.)
     private func nextGemLabel(distanceM: Double, rarity: Rarity) -> String {
-        let base = "\(rarity.rawValue.capitalized) · \(Int(distanceM)) m"
+        let base = "\(rarity.rawValue.capitalized) · \(UnitFormat.shortDistance(fromMeters: distanceM))"
         let pace = engine.currentPaceSPerKm
         guard pace > 0 else { return base }
         let etaSec = Int(distanceM / 1_000 * Double(pace))
@@ -173,6 +265,23 @@ public struct ActiveRunView: View {
                 .font(.caption)
                 .foregroundStyle(DS.Colors.inkSecondary)
         }
+    }
+
+    /// Screen off / app pocketed → the collection still happened (background
+    /// location keeps the engine running); tell the runner with a local
+    /// notification since the burst animation has no audience.
+    private func notifyIfPocketed(_ event: CollectionEngine.Event) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        let name = GemCatalog.entry(forGemID: event.drop.gemID)?.gem.name ?? "A gem"
+        let content = UNMutableNotificationContent()
+        content.title = "Gem collected!"
+        content.body = "\(name) is in this run's haul — keep going."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "gem-collect-\(event.drop.id.uuidString)",
+            content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+        print("[Vendor] Local notification posted for pocketed collection (\(name))")
     }
 
     private func finish() {
@@ -222,6 +331,32 @@ public struct ActiveRunView: View {
         // The docs/04 gate is < 8%/hour — tracked per TestFlight build.
         print(String(format: "[Battery] %.1f%%/hour over %d min",
                      perHour, durationS / 60))
+    }
+}
+
+/// The subtle "just stashed it" cue: a tiny "+1" in the gem's rarity color
+/// that rises from the stash chip's edge and fades — quiet enough to read
+/// in peripheral vision mid-run.
+@MainActor
+struct StashedFloat: View {
+    let rarity: Rarity
+    @State private var risen = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "diamond.fill")
+                .font(.caption2.bold())
+            Text("+1")
+                .font(.caption.bold())
+                .monospacedDigit()
+        }
+        .foregroundStyle(DS.Colors.rarity(rarity))
+        .shadow(color: DS.Colors.snowCard, radius: 3)
+        .offset(y: risen ? -24 : 0)
+        .opacity(risen ? 0 : 1)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.9)) { risen = true }
+        }
     }
 }
 

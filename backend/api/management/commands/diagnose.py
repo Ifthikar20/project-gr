@@ -44,7 +44,8 @@ class Command(BaseCommand):
         w(f"  standalone system gems ...... {system.count()} (the map's loose pins)")
         w(f"  standalone user drops ....... {user_drops.count()}")
         w(f"  presence trigger ............ {'ON' if settings.PRESENCE_DROPS else 'OFF'} "
-          f"(target {settings.PRESENCE_DROP_MAX_PER_AREA}/area)")
+          f"(mile contract: floor {settings.PRESENCE_FLOOR} / "
+          f"fill {settings.PRESENCE_FILL_TARGET} / max {settings.PRESENCE_HARD_MAX})")
         w(f"  walkability mode ............ {settings.WALKABILITY_MODE}")
         if settings.WALKABILITY_MODE == "overpass":
             verdict = walkability.is_walkable(lat, lng)
