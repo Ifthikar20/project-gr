@@ -142,6 +142,7 @@ Read in order — each doc only depends on lower-numbered ones.
 | [14 — System-Drop Pipeline End-to-End](docs/14-system-drop-pipeline-end-to-end.md) | The full stocking pipeline: per-mile contract, tiers, cap atomicity |
 | [15 — Completed Features](docs/15-completed-features.md) | Screen-by-screen inventory of what exists today |
 | [16 — Architecture Deep-Dive](docs/16-architecture-deep-dive.md) | Illustrated: full-stack architecture, design system & every screen, frameworks, scaling to 10k concurrent users |
+| [17 — The Wire Trace](docs/17-wire-trace.md) | Every request & response from app launch onward: full payloads, when each fires, and which response feeds which call |
 
 ## The two hard problems (named up front)
 
