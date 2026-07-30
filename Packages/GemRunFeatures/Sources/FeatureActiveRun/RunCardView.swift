@@ -178,24 +178,39 @@ struct RunCardView: View {
 
     // MARK: front — real map hero, three headline stats
 
-    /// The hero: the route you actually ran drawn on a real, muted street
+    /// The hero: the path you actually ran drawn on a real, muted street
     /// map (full-bleed to the card's top edge, non-interactive so the
     /// card's tap-to-flip still works). Faint diamond watermark when the
-    /// run has no track.
-    @ViewBuilder private var mapHero: some View {
-        if pathCoords.count > 1 {
-            RunRouteMap(coords: pathCoords)
-                .frame(height: 240)
-                .allowsHitTesting(false)
-        } else {
-            ZStack {
+    /// run has no track. The bottom edge dissolves into the card through
+    /// a soft blur + wash so map and stats read as one surface.
+    private var mapHero: some View {
+        ZStack {
+            if pathCoords.count > 1 {
+                RunRouteMap(coords: pathCoords)
+            } else {
                 DS.Colors.snow
                 Image(systemName: "diamond.fill")
                     .font(.system(size: 70))
                     .foregroundStyle(DS.Colors.pulse.opacity(0.10))
             }
-            .frame(height: 240)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: 240)
+        .overlay(alignment: .bottom) {
+            // Blend seam: a gradient-masked blur over the map's last
+            // ~64 pt, plus a wash of the card color on top of it.
+            ZStack(alignment: .bottom) {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .mask(LinearGradient(colors: [.clear, .black],
+                                         startPoint: .top, endPoint: .bottom))
+                LinearGradient(colors: [DS.Colors.snowCard.opacity(0),
+                                        DS.Colors.snowCard.opacity(0.85)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .frame(height: 64)
+        }
+        .allowsHitTesting(false)
     }
 
     private var front: some View {

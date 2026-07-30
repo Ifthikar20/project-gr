@@ -33,8 +33,9 @@ public struct RunCompletionSummary: Sendable {
     public let splitsS: [Int]
     public let leaderboardRank: Int?
     public let routeName: String
-    /// Encoded shape of the run for the summary card: the route's polyline
-    /// on a route run, the actual traveled track on a free run.
+    /// Encoded shape of the run for the summary card: always the actual
+    /// traveled track when samples exist; a route run falls back to its
+    /// planned line only when the track didn't survive (restored run).
     public var pathPolyline: String? = nil
     /// Filled in after completion from an Apple Health step-count read;
     /// stays 0 when Health is unavailable or hasn't flushed samples yet.
@@ -311,7 +312,12 @@ public final class SessionStore {
             paceSPerKm: v.paceSPerKm, splitsS: v.splitsS,
             leaderboardRank: verdict?.leaderboardRank ?? nil,
             routeName: result.route.name,
-            pathPolyline: result.route.polyline)
+            // The card's map shows what you ACTUALLY ran — the traveled
+            // track; the route's planned line is only the fallback for a
+            // restored run whose samples didn't survive.
+            pathPolyline: result.track.count > 1
+                ? PolylineCodec.encode(result.track.map(\.coordinate))
+                : result.route.polyline)
     }
 
     /// Returns the name of a set completed by this run, if any (bonus already
