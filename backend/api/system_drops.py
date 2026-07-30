@@ -131,17 +131,20 @@ class PedestrianNet:
         return best
 
 
-def fetch_placement_net(lat, lng, deadline=None):
-    """The strict pedestrian network around a point, ready to snap to.
-    Empty when Overpass is unreachable — callers fall back to trusted
-    route geometry and the next daily rotation re-places snapped."""
-    return PedestrianNet(walkability.fetch_walkable_ways(
-        lat, lng, settings.PRESENCE_RADIUS_M,
-        highways=walkability.PEDESTRIAN_PLACEMENT_HIGHWAYS,
-        deadline=deadline))
+def fetch_placement_context(lat, lng, deadline=None):
+    """Everything a placement pass needs about the ground, in ONE Overpass
+    request: `(net, no_go, ways)` — the strict pedestrian network to snap
+    onto, the no-go polygons (private grounds, golf courses, school
+    yards…) to never place inside, and the raw ways for Tier 2 sampling.
+    All empty when Overpass is unreachable — callers fall back to trusted
+    route geometry and the next daily rotation re-places compliant."""
+    ways, rings = walkability.fetch_placement_data(
+        lat, lng, settings.PRESENCE_RADIUS_M, deadline=deadline)
+    return PedestrianNet(ways), walkability.NoGoZones(rings), ways
 
 
-def drop_gem_on_route(route, rng, net=None, near=None, deadline=None):
+def drop_gem_on_route(route, rng, net=None, no_go=None, near=None,
+                      deadline=None):
     """Sample a point on the route's polyline, SNAP it onto the strict
     pedestrian network (sidewalk/trail — never a road centerline, driveway,
     or yard), verify spacing + the mile cap, and write one system GemDrop.
@@ -159,7 +162,8 @@ def drop_gem_on_route(route, rng, net=None, near=None, deadline=None):
     if geom.total_length_m <= 0:
         return None
     if net is None:
-        net = fetch_placement_net(route.lat, route.lng, deadline=deadline)
+        net, no_go, _ = fetch_placement_context(route.lat, route.lng,
+                                                deadline=deadline)
     for _ in range(ATTEMPTS_PER_ROUTE):
         if _past(deadline):
             return None
@@ -169,6 +173,10 @@ def drop_gem_on_route(route, rng, net=None, near=None, deadline=None):
             if dist_m > settings.PLACEMENT_SNAP_MAX_M:
                 continue        # no sidewalk/trail near this stretch
             lat, lng = slat, slng
+        # A mapped footpath through a golf course / gated grounds / school
+        # yard is real geometry but never gem territory.
+        if no_go is not None and no_go.contains(lat, lng):
+            continue
         if near is not None:
             k = 111_320.0
             klng = k * max(0.1, math.cos(math.radians(near[0])))
@@ -199,7 +207,8 @@ def create_system_drop(lat, lng, rng, weights=None):
     return drop
 
 
-def drop_on_walkable_ways(lat, lng, count, rng, ways=None, deadline=None):
+def drop_on_walkable_ways(lat, lng, count, rng, ways=None, no_go=None,
+                          deadline=None):
     """Sample points directly on real OSM walkable ways within the
     requester's mile. The way geometry IS the walkable-path list, so linear
     interpolation between adjacent way nodes stays on the path. This is the
@@ -241,6 +250,10 @@ def drop_on_walkable_ways(lat, lng, count, rng, ways=None, deadline=None):
         plng = coords[i][1] + t * (coords[i + 1][1] - coords[i][1])
         if math.hypot((plat - lat) * k, (plng - lng) * klng) > radius:
             continue
+        # Even an on-way point can sit inside no-go grounds (paths cross
+        # golf courses and gated communities); the polygon is the veto.
+        if no_go is not None and no_go.contains(plat, plng):
+            continue
         if near_existing_drop(plat, plng):
             continue
         _guarded_create(lat, lng, plat, plng, rng)
@@ -273,19 +286,18 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
         lng__gte=lng - dlng, lng__lte=lng + dlng).order_by("-run_count"))
     created = 0
 
-    # ONE strict-network fetch per pass, shared by both tiers: Tier 1 snaps
-    # route candidates onto it, Tier 2 samples directly on it. Replaces the
-    # old per-candidate is_walkable HTTP calls (faster) and guarantees
-    # every gem sits ON a sidewalk/trail, not beside one. Skipped entirely
-    # when neither tier has work to do.
+    # ONE ground fetch per pass, shared by both tiers: the strict network
+    # (Tier 1 snaps onto it, Tier 2 samples on it) plus the no-go polygons
+    # both tiers must stay out of. Replaces the old per-candidate
+    # is_walkable HTTP calls (faster) and guarantees every gem sits ON a
+    # public sidewalk/trail and INSIDE no private grounds. Skipped
+    # entirely when neither tier has work to do.
     strict_ways = []
     net = PedestrianNet([])
+    no_go = walkability.NoGoZones([])
     if popular or settings.PRESENCE_BOOTSTRAP:
-        strict_ways = walkability.fetch_walkable_ways(
-            lat, lng, settings.PRESENCE_RADIUS_M,
-            highways=walkability.PEDESTRIAN_PLACEMENT_HIGHWAYS,
-            deadline=deadline)
-        net = PedestrianNet(strict_ways)
+        net, no_go, strict_ways = fetch_placement_context(lat, lng,
+                                                          deadline=deadline)
     if popular and not net:
         log.info("stocking: strict pedestrian network unavailable near "
                  "(%.4f, %.4f) — route placements fall back to trusted "
@@ -295,7 +307,8 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
         for route in popular:
             if created >= need or _past(deadline):
                 break
-            if drop_gem_on_route(route, rng, net=net, near=(lat, lng),
+            if drop_gem_on_route(route, rng, net=net, no_go=no_go,
+                                 near=(lat, lng),
                                  deadline=deadline) is not None:
                 created += 1
 
@@ -303,7 +316,7 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
             log.info("stocking: %d slot(s) left after routes — sampling OSM "
                      "walkable ways", need - created)
             created += drop_on_walkable_ways(lat, lng, need - created, rng,
-                                             ways=strict_ways,
+                                             ways=strict_ways, no_go=no_go,
                                              deadline=deadline)
     except CapReached:
         log.info("hard cap reached mid-spawn near (%.4f, %.4f) — a "

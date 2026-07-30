@@ -43,10 +43,19 @@ def track(speed, length_m=1000):
                    PRESENCE_ASYNC=False)
 class ApiTests(TestCase):
     def setUp(self):
-        # Hermetic Overpass: the placement-network fetch returns no ways by
+        # Hermetic Overpass: the placement fetches return no geometry by
         # default (→ trusted route points, exactly the Overpass-down
-        # fallback). Tests that need geometry set self.mock_ways or patch
-        # locally.
+        # fallback). Tests that need geometry set the mocks or patch
+        # locally; the real parser stays reachable via real_fetch_placement.
+        self.real_fetch_placement = walkability.fetch_placement_data
+        # Delegates to fetch_walkable_ways (below) with no no-go rings, so
+        # every test that stubs grid ways feeds the placement path too.
+        placement_patcher = mock.patch(
+            "api.walkability.fetch_placement_data",
+            side_effect=lambda lat, lng, radius_m, deadline=None:
+                (walkability.fetch_walkable_ways(lat, lng, radius_m), []))
+        self.mock_placement = placement_patcher.start()
+        self.addCleanup(placement_patcher.stop)
         ways_patcher = mock.patch("api.walkability.fetch_walkable_ways",
                                   return_value=[])
         self.mock_ways = ways_patcher.start()
@@ -407,13 +416,77 @@ class ApiTests(TestCase):
                          walkability.PEDESTRIAN_HIGHWAYS)
 
     def test_stocking_pass_fetches_the_placement_network_once(self):
-        self.mock_ways.reset_mock()
+        self.mock_placement.reset_mock()
         with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
                            PRESENCE_HARD_MAX=5, PRESENCE_BOOTSTRAP=True):
             system_drops.top_up_area(37.0, -122.0, random.Random(1))
-        self.assertEqual(self.mock_ways.call_count, 1)
-        self.assertEqual(self.mock_ways.call_args.kwargs.get("highways"),
-                         walkability.PEDESTRIAN_PLACEMENT_HIGHWAYS)
+        self.assertEqual(self.mock_placement.call_count, 1)
+        self.assertEqual(self.mock_placement.call_args.args[2], 1609)
+
+    def test_gems_never_spawn_inside_no_go_grounds(self):
+        """A mapped footpath through a golf course / gated grounds is real
+        geometry, but the polygon vetoes it — in BOTH tiers."""
+        route = Route.objects.get(id=self.seed_popular_route())
+        offset = 5 / (111_320 * math.cos(math.radians(37.0)))
+        sidewalk = [[(36.999, -122.0 + offset), (37.011, -122.0 + offset)]]
+        # A no-go ring swallowing the whole route + sidewalk.
+        ring = [(36.998, -122.001), (37.012, -122.001),
+                (37.012, -121.999), (36.998, -121.999), (36.998, -122.001)]
+        net = system_drops.PedestrianNet(sidewalk)
+        zones = walkability.NoGoZones([ring])
+        drop = system_drops.drop_gem_on_route(route, random.Random(1),
+                                              net=net, no_go=zones,
+                                              near=(37.0, -122.0))
+        self.assertIsNone(drop)
+        made = system_drops.drop_on_walkable_ways(
+            37.0, -122.0, 1, random.Random(1), ways=sidewalk, no_go=zones)
+        self.assertEqual(made, 0)
+        # Same geometry without the ring: both tiers place happily.
+        empty = walkability.NoGoZones([])
+        self.assertIsNotNone(system_drops.drop_gem_on_route(
+            route, random.Random(1), net=net, no_go=empty,
+            near=(37.0, -122.0)))
+        self.assertEqual(system_drops.drop_on_walkable_ways(
+            37.0, -122.0, 1, random.Random(2), ways=sidewalk,
+            no_go=empty), 1)
+
+    def test_placement_data_splits_network_from_no_go_rings(self):
+        payload = {"elements": [
+            {"type": "way", "tags": {"highway": "footway"},
+             "geometry": [{"lat": 37.0, "lon": -122.0},
+                          {"lat": 37.001, "lon": -122.0}]},
+            {"type": "way", "tags": {"leisure": "golf_course"},
+             "geometry": [{"lat": 37.0, "lon": -122.0},
+                          {"lat": 37.001, "lon": -122.0},
+                          {"lat": 37.001, "lon": -121.999},
+                          {"lat": 37.0, "lon": -121.999},
+                          {"lat": 37.0, "lon": -122.0}]},
+            # Private footpath: excluded from the network, not closed, so
+            # it lands in neither bucket.
+            {"type": "way", "tags": {"highway": "footway", "access": "private"},
+             "geometry": [{"lat": 37.0, "lon": -122.0},
+                          {"lat": 37.002, "lon": -122.0}]},
+        ]}
+        with mock.patch("api.walkability.query_overpass",
+                        return_value=payload):
+            ways, rings = self.real_fetch_placement(37.0, -122.0, 1609)
+        self.assertEqual(len(ways), 1)
+        self.assertEqual(len(rings), 1)
+        zones = walkability.NoGoZones(rings)
+        self.assertTrue(zones.contains(37.0005, -121.9995))
+        self.assertFalse(zones.contains(37.0005, -122.002))
+
+    def test_point_check_vetoes_inside_no_go_area(self):
+        with self.settings(WALKABILITY_MODE="overpass"):
+            inside = {"elements": [{"type": "way", "id": 1},
+                                   {"type": "area", "id": 2}]}
+            with mock.patch("api.walkability.query_overpass",
+                            return_value=inside):
+                self.assertIs(walkability.is_walkable(37.0, -122.0), False)
+            clear = {"elements": [{"type": "way", "id": 1}]}
+            with mock.patch("api.walkability.query_overpass",
+                            return_value=clear):
+                self.assertIs(walkability.is_walkable(37.0, -122.0), True)
 
     def test_drop_rejected_on_unwalkable_coordinate(self):
         gem_id = str(catalog.gem_of("common")["id"])
