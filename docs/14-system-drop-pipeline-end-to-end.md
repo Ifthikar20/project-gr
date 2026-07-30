@@ -89,16 +89,24 @@ Published routes in the bbox with `run_count ≥ PRESENCE_DROP_MIN_RUNS`
 
 1. Sample a uniform-random distance along the route polyline and
    interpolate the coordinate (`RouteGeometry.coordinate_at`). Route
-   polylines are **walking-directions-snapped**, so the point is on a path
-   humans actually walked — construction vouches for it.
-2. Reject if farther than `PRESENCE_RADIUS_M = 1609` from the map-open
+   polylines are walking-directions-snapped — but walking directions
+   legally follow ROAD CENTERLINES where no sidewalk exists, which is how
+   gems once ended up reading as "on private property".
+2. **Snap onto the strict pedestrian network** (`PedestrianNet.snap`): the
+   candidate must project onto a sidewalk/trail way within
+   `PLACEMENT_SNAP_MAX_M = 25` and is MOVED to that projected point — the
+   gem physically sits on the public way, never a road centerline,
+   driveway, or yard. No way in range → candidate rejected. The network is
+   fetched ONCE per stocking pass (`fetch_walkable_ways` with
+   `PEDESTRIAN_PLACEMENT_HIGHWAYS`) and shared with Tier 2 — the old
+   per-candidate `is_walkable` HTTP calls are gone. Empty network
+   (Overpass down): raw route points are trusted so new areas still
+   bootstrap; the next daily rotation re-places them snapped.
+3. Reject if farther than `PRESENCE_RADIUS_M = 1609` from the map-open
    point (the mile is both the counting and the placement circle — a mile
    is still a walk, not a drive).
-3. Reject if within `MIN_GEM_SPACING_M = 100` of any active standalone drop
+4. Reject if within `MIN_GEM_SPACING_M = 100` of any active standalone drop
    (`near_existing_drop`, planar-meters check over a bbox prefilter).
-4. Veto only on an explicit `walkability.is_walkable(...) is False`; `None`
-   (check off / Overpass unreachable) is accepted because the point came
-   from a trusted polyline.
 
 One gem max per route per top-up.
 
@@ -111,18 +119,24 @@ random scatter tier**: a rate-limited walkability check fails open and
 lands gems on private land, so empty beats misplaced (pinned by test
 `test_map_open_without_walkable_geometry_spawns_nothing`).
 
-1. **Fetch**: `walkability.fetch_walkable_ways(lat, lng,
-   PRESENCE_RADIUS_M, highways=PEDESTRIAN_HIGHWAYS, deadline=…)` — one
-   Overpass query, mirrors tried in order (each capped to the remaining
-   placement budget), 120 s circuit breaker after total failure.
-2. **Way filter** (in the Overpass query itself):
-   - `highway ~ ^(footway|pedestrian|path|steps)$` — sidewalks
-     (`footway`), walking/running trails (`path`), promenades
-     (`pedestrian`), stairs. Driveways (`service`), farm tracks (`track`),
-     cycleways, bridleways, and all road centerlines are excluded — each of
+1. **Fetch**: the pass-shared strict network (`fetch_walkable_ways(lat,
+   lng, PRESENCE_RADIUS_M, highways=PEDESTRIAN_PLACEMENT_HIGHWAYS,
+   deadline=…)`, fetched once in `top_up_area`) — one Overpass query,
+   mirrors tried in order (each capped to the remaining placement budget),
+   120 s circuit breaker after total failure.
+2. **Way filter**:
+   - `highway ~ ^(footway|pedestrian|path)$` — sidewalks (`footway`),
+     walking/running trails (`path`), promenades (`pedestrian`).
+     Driveways (`service`), farm tracks (`track`), cycleways, bridleways,
+     all road centerlines, and `steps` (building-entrance stairs read as
+     private, and stairs are poor run-past spots) are excluded — each of
      those produced gems that read as sitting on private property.
+     (`PEDESTRIAN_HIGHWAYS`, which keeps `steps`, remains the VALIDATION
+     list for player-drop checks.)
    - `foot` and `access` must not be `no`/`private`.
-   - Closed rings (park loops, roundabouts) dropped in post.
+   - Closed rings (park loops, roundabouts), parking-lot access aisles
+     (`footway=access_aisle`), and indoor corridors (`indoor=yes`)
+     dropped in post.
 3. **Way choice**: distance-weighted toward the user —
    `weight = (250 / (250 + d_min))²` where `d_min` is the nearest node's
    planar distance. A path 100 m away is ~9× likelier than one 800 m away.

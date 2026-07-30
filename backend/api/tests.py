@@ -3,6 +3,7 @@ GameKitCoreTests: a straight 1 km route heading north, tracks at known paces.
 """
 import io
 import json
+import math
 import random
 import uuid
 from datetime import timedelta
@@ -42,6 +43,14 @@ def track(speed, length_m=1000):
                    PRESENCE_ASYNC=False)
 class ApiTests(TestCase):
     def setUp(self):
+        # Hermetic Overpass: the placement-network fetch returns no ways by
+        # default (→ trusted route points, exactly the Overpass-down
+        # fallback). Tests that need geometry set self.mock_ways or patch
+        # locally.
+        ways_patcher = mock.patch("api.walkability.fetch_walkable_ways",
+                                  return_value=[])
+        self.mock_ways = ways_patcher.start()
+        self.addCleanup(ways_patcher.stop)
         self.client = Client()
         response = self.post("/v1/auth/apple", {"handle": "tester"})
         self.assertEqual(response.status_code, 200)
@@ -344,17 +353,38 @@ class ApiTests(TestCase):
                                                    "radius_m": 5000}).json()
         self.assertEqual(len(nearby["drops"]), 1)
 
-    def test_drop_gems_skips_unwalkable_points(self):
+    def test_drop_gems_skips_points_off_the_pedestrian_network(self):
+        """A route stretch with NO sidewalk/trail within PLACEMENT_SNAP_MAX_M
+        spawns nothing — the strict network is the placement authority, not
+        a fuzzy any-road-nearby check. (This is the private-property guard:
+        a route along a bare residential street gets no gems.)"""
         self.seed_popular_route()
-        with mock.patch("api.walkability.is_walkable", return_value=False):
-            call_command("drop_gems", seed=7, stdout=io.StringIO())
+        offset = 200 / (111_320 * math.cos(math.radians(37.0)))   # 200 m east
+        self.mock_ways.return_value = [[(37.0, -122.0 + offset),
+                                        (37.02, -122.0 + offset)]]
+        call_command("drop_gems", seed=7, stdout=io.StringIO())
         self.assertEqual(
             GemDrop.objects.filter(route__isnull=True, placed_by="system").count(), 0)
 
-    def test_system_drops_trust_route_snap_when_check_unanswerable(self):
-        """Candidates come from walking-snapped route polylines, so an
-        unanswerable walkability check (None — Overpass down/rate-limited)
-        must NOT block gem spawning; only an explicit False vetoes."""
+    def test_route_gems_snap_onto_the_pedestrian_network(self):
+        """Routes legally follow road centerlines; gems must not. A sidewalk
+        15 m east of the route pulls every placement onto itself."""
+        route = Route.objects.get(id=self.seed_popular_route())
+        offset = 15 / (111_320 * math.cos(math.radians(37.0)))
+        net = system_drops.PedestrianNet(
+            [[(37.0, -122.0 + offset), (37.01, -122.0 + offset)]])
+        drop = system_drops.drop_gem_on_route(route, random.Random(1),
+                                              net=net, near=(37.0, -122.0))
+        self.assertIsNotNone(drop)
+        self.assertAlmostEqual(drop.lng, -122.0 + offset, places=6)
+
+    def test_system_drops_trust_route_snap_when_network_unanswerable(self):
+        """Route candidates come from walking-snapped polylines, so an
+        unreachable Overpass (no pedestrian network at all — the setUp
+        default here) must NOT block spawning: the raw route point is
+        trusted, and the next daily rotation re-places it snapped. A
+        reachable network with nothing in snap range DOES veto (test
+        above)."""
         self.seed_popular_route()
         system = GemDrop.objects.filter(route__isnull=True, placed_by="system")
         with self.settings(WALKABILITY_MODE="overpass"):
@@ -365,9 +395,25 @@ class ApiTests(TestCase):
                                {"gem_id": str(catalog.gem_of("common")["id"]),
                                 "lat": 37.0, "lng": -122.0}, auth=True)
                 self.assertEqual(ok.status_code, 200)
-            with mock.patch("api.walkability.is_walkable", return_value=False):
-                call_command("drop_gems", seed=8, stdout=io.StringIO())
-                self.assertEqual(system.count(), 1)          # False still vetoes
+
+    def test_player_drop_check_uses_strict_pedestrian_list(self):
+        with mock.patch("api.views.walkability.is_walkable",
+                        return_value=None) as check:
+            ok = self.post("/v1/drops",
+                           {"gem_id": str(catalog.gem_of("common")["id"]),
+                            "lat": 37.0, "lng": -122.0}, auth=True)
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(check.call_args.kwargs.get("highways"),
+                         walkability.PEDESTRIAN_HIGHWAYS)
+
+    def test_stocking_pass_fetches_the_placement_network_once(self):
+        self.mock_ways.reset_mock()
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=5, PRESENCE_BOOTSTRAP=True):
+            system_drops.top_up_area(37.0, -122.0, random.Random(1))
+        self.assertEqual(self.mock_ways.call_count, 1)
+        self.assertEqual(self.mock_ways.call_args.kwargs.get("highways"),
+                         walkability.PEDESTRIAN_PLACEMENT_HIGHWAYS)
 
     def test_drop_rejected_on_unwalkable_coordinate(self):
         gem_id = str(catalog.gem_of("common")["id"])

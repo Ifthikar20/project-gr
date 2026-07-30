@@ -93,13 +93,23 @@ indirectly through routing. So walkability is layered:
   excluded by omission. OSM is the only real "walkable path list" data
   source. ODbL attribution applies (already planned in docs/10).
 
-`is_walkable(lat, lng)` is deliberately three-valued:
+**System placement no longer uses a fuzzy nearby-check at all**: every
+system gem must SNAP onto the strict pedestrian network
+(`PEDESTRIAN_PLACEMENT_HIGHWAYS = footway|pedestrian|path`, fetched once
+per stocking pass) within `PLACEMENT_SNAP_MAX_M = 25` — the gem is moved
+onto the way itself, or the candidate is rejected. Only when Overpass is
+entirely unreachable are raw route points trusted (bootstrap must work),
+and the next daily rotation re-places those snapped.
+
+`is_walkable(lat, lng, highways=…)` remains for PLAYER drops and is
+deliberately three-valued (POST /v1/drops passes the strict
+`PEDESTRIAN_HIGHWAYS` list — a nearby residential road no longer counts):
 
 | Result | Meaning | Caller policy |
 |---|---|---|
-| `True` | walkable way within radius | drop / accept |
-| `False` | Overpass answered: nothing walkable (highway median, private land, water) | **skip / reject 422 `not_walkable`** |
-| `None` | check disabled or Overpass unreachable/rate-limited | accepted for system drops (candidates are route-polyline-sampled, walkable by construction) and for user drops — only an explicit `False` ever vetoes |
+| `True` | qualifying way within radius | accept |
+| `False` | Overpass answered: nothing qualifying (highway median, private land, water) | **reject 422 `not_walkable`** |
+| `None` | check disabled or Overpass unreachable/rate-limited | accepted — only an explicit `False` ever vetoes |
 
 Configuration (`gemrun/settings.py`): `WALKABILITY_MODE` — default
 `"overpass"` (ON), overridable via the `WALKABILITY_MODE` env var (`"off"`

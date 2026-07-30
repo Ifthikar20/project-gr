@@ -772,8 +772,11 @@ def drops(request):
     except (KeyError, TypeError, ValueError):
         return problem(400, "lat and lng are required")
     # Walkability downstream call (docs/13): only a definite "not walkable"
-    # rejects — None (check off/unreachable) keeps drops flowing.
-    if walkability.is_walkable(lat, lng) is False:
+    # rejects — None (check off/unreachable) keeps drops flowing. STRICT
+    # list: a player drop needs a real sidewalk/trail nearby; a residential
+    # road or driveway does not count.
+    if walkability.is_walkable(
+            lat, lng, highways=walkability.PEDESTRIAN_HIGHWAYS) is False:
         return problem(422, "Gems can only be dropped on walkable paths",
                        code="not_walkable")
     with transaction.atomic():

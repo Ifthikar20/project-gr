@@ -78,6 +78,10 @@ PRESENCE_HARD_MAX = 50           # never exceeded, counting everyone's gems
 # for placement inline (the app shows its loading cover); this bounds that
 # wait. Placement stops mid-pass when it expires — later opens retry.
 PRESENCE_INLINE_BUDGET_S = 12
+# Tier-1 candidates (points on route polylines) must snap onto a strict
+# pedestrian way within this distance or be rejected — routes legally run
+# along road centerlines, but gems must sit ON sidewalks/trails.
+PLACEMENT_SNAP_MAX_M = 25
 # Warm areas run rotation/top-up in a background thread so the map read
 # answers instantly. False = inline (tests: in-memory SQLite is per-thread).
 PRESENCE_ASYNC = True

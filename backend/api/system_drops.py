@@ -108,21 +108,67 @@ def _guarded_create(open_lat, open_lng, lat, lng, rng, weights=None):
         return create_system_drop(lat, lng, rng, weights=weights)
 
 
-def drop_gem_on_route(route, rng, near=None, deadline=None):
-    """Sample a point on the route's (walking-snapped) polyline, verify
-    spacing + walkability + the mile cap, and write one system GemDrop.
+class PedestrianNet:
+    """Strict pedestrian ways (sidewalks/trails/plazas), pre-projected for
+    fast point snapping — the single source of truth for where a system gem
+    is allowed to physically sit."""
+
+    def __init__(self, ways):
+        self.geoms = [RouteGeometry(list(w)) for w in ways if len(w) >= 2]
+
+    def __bool__(self):
+        return bool(self.geoms)
+
+    def snap(self, lat, lng):
+        """(lat, lng, distance_m) of the nearest point on the network;
+        distance is inf when the network is empty."""
+        best = (lat, lng, float("inf"))
+        for geom in self.geoms:
+            cross_m, along_m = geom.project(lat, lng)
+            if cross_m < best[2]:
+                point = geom.coordinate_at(along_m)
+                best = (point[0], point[1], cross_m)
+        return best
+
+
+def fetch_placement_net(lat, lng, deadline=None):
+    """The strict pedestrian network around a point, ready to snap to.
+    Empty when Overpass is unreachable — callers fall back to trusted
+    route geometry and the next daily rotation re-places snapped."""
+    return PedestrianNet(walkability.fetch_walkable_ways(
+        lat, lng, settings.PRESENCE_RADIUS_M,
+        highways=walkability.PEDESTRIAN_PLACEMENT_HIGHWAYS,
+        deadline=deadline))
+
+
+def drop_gem_on_route(route, rng, net=None, near=None, deadline=None):
+    """Sample a point on the route's polyline, SNAP it onto the strict
+    pedestrian network (sidewalk/trail — never a road centerline, driveway,
+    or yard), verify spacing + the mile cap, and write one system GemDrop.
     None if no candidate survived. near=(lat, lng) requires the point to
     sit within the requester's mile (PRESENCE_RADIUS_M).
+
+    net=None fetches the network around the route itself (management
+    command path). An EMPTY net (Overpass down) falls back to trusting the
+    raw route point — routes are walking-directions-snapped, and the next
+    daily rotation re-places these snapped (docs/13 §2).
 
     Routes are the highest-traffic surface we can prove (run_count gate),
     so their gems roll the richer HIGH_TRAFFIC_WEIGHTS mix."""
     geom = RouteGeometry(polyline_decode(route.polyline))
     if geom.total_length_m <= 0:
         return None
+    if net is None:
+        net = fetch_placement_net(route.lat, route.lng, deadline=deadline)
     for _ in range(ATTEMPTS_PER_ROUTE):
         if _past(deadline):
             return None
         lat, lng = geom.coordinate_at(rng.uniform(0, geom.total_length_m))
+        if net:
+            slat, slng, dist_m = net.snap(lat, lng)
+            if dist_m > settings.PLACEMENT_SNAP_MAX_M:
+                continue        # no sidewalk/trail near this stretch
+            lat, lng = slat, slng
         if near is not None:
             k = 111_320.0
             klng = k * max(0.1, math.cos(math.radians(near[0])))
@@ -131,16 +177,6 @@ def drop_gem_on_route(route, rng, near=None, deadline=None):
                 continue
         if near_existing_drop(lat, lng):
             continue
-        # Only an explicit "not walkable" vetoes the point. None (check off
-        # or Overpass unanswerable/rate-limited) is accepted: the candidate
-        # was sampled from a walking-directions-snapped route polyline, so
-        # construction already vouches for it (docs/13 §2). When the
-        # deadline can't afford the check's worst case, skip it — skipping
-        # yields the same accepted outcome as unreachable.
-        if deadline is None or (deadline - time.monotonic()
-                                > settings.WALKABILITY_TIMEOUT_S * 2):
-            if walkability.is_walkable(lat, lng) is False:
-                continue
         open_point = near if near is not None else (lat, lng)
         try:
             return _guarded_create(open_point[0], open_point[1], lat, lng,
@@ -163,7 +199,7 @@ def create_system_drop(lat, lng, rng, weights=None):
     return drop
 
 
-def drop_on_walkable_ways(lat, lng, count, rng, deadline=None):
+def drop_on_walkable_ways(lat, lng, count, rng, ways=None, deadline=None):
     """Sample points directly on real OSM walkable ways within the
     requester's mile. The way geometry IS the walkable-path list, so linear
     interpolation between adjacent way nodes stays on the path. This is the
@@ -171,15 +207,21 @@ def drop_on_walkable_ways(lat, lng, count, rng, deadline=None):
     scatter, because a rate-limited Overpass check fails open and lands
     gems on private land.
 
+    `ways` is the strict placement network already fetched by the caller
+    (top_up_area fetches ONCE per pass and shares it with Tier 1's
+    snapping); None fetches here for standalone callers.
+
     Everything is anchored to PRESENCE_RADIUS_M: ways are fetched only
     within that circle, near ways are weighted higher still, and any
     sampled point that interpolates past the mile (long ways!) is rejected.
     All fills roll the default rarity mix: the way class (trail vs
     sidewalk) is a safety filter, not a loot signal."""
     radius = settings.PRESENCE_RADIUS_M
-    ways = walkability.fetch_walkable_ways(
-        lat, lng, radius,
-        highways=walkability.PEDESTRIAN_HIGHWAYS, deadline=deadline)
+    if ways is None:
+        ways = walkability.fetch_walkable_ways(
+            lat, lng, radius,
+            highways=walkability.PEDESTRIAN_PLACEMENT_HIGHWAYS,
+            deadline=deadline)
     if not ways:
         return 0
     k = 111_320.0
@@ -231,11 +273,29 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
         lng__gte=lng - dlng, lng__lte=lng + dlng).order_by("-run_count"))
     created = 0
 
+    # ONE strict-network fetch per pass, shared by both tiers: Tier 1 snaps
+    # route candidates onto it, Tier 2 samples directly on it. Replaces the
+    # old per-candidate is_walkable HTTP calls (faster) and guarantees
+    # every gem sits ON a sidewalk/trail, not beside one. Skipped entirely
+    # when neither tier has work to do.
+    strict_ways = []
+    net = PedestrianNet([])
+    if popular or settings.PRESENCE_BOOTSTRAP:
+        strict_ways = walkability.fetch_walkable_ways(
+            lat, lng, settings.PRESENCE_RADIUS_M,
+            highways=walkability.PEDESTRIAN_PLACEMENT_HIGHWAYS,
+            deadline=deadline)
+        net = PedestrianNet(strict_ways)
+    if popular and not net:
+        log.info("stocking: strict pedestrian network unavailable near "
+                 "(%.4f, %.4f) — route placements fall back to trusted "
+                 "route points until the next rotation", lat, lng)
+
     try:
         for route in popular:
             if created >= need or _past(deadline):
                 break
-            if drop_gem_on_route(route, rng, near=(lat, lng),
+            if drop_gem_on_route(route, rng, net=net, near=(lat, lng),
                                  deadline=deadline) is not None:
                 created += 1
 
@@ -243,6 +303,7 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
             log.info("stocking: %d slot(s) left after routes — sampling OSM "
                      "walkable ways", need - created)
             created += drop_on_walkable_ways(lat, lng, need - created, rng,
+                                             ways=strict_ways,
                                              deadline=deadline)
     except CapReached:
         log.info("hard cap reached mid-spawn near (%.4f, %.4f) — a "

@@ -223,10 +223,14 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 - **Daily rotation**: uncollected system gems from before today expire on
   the next open and the area restocks at fresh positions — **gems never
   repopulate in the same spots the next day**.
-- **Placement is fail-closed**: Tier 1 drops on published routes (weighted
-  to the highest-walking-traffic categories), Tier 2 on OSM pedestrian
-  ways via Overpass — sidewalks, paths, parks; never backyards, highways,
-  or private land. No trusted geometry → no gem.
+- **Placement is fail-closed and snapped**: every system gem must sit
+  exactly ON the strict pedestrian network (OSM sidewalks, trails,
+  promenades — driveways, farm tracks, road centerlines, entrance steps,
+  parking aisles all excluded). Tier 1 candidates from route polylines
+  are SNAPPED onto the nearest such way within 25 m or rejected — a route
+  along a bare residential street gets no gems, and nothing lands beside
+  a yard. No trusted geometry → no gem; player drops need a real
+  sidewalk/trail nearby too.
 - **Timeout discipline**: inline bootstrap 12 s budget, background jobs
   60 s, per-mirror Overpass timeouts capped to remaining budget, a 120 s
   circuit breaker, and the iOS client at 15 s/request so the app never

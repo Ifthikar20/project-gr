@@ -32,13 +32,19 @@ except ImportError:      # certifi missing → default trust store
 WALKABLE_HIGHWAYS = ("footway|path|pedestrian|steps|track|living_street|"
                      "residential|service|cycleway|bridleway|unclassified")
 
-# Strict subset for PLACING gems: sidewalks and dedicated walking/running
-# trails ONLY. "service" (driveways), "track" (farm/private dirt tracks),
-# "cycleway"/"bridleway" (bike/horse infrastructure that often parallels
-# private land), and "living_street"/"residential" (road centerlines) all
-# produced gems that read as sitting on private property. In OSM, sidewalks
-# are highway=footway and trails are highway=path.
+# Strict subset for VALIDATING pedestrian presence: sidewalks and dedicated
+# walking/running trails ONLY. "service" (driveways), "track" (farm/private
+# dirt tracks), "cycleway"/"bridleway" (bike/horse infrastructure that often
+# parallels private land), and "living_street"/"residential" (road
+# centerlines) all produced gems that read as sitting on private property.
+# In OSM, sidewalks are highway=footway and trails are highway=path.
 PEDESTRIAN_HIGHWAYS = "footway|pedestrian|path|steps"
+
+# Stricter still for PLACING gems — every system gem must sit exactly ON one
+# of these. "steps" is excluded here (building-entrance stairs read as
+# private property, and stairs are poor run-past collection spots anyway);
+# it stays valid for the presence check above.
+PEDESTRIAN_PLACEMENT_HIGHWAYS = "footway|pedestrian|path"
 
 QUERY_TEMPLATE = """
 [out:json][timeout:{timeout}];
@@ -124,9 +130,14 @@ def fetch_walkable_ways(lat, lng, radius_m=2500, highways=WALKABLE_HIGHWAYS,
     if payload is None:
         return []
     # Drop closed-ring ways (park loops, roundabouts) — they show as
-    # circles on the map and violate the "walking paths only" rule.
+    # circles on the map and violate the "walking paths only" rule. Also
+    # drop parking-lot access aisles and indoor corridors: technically
+    # footways, but gems there read as on private/commercial property.
     ways = []
     for el in payload.get("elements", []):
+        tags = el.get("tags") or {}
+        if tags.get("footway") == "access_aisle" or tags.get("indoor") == "yes":
+            continue
         geom = el.get("geometry") or []
         if len(geom) < 2:
             continue
@@ -137,13 +148,15 @@ def fetch_walkable_ways(lat, lng, radius_m=2500, highways=WALKABLE_HIGHWAYS,
     return ways
 
 
-def is_walkable(lat, lng, radius_m=None):
+def is_walkable(lat, lng, radius_m=None, highways=WALKABLE_HIGHWAYS):
+    """Pass highways=PEDESTRIAN_HIGHWAYS for the strict presence check
+    (sidewalk/trail required — a nearby residential road doesn't count)."""
     if settings.WALKABILITY_MODE != "overpass":
         return None
     timeout = settings.WALKABILITY_TIMEOUT_S
     query = QUERY_TEMPLATE.format(
         timeout=int(timeout), radius=int(radius_m or settings.WALKABILITY_RADIUS_M),
-        lat=lat, lng=lng, highways=WALKABLE_HIGHWAYS)
+        lat=lat, lng=lng, highways=highways)
     payload = query_overpass(query, timeout=timeout)
     if payload is None:
         return None   # every mirror failed — never guess
