@@ -140,7 +140,7 @@ Push navigation within tabs:
 ### 9. Stash
 **Purpose:** the collection — progress you can see, gaps you want to fill.
 
-- **Layout:** grid grouped by **rarity tier** ("Common gems" → "Legendary gems", commonest first); within a tier, gems alphabetical. Uncollected = silhouette. Tier header shows found count ("3/7", pulse when complete). Above the grid: the gem wallet card (auto-synced from Apple Health, no manual button) and totals.
+- **Layout:** grid grouped by **rarity tier** ("Common gems" → "Legendary gems", commonest first); within a tier, gems alphabetical. Uncollected = silhouette. Tier header shows found count ("3/7", pulse when complete). Above the grid: totals. There is NO wallet — the stash is the whole gem economy: server-truth via GET /v1/stash, seeded at signup with the welcome gift (3 common + 2 uncommon + 1 rare, deterministic), and drops on the Explore map spend actual stash gems (the row stays as the collection record, flagged dropped).
 - **Gem detail sheet (tap):** gem icon, rarity tier, a rotating real-material fact (same per-gem rotation as the map's gem card — every open advances it), **provenance**: where/when collected. First-find flagged with a crown.
 - **States:** empty ("Your stash is empty — run a route to start collecting" + CTA to Explore); seasonal/Founder sets show time-remaining chip.
 

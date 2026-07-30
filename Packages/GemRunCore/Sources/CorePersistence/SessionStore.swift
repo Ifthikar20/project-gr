@@ -59,10 +59,8 @@ public final class SessionStore {
     /// Set by the gemrun://route/{id} deep-link handler; Explore consumes it.
     public var pendingDeepLinkRouteID: UUID?
 
-    // MARK: Gem wallet + free runs (earn-by-running)
+    // MARK: Stash + free runs
 
-    /// Gems available to drop — minted from Apple Health distance; starts at 0.
-    public private(set) var wallet: GemWallet = [:]
     /// Presents the free-run cover (collect standalone drops, no route).
     public var isFreeRunning = false
     public var freeRunDrops: [GemDrop] = []
@@ -74,31 +72,58 @@ public final class SessionStore {
     /// "Run to Amber" from a gem tap, or the plain default.
     public var freeRunName = "Free run"
 
-    /// Reads lifetime run km from Health and mints via the API. Server-side
-    /// minting is watermarked (never double-mints), so calling this often is
-    /// safe — the debounce only trims redundant network chatter from the
-    /// Health observer + view-open triggers. `force` skips the debounce
-    /// (pull-to-refresh, just-finished run).
-    public func refreshWallet(force: Bool = false) async {
-        if isWalletSyncing { return }
-        if !force, let last = lastWalletSyncAt,
-           Date().timeIntervalSince(last) < 30 { return }
-        isWalletSyncing = true
-        defer { isWalletSyncing = false }
-        let km = await HealthDistance.totalRunKm()
-        if let minted = try? await API.shared.syncWallet(totalRunKm: km) {
-            wallet = minted
-            lastWalletSyncAt = Date()
+    /// Never a real UUID on the wire: the server's stand-in for "no drop"
+    /// (welcome-gift stash rows were never on the map).
+    private static let zeroUUID = UUID(uuid: UUID_NULL)
+
+    /// Server truth for the stash: pulls GET /v1/stash and inserts anything
+    /// this device hasn't seen — the first-login welcome gift, and gems
+    /// collected on other installs of the same account. Local rows for
+    /// just-finished runs are matched by drop id so nothing duplicates;
+    /// dropped-state syncs down so the drop sheet can't offer a spent gem.
+    public func refreshStash() async {
+        guard let context,
+              let items = try? await API.shared.stash().items else { return }
+        let existing = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        let byID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
+        let byDropID = Dictionary(existing.compactMap { row in
+            row.gemDropID.map { ($0, row) }
+        }, uniquingKeysWith: { first, _ in first })
+        var changed = false
+        for item in items {
+            let dropID = item.gemDropID == Self.zeroUUID ? nil : item.gemDropID
+            if let known = byID[item.id] ?? dropID.flatMap({ byDropID[$0] }) {
+                let dropped = item.dropped ?? false
+                if known.isDropped != dropped {
+                    known.isDropped = dropped
+                    changed = true
+                }
+                continue
+            }
+            let entry = GemCatalog.entry(forGemID: item.gemID)
+            let isGift = item.source == "gift"
+            context.insert(StoredStashItem(
+                id: item.id, gemID: item.gemID, gemDropID: dropID,
+                gemName: entry?.gem.name ?? "Gem",
+                rarityRaw: entry?.gem.rarity.rawValue ?? "common",
+                setName: entry?.setName ?? "Wanderer",
+                routeID: item.runID,
+                routeName: isGift ? "Welcome gift" : "Collected on a run",
+                collectedAt: item.collectedAt, isFirstFind: item.isFirstFind,
+                isDropped: item.dropped ?? false))
+            changed = true
         }
+        if changed { try? context.save() }
     }
 
-    private var lastWalletSyncAt: Date?
-    private var isWalletSyncing = false
-
-    /// Optimistic local decrement after a successful dropGem call.
-    public func spend(_ rarity: Rarity) {
-        if let count = wallet[rarity], count > 0 {
-            wallet[rarity] = count - 1
+    /// Flag one local copy of this gem as given away (mirror of the server
+    /// marking the stash row dropped) so the drop sheet updates instantly.
+    public func markDropped(gemID: UUID) {
+        guard let context else { return }
+        let rows = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        if let row = rows.first(where: { $0.gemID == gemID && !$0.isDropped }) {
+            row.isDropped = true
+            try? context.save()
         }
     }
 
@@ -140,7 +165,6 @@ public final class SessionStore {
             try? context.save()
         }
         let pace = distanceM > 50 ? Int(Double(durationS) / (Double(distanceM) / 1_000)) : 0
-        Task { await refreshWallet(force: true) }
         return RunCompletionSummary(
             gems: awarded.map {
                 let entry = GemCatalog.entry(forGemID: $0.gemID)
@@ -162,24 +186,13 @@ public final class SessionStore {
 
     public init() {
         self.isOnboarded = UserDefaults.standard.bool(forKey: "gemrun.onboarded")
-        // Starter gems so a fresh user can drop from Explore immediately —
-        // the API resyncs on Stash open, but this avoids an empty-wallet
-        // moment on first launch.
-        self.wallet = [.common: 5, .uncommon: 3, .rare: 1]
     }
 
     public func attach(context: ModelContext) {
         self.context = context
         profile = try? context.fetch(FetchDescriptor<StoredProfile>()).first
-        Task {
-            await refreshWallet()
-            // From here on Health pushes to us — every new stretch of
-            // walked/run distance re-mints the wallet without a button.
-            HealthDistance.startObservingDistance { [weak self] in
-                guard let self else { return }
-                Task { @MainActor in await self.refreshWallet() }
-            }
-        }
+        // Pull server stash truth (welcome gift included) at launch.
+        Task { await refreshStash() }
     }
 
     public func createProfile(handle: String) {
@@ -288,9 +301,6 @@ public final class SessionStore {
         let completedSet = persist(result: result, status: status,
                                    awardedDrops: awardedDrops, xp: xp)
         let setBonus = completedSet != nil ? XPRules.setCompletionBonus : 0
-        // The run just added distance to Health — re-mint without waiting
-        // for the next observer push.
-        Task { await refreshWallet(force: true) }
 
         return RunCompletionSummary(
             gems: gems, revokedCount: revokedCount, xpEarned: xp + setBonus,

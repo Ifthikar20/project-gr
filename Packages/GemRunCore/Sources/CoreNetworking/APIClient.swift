@@ -115,21 +115,7 @@ public final class HTTPGemRunAPI: GemRunAPI {
         return response.gems
     }
 
-    // MARK: - Gem wallet + standalone drops
-
-    private struct WalletResponse: Decodable {
-        let wallet: [String: Int]
-    }
-
-    public func syncWallet(totalRunKm: Double) async throws -> GemWallet {
-        let response: WalletResponse = try await send("POST", "wallet/sync",
-                                                      body: ["total_run_km": totalRunKm])
-        var wallet: GemWallet = [:]
-        for (key, count) in response.wallet {
-            if let rarity = Rarity(rawValue: key) { wallet[rarity] = count }
-        }
-        return wallet
-    }
+    // MARK: - Standalone drops
 
     private struct DropsResponse: Decodable {
         let drops: [GemDrop]

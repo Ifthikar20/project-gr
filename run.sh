@@ -153,12 +153,17 @@ run_app() {
         || { echo "No available iPhone simulator found."; exit 1; }
 
     say "Building (first build takes a few minutes)"
+    # Build number = git commit count: every commit bumps it, so each build
+    # is identifiable — Settings > About shows "0.1.0 (<build>)".
+    BUILD_NUM=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+    echo "Build number: ${BUILD_NUM}"
     xcodebuild build \
         -project GemRun.xcodeproj \
         -scheme GemRun \
         -destination "id=${UDID}" \
         -derivedDataPath build \
         CODE_SIGNING_ALLOWED=NO \
+        CURRENT_PROJECT_VERSION="${BUILD_NUM}" \
         -quiet
 
     APP_PATH="build/Build/Products/Debug-iphonesimulator/GemRun.app"
@@ -278,12 +283,17 @@ EOF
     rm -rf /tmp/gemrun-build-device
 
     say "Building (signed for device — first build takes a few minutes)"
+    # Build number = git commit count: every commit bumps it, so each build
+    # is identifiable — Settings > About shows "0.1.0 (<build>)".
+    BUILD_NUM=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+    echo "Build number: ${BUILD_NUM}"
     xcodebuild build \
         -project GemRun.xcodeproj \
         -scheme GemRun \
         -destination "platform=iOS,id=${XCODE_UDID}" \
         -derivedDataPath /tmp/gemrun-build-device \
         -allowProvisioningUpdates \
+        CURRENT_PROJECT_VERSION="${BUILD_NUM}" \
         -quiet
 
     APP_PATH="/tmp/gemrun-build-device/Build/Products/Debug-iphoneos/GemRun.app"

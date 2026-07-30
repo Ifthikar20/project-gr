@@ -26,7 +26,10 @@ public actor MockGemRunAPI: GemRunAPI {
         ("pace.ghost", 9), ("gemhound", 3),
     ]
 
-    public init() {}
+    public init() {
+        // First login = the account exists now → welcome gift in the stash.
+        stashItems = MockGemRunAPI.welcomeGift()
+    }
 
     private func call(_ line: String) async {
         print("[MockAPI] \(line)")
@@ -54,10 +57,11 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func deleteAccount() async throws {
         await call("DELETE /v1/users/me")
-        stashItems.removeAll()
         awardedKeys.removeAll()
         userTimes.removeAll()
         profile = UserProfile(id: UUID(), handle: "runner")
+        // A fresh account starts over — including a fresh welcome gift.
+        stashItems = Self.welcomeGift()
     }
 
     // MARK: - Routes
@@ -258,27 +262,24 @@ public actor MockGemRunAPI: GemRunAPI {
         mockFriends.removeAll { $0.id == profileID }
     }
 
-    // MARK: - Gem wallet + standalone drops
+    // MARK: - Standalone drops & the welcome gift
 
-    // Starter pack: new runners open the app with a handful of gems already
-    // in the wallet, so dropping / running feels alive from tap zero.
-    private var wallet: GemWallet = [.common: 5, .uncommon: 3, .rare: 1]
-    private var mintedCounts: [Rarity: Int] = [:]
     private var standaloneDrops: [UUID: GemDrop] = [:]
     private var myDropIDs: Set<UUID> = []                  // never collect your own
     private var seededStandalone = false
 
-    public func syncWallet(totalRunKm: Double) async throws -> GemWallet {
-        await call("POST /v1/wallet/sync  (\(String(format: "%.1f", totalRunKm)) km)")
-        for (tier, threshold) in MintRules.thresholdKm {
-            let earned = Int(totalRunKm / threshold)
-            let delta = earned - (mintedCounts[tier] ?? 0)
-            if delta > 0 {
-                wallet[tier, default: 0] += delta
-                mintedCounts[tier] = earned
-            }
+    /// Server mirror of grant_welcome_gift: a deterministic starter set
+    /// (3 common, 2 uncommon, 1 rare) lands in the stash at first login,
+    /// so dropping / collecting feels alive from tap zero. No wallet.
+    static func welcomeGift() -> [StashItem] {
+        func first(_ rarity: Rarity, _ count: Int) -> [GemCatalog.Entry] {
+            Array(GemCatalog.entries.filter { $0.gem.rarity == rarity }.prefix(count))
         }
-        return wallet
+        return (first(.common, 3) + first(.uncommon, 2) + first(.rare, 1)).map {
+            StashItem(id: UUID(), gemID: $0.gem.id, gemDropID: UUID(uuid: UUID_NULL),
+                      runID: UUID(uuid: UUID_NULL), collectedAt: Date(),
+                      isFirstFind: false, source: "gift", dropped: false)
+        }
     }
 
     public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
@@ -289,12 +290,21 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop {
         await call("POST /v1/drops  (\(gemID.uuidString.prefix(8)))")
+        // Spend one droppable copy from the stash (mirror of the server's
+        // not_in_stash rule); the row stays, flagged dropped.
         guard let entry = GemCatalog.entry(forGemID: gemID),
               entry.gem.rarity != .legendary,
-              wallet[entry.gem.rarity, default: 0] > 0 else {
+              let index = stashItems.firstIndex(where: {
+                  $0.gemID == gemID && !($0.dropped ?? false)
+              }) else {
             throw URLError(.cannotParseResponse)
         }
-        wallet[entry.gem.rarity]! -= 1
+        let spent = stashItems[index]
+        stashItems[index] = StashItem(id: spent.id, gemID: spent.gemID,
+                                      gemDropID: spent.gemDropID, runID: spent.runID,
+                                      collectedAt: spent.collectedAt,
+                                      isFirstFind: spent.isFirstFind,
+                                      source: spent.source, dropped: true)
         let drop = GemDrop(id: UUID(), gemID: gemID, rarity: entry.gem.rarity,
                            lat: lat, lng: lng, positionAlongRouteM: 0,
                            respawnRule: .oneTime, placedBy: .creator)

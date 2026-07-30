@@ -132,17 +132,6 @@ public enum LeaderboardWindow: String, Codable, Sendable {
     case month
 }
 
-/// Gems earned by running (wallet), keyed by rarity. Users start at 0;
-/// total lifetime run distance (Apple Health) mints gems at per-tier
-/// thresholds — see MintRules.
-public typealias GemWallet = [Rarity: Int]
-
-public enum MintRules {
-    /// One gem per this many lifetime kilometers, per tier (server-mirrored).
-    public static let thresholdKm: [Rarity: Double] = [
-        .common: 2, .uncommon: 5, .rare: 15, .epic: 40,
-    ]
-}
 
 public struct DropCollectResult: Sendable {
     public let awardedDrops: [GemDrop]
@@ -263,13 +252,11 @@ public protocol GemRunAPI: Sendable {
     // Catalog — GET /v1/gems/catalog
     func gemCatalog() async throws -> [Gem]
 
-    // Gem wallet + standalone drops (earn-by-running)
-    // POST /v1/wallet/sync, GET/POST /v1/drops, POST /v1/drops/collect
-    /// Mints wallet gems from total lifetime run km (Apple Health).
-    func syncWallet(totalRunKm: Double) async throws -> GemWallet
+    // Standalone drops — GET/POST /v1/drops, POST /v1/drops/collect
     /// Standalone drops other runners left near this location.
     func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop]
-    /// Drop one wallet gem anywhere on the map (one-time; first finder takes it).
+    /// Give one of your stash gems away as a map drop (one-time; first
+    /// finder takes it; the stash row stays as the collection record).
     func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop
     /// Claim standalone drops passed during a free run; server checks the track.
     func collectDrops(claimed: [UUID], track: [TrackSample]) async throws -> DropCollectResult

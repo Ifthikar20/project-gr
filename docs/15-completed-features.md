@@ -61,7 +61,7 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 - Destination pin: tap the map → snapped walking path from you to the pin,
   distance label, "N gems on the way", Start Run builds a point-to-point
   route.
-- Drop mode: place a wallet gem on the map for other runners. A validator
+- Drop mode: give one of your stash gems away on the map. A validator
   gates spots — trails you've run, published routes, or runnable public
   POIs (parks, cafes, transit…) are allowed; hospitals, schools, parking,
   private-looking places are denied with a human-readable reason.
@@ -133,16 +133,15 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
   count per header ("3/7", pulse-colored when complete). Uncollected gems
   are grey silhouettes named "???" — the pull to fill the grid. The old
   set names (Ancient Relics, Trailblazer…) are gone from every surface.
-- **Gem wallet, auto-synced**: gems you *earn by distance* (separate from
-  the collection) to drop on the map for others. No sync button —
-  Apple Health **pushes** to us: an observer re-mints the wallet whenever
-  new walking/running distance lands (instant in the foreground, ~hourly
-  in the background via the background-delivery entitlement), plus a
-  forced re-mint right after every finished run, plus pull-to-refresh as
-  the manual escape hatch. A 30 s debounce trims redundant calls; the
-  server's mint watermark makes any re-sync safe (never double-mints).
-  Minting: 1 common per 2 km (~1.2 mi), uncommon per 5 km, rare per
-  15 km, epic per 40 km; legendary is never mintable.
+- **No wallet — the stash IS the gem economy**: server truth via
+  `GET /v1/stash`, merged into the local cache on launch, Stash open, and
+  pull-to-refresh (survives reinstalls; gems from other devices appear).
+  New accounts receive a **welcome gift** at first login — a deterministic
+  starter set (3 common, 2 uncommon, 1 rare) that shows in the stash like
+  any find, labeled "Welcome gift" in its detail card. Dropping a gem on
+  the Explore map spends an actual stash gem: the row is flagged dropped
+  (server + local), can't be spent twice — even racing — and stays
+  visible in the collection. Legendaries can never be given away.
 - **Tap a collected gem** → detail card with the gem icon, tier, the same
   **rotating real facts** as the map card (shared rotation counter, so
   the fact advances across surfaces), first-find crown, and provenance
@@ -226,8 +225,11 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 
 ## 9. Backend: everything else
 
-- **Wallet minting** (`POST /v1/wallet/sync`): idempotent by watermark
-  (`wallet_minted`) — constant client syncing is safe by construction.
+- **Stash & welcome gift**: `GET /v1/stash` is the source of truth;
+  `grant_welcome_gift` seeds every new profile (6 gems, deterministic);
+  `POST /v1/drops` spends a locked stash row (`dropped_at`), keeping the
+  collection record. The old wallet (`/v1/wallet/sync`, Health-distance
+  minting) is fully removed.
 - **Runs**: submit/validate (server-side splits, pace, revocation),
   `GET /v1/runs/mine` history; XP with streak multiplier.
 - **Friends**: `Friendship` model (one-directional), board query ranked by
@@ -251,7 +253,10 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
   back to emoji — the PNG set drops in with no code change.
 - **No-lag practices**: warm map answers never wait on stocking; guide-line
   math is incremental; images/annotations reuse identity; network calls
-  carry strict timeouts; wallet sync is debounced.
+  carry strict timeouts.
+- **Build versioning**: `run.sh` stamps every build with the git commit
+  count as its build number; Settings > About shows "0.1.0 (N)" so each
+  build/release is identifiable.
 
 ## 11. Deliberately not built yet
 

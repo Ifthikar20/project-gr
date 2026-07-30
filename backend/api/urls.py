@@ -19,8 +19,7 @@ urlpatterns = [
     path("friends", views.friends),
     path("friends/<uuid:friend_id>", views.friend_detail),
     path("gems/catalog", views.gem_catalog),
-    # Gem wallet + standalone drops (earn-by-running)
-    path("wallet/sync", views.wallet_sync),
+    # Standalone drops: stash gems given away on the open map.
     path("drops", views.drops),
     path("drops/collect", views.collect_drops),
 ]

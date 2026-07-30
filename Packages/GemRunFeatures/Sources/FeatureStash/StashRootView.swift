@@ -36,7 +36,6 @@ public struct StashRootView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    walletCard
                     header
                     ForEach(tierSections, id: \.tier) { section in
                         tierSection(section.tier, section.entries)
@@ -44,52 +43,15 @@ public struct StashRootView: View {
                 }
                 .padding(16)
             }
-            .refreshable { await session.refreshWallet(force: true) }
+            .refreshable { await session.refreshStash() }
             .background(DS.Colors.snow)
             .navigationTitle("Stash")
-            .task { await session.refreshWallet() }
+            .task { await session.refreshStash() }
             .sheet(item: $detail) { item in
                 GemDetailSheet(item: item)
                     .presentationDetents([.medium])
             }
         }
-    }
-
-    /// The gem wallet: gems earned by running (Apple Health), ready to drop
-    /// anywhere from the Explore map. Everyone starts at zero. No sync
-    /// button — Health pushes new distance to us automatically.
-    private var walletCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Gem wallet")
-                .font(DS.Typography.heading)
-                .foregroundStyle(DS.Colors.ink)
-            if session.wallet.values.reduce(0, +) == 0 {
-                Text("Every 1.2 mi you walk or run mints a gem here — rarer ones at bigger milestones. Drop them anywhere on the map for another runner to find.")
-                    .font(.caption)
-                    .foregroundStyle(DS.Colors.inkSecondary)
-            } else {
-                HStack(spacing: 14) {
-                    ForEach([Rarity.common, .uncommon, .rare, .epic], id: \.self) { rarity in
-                        if let count = session.wallet[rarity], count > 0 {
-                            HStack(spacing: 4) {
-                                RarityBadge(rarity, size: 14)
-                                Text("×\(count)")
-                                    .font(.subheadline.bold())
-                                    .foregroundStyle(DS.Colors.ink)
-                            }
-                        }
-                    }
-                    Spacer()
-                    Text("drop them from the map")
-                        .font(.caption2)
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                }
-            }
-            Label("Syncs automatically with Apple Health", systemImage: "checkmark.circle.fill")
-                .font(.caption2)
-                .foregroundStyle(DS.Colors.inkSecondary)
-        }
-        .airbnbCard()
     }
 
     private var header: some View {
@@ -228,8 +190,13 @@ struct GemDetailSheet: View {
             Rectangle().fill(DS.Colors.hairline).frame(height: 1)
                 .padding(.horizontal, 32)
             VStack(spacing: 4) {
-                Text("Collected on \(item.routeName)")
-                    .foregroundStyle(DS.Colors.ink)
+                if item.routeName == "Welcome gift" {
+                    Label("Welcome gift — free gems for joining", systemImage: "gift.fill")
+                        .foregroundStyle(DS.Colors.pulse)
+                } else {
+                    Text("Collected on \(item.routeName)")
+                        .foregroundStyle(DS.Colors.ink)
+                }
                 Text(item.collectedAt, style: .date)
                     .foregroundStyle(DS.Colors.inkSecondary)
             }

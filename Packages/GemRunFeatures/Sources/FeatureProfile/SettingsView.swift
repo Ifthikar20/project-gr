@@ -180,9 +180,15 @@ struct SettingsView: View {
                 Text("Version")
                     .foregroundStyle(DS.Colors.ink)
                 Spacer()
-                Text(Bundle.main.object(
+                // "0.1.0 (214)" — marketing version + auto-incremented
+                // build number (run.sh derives it from the git commit
+                // count, so every build/release shows a higher number).
+                let short = Bundle.main.object(
                     forInfoDictionaryKey: "CFBundleShortVersionString")
-                    as? String ?? "0.1")
+                    as? String ?? "0.1"
+                let build = Bundle.main.object(
+                    forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+                Text("\(short) (\(build))")
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
             .listRowBackground(DS.Colors.snowCard)
@@ -257,9 +263,9 @@ struct DataTransparencyView: View {
                       + "the trace. The full trace is stored only on your "
                       + "phone, and \"Erase all local data\" deletes it.")
                 block("Apple Health, by permission",
-                      "With your permission we read your total running "
-                      + "distance (it mints wallet gems) and save finished "
-                      + "runs as workouts. Revoke either anytime in iOS "
+                      "With your permission we read your step count to "
+                      + "show accurate run stats, and save finished runs "
+                      + "as workouts. Revoke either anytime in iOS "
                       + "Settings; the app keeps working.")
                 block("What lives on our server",
                       "Your username, level, XP, streak, stash, friends "

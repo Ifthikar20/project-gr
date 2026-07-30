@@ -45,6 +45,21 @@ def body_of(request):
         return None
 
 
+def grant_welcome_gift(profile):
+    """First-login gift: a deterministic starter set of stash gems (3 common,
+    2 uncommon, 1 rare — same for everyone) so a brand-new player opens the
+    Stash to real gems and has something to drop for others immediately.
+    There is no wallet — these live in the stash like any collected gem."""
+    now = datetime.now(tz.utc)
+    gifts = (catalog.gems_of("common", 3) + catalog.gems_of("uncommon", 2)
+             + catalog.gems_of("rare", 1))
+    StashItem.objects.bulk_create([
+        StashItem(profile=profile, gem_id=g["id"], gem_drop=None, run=None,
+                  source="gift", collected_at=now, is_first_find=False)
+        for g in gifts
+    ])
+
+
 def profile_from(request):
     header = request.headers.get("Authorization", "")
     if header.startswith("Bearer "):
@@ -63,6 +78,7 @@ def profile_from(request):
         if profile is None:
             profile = Profile.objects.create(handle="runner", auth_provider="guest",
                                              external_user_id="dev-fallback")
+            grant_welcome_gift(profile)
         return profile
     return None
 
@@ -133,6 +149,7 @@ def auth_provider(request, provider):
     if profile is None:
         profile = Profile.objects.create(handle=handle, auth_provider=provider,
                                          external_user_id=external_id)
+        grant_welcome_gift(profile)
     else:
         profile.handle = handle
         profile.save(update_fields=["handle"])
@@ -491,8 +508,10 @@ def stash(request):
     if profile is None:
         return problem(401, "Sign in required")
     items = [{"id": str(s.id), "gem_id": str(s.gem_id),
-              "gem_drop_id": str(s.gem_drop_id), "run_id": str(s.run_id or uuid.UUID(int=0)),
-              "collected_at": iso(s.collected_at), "is_first_find": s.is_first_find}
+              "gem_drop_id": str(s.gem_drop_id or uuid.UUID(int=0)),
+              "run_id": str(s.run_id or uuid.UUID(int=0)),
+              "collected_at": iso(s.collected_at), "is_first_find": s.is_first_find,
+              "source": s.source, "dropped": s.dropped_at is not None}
              for s in profile.stash.order_by("-collected_at")]
     return JsonResponse({"items": items})
 
@@ -636,34 +655,7 @@ def friend_detail(request, friend_id):
     return JsonResponse({})
 
 
-# ------------------------------------------------- wallet & standalone drops
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def wallet_sync(request):
-    """Mint wallet gems from total lifetime run distance (Apple Health,
-    client-reported — trusted while the accept-all dev flag is on)."""
-    profile = profile_from(request)
-    if profile is None:
-        return problem(401, "Sign in required")
-    data = body_of(request) or {}
-    try:
-        total_km = max(0.0, float(data.get("total_run_km", 0)))
-    except (TypeError, ValueError):
-        return problem(400, "total_run_km must be a number")
-    wallet = dict(profile.wallet or {})
-    minted = dict(profile.wallet_minted or {})
-    for tier, threshold in rules.MINT_THRESHOLD_KM.items():
-        earned = int(total_km // threshold)
-        delta = earned - int(minted.get(tier, 0))
-        if delta > 0:
-            wallet[tier] = int(wallet.get(tier, 0)) + delta
-            minted[tier] = earned
-    profile.wallet = wallet
-    profile.wallet_minted = minted
-    profile.save(update_fields=["wallet", "wallet_minted"])
-    return JsonResponse({"wallet": wallet})
-
+# ------------------------------------------------- standalone drops
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
@@ -697,7 +689,8 @@ def drops(request):
                                     ).order_by("-created_at")[:200]
         return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs]})
 
-    # POST — drop a wallet gem anywhere on the map.
+    # POST — give one of your stash gems away as a map drop. The stash row
+    # stays (collection record) but is marked dropped and can't be re-spent.
     profile = profile_from(request)
     if profile is None:
         return problem(401, "Sign in required")
@@ -709,10 +702,6 @@ def drops(request):
     rarity = entry["rarity"]
     if rarity == "legendary":
         return problem(422, "Legendary gems cannot be dropped")
-    wallet = dict(profile.wallet or {})
-    if int(wallet.get(rarity, 0)) < 1:
-        return problem(422, "No gem of that rarity in your wallet",
-                       code="wallet_empty")
     try:
         lat, lng = float(data["lat"]), float(data["lng"])
     except (KeyError, TypeError, ValueError):
@@ -722,13 +711,22 @@ def drops(request):
     if walkability.is_walkable(lat, lng) is False:
         return problem(422, "Gems can only be dropped on walkable paths",
                        code="not_walkable")
-    wallet[rarity] = int(wallet[rarity]) - 1
-    profile.wallet = wallet
-    profile.save(update_fields=["wallet"])
-    drop = GemDrop.objects.create(
-        route=None, dropped_by=profile, gem_id=entry["id"], rarity=rarity,
-        lat=lat, lng=lng, position_along_route_m=0,
-        respawn_rule="one_time", placed_by="creator")
+    with transaction.atomic():
+        # Oldest droppable copy of this gem; locked so two racing drops of
+        # a player's single copy can't both spend it.
+        item = (StashItem.objects.select_for_update()
+                .filter(profile=profile, gem_id=entry["id"],
+                        dropped_at__isnull=True)
+                .order_by("collected_at").first())
+        if item is None:
+            return problem(422, "That gem isn't in your stash",
+                           code="not_in_stash")
+        item.dropped_at = datetime.now(tz.utc)
+        item.save(update_fields=["dropped_at"])
+        drop = GemDrop.objects.create(
+            route=None, dropped_by=profile, gem_id=entry["id"], rarity=rarity,
+            lat=lat, lng=lng, position_along_route_m=0,
+            respawn_rule="one_time", placed_by="creator")
     return JsonResponse(drop_json(drop, exact=True))
 
 

@@ -128,7 +128,8 @@ class ApiTests(TestCase):
         self.assertEqual(first, again)
         stash = self.client.get("/v1/stash",
                                 HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
-        self.assertEqual(len(stash["items"]), 1)
+        runs = [i for i in stash["items"] if i["source"] == "run"]
+        self.assertEqual(len(runs), 1)   # gift items aside, the claim is single
 
     def test_claim_without_track_support_is_revoked(self):
         gem = self.gem("common", 900)
@@ -164,38 +165,40 @@ class ApiTests(TestCase):
                              HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
         self.assertEqual(me["streak_count"], 1)   # same day: no double count
 
-    # ---- gem wallet + standalone drops (earn-by-running)
+    # ---- stash, welcome gift & standalone drops
 
-    def wallet_sync(self, km):
-        return self.post("/v1/wallet/sync", {"total_run_km": km}, auth=True).json()
+    def test_welcome_gift_stocks_a_new_stash(self):
+        stash = self.client.get("/v1/stash",
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        gifts = [i for i in stash["items"] if i["source"] == "gift"]
+        self.assertEqual(len(gifts), 6)          # 3 common + 2 uncommon + 1 rare
+        rarities = sorted(catalog.entry_for(uuid.UUID(i["gem_id"]))["rarity"]
+                          for i in gifts)
+        self.assertEqual(rarities, ["common"] * 3 + ["rare"] + ["uncommon"] * 2)
+        self.assertTrue(all(not i["dropped"] for i in gifts))
 
-    def test_wallet_mints_from_distance_and_never_double_mints(self):
-        self.assertEqual(self.wallet_sync(0)["wallet"], {})          # start at 0
-        wallet = self.wallet_sync(11)["wallet"]
-        self.assertEqual(wallet["common"], 5)                        # 11 // 2
-        self.assertEqual(wallet["uncommon"], 2)                      # 11 // 5
-        self.assertNotIn("rare", wallet)
-        again = self.wallet_sync(11)["wallet"]                       # re-sync: no change
-        self.assertEqual(again, wallet)
-        more = self.wallet_sync(16)["wallet"]                        # +5 km later
-        self.assertEqual(more["common"], 8)                          # 16 // 2
-        self.assertEqual(more["rare"], 1)                            # 16 // 15
-
-    def test_drop_requires_wallet_gem(self):
+    def test_drop_spends_a_stash_gem_and_keeps_the_record(self):
         gem_id = str(catalog.gem_of("common")["id"])
-        denied = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
-                           auth=True)
-        self.assertEqual(denied.status_code, 422)                    # wallet empty
-        self.wallet_sync(2)                                          # mint 1 common
+        # The welcome gift holds exactly one copy of this gem: first drop OK.
         ok = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
                        auth=True)
         self.assertEqual(ok.status_code, 200)
         nearby = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
                                                "radius_m": 1000}).json()
         self.assertEqual(len(nearby["drops"]), 1)
+        # The stash row survives as the collection record, marked dropped.
+        stash = self.client.get("/v1/stash",
+                                HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        mine = [i for i in stash["items"] if i["gem_id"] == gem_id]
+        self.assertEqual(len(mine), 1)
+        self.assertTrue(mine[0]["dropped"])
+        # No second copy → a repeat drop is refused.
+        again = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.0, "lng": -122.0},
+                          auth=True)
+        self.assertEqual(again.status_code, 422)
+        self.assertEqual(again.json()["code"], "not_in_stash")
 
     def test_collect_drop_is_one_time_and_never_own(self):
-        self.wallet_sync(2)
         gem_id = str(catalog.gem_of("common")["id"])
         drop = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.001, "lng": -122.0},
                          auth=True).json()
@@ -275,8 +278,7 @@ class ApiTests(TestCase):
             with mock.patch("api.walkability.is_walkable", return_value=None):
                 call_command("drop_gems", seed=7, stdout=io.StringIO())
                 self.assertEqual(system.count(), 1)          # trusted, spawns
-                self.wallet_sync(2)                          # user drop: fail open
-                ok = self.post("/v1/drops",
+                ok = self.post("/v1/drops",                  # user drop: fail open
                                {"gem_id": str(catalog.gem_of("common")["id"]),
                                 "lat": 37.0, "lng": -122.0}, auth=True)
                 self.assertEqual(ok.status_code, 200)
@@ -285,7 +287,6 @@ class ApiTests(TestCase):
                 self.assertEqual(system.count(), 1)          # False still vetoes
 
     def test_drop_rejected_on_unwalkable_coordinate(self):
-        self.wallet_sync(2)
         gem_id = str(catalog.gem_of("common")["id"])
         with mock.patch("api.views.walkability.is_walkable", return_value=False):
             denied = self.post("/v1/drops",
@@ -346,7 +347,6 @@ class ApiTests(TestCase):
             self.assertLess(closest, 1.0)   # both tracks were right on it
 
     def test_claim_attempts_log_too_far_and_bad_gps(self):
-        self.wallet_sync(2)
         gem_id = str(catalog.gem_of("common")["id"])
         drop = self.post("/v1/drops", {"gem_id": gem_id, "lat": 37.001,
                                        "lng": -122.0}, auth=True).json()

@@ -852,21 +852,34 @@ struct RouteCard: View {
     }
 }
 
-/// Pick a wallet gem for the tapped location (docs: earn-by-running wallet).
+/// Give one of your stash gems away at the tapped location. There is no
+/// wallet — the sheet lists the actual gems you own (welcome gift + run
+/// finds) that haven't already been given away; dropping one marks the
+/// stash row spent while the collection record stays.
 @MainActor
 struct DropGemSheet: View {
     let coordinate: Coordinate
     let onDropped: (GemDrop) -> Void
     @Environment(SessionStore.self) private var session
     @Environment(\.dismiss) private var dismiss
+    @Query private var stash: [StoredStashItem]
     @State private var isDropping = false
     @State private var error: String?
 
-    private var available: [(Rarity, Int)] {
-        [Rarity.common, .uncommon, .rare, .epic]
-            .compactMap { rarity in
-                let count = session.wallet[rarity] ?? 0
-                return count > 0 ? (rarity, count) : nil
+    private static let tierOrder: [Rarity] = [.common, .uncommon, .rare, .epic]
+
+    /// One tile per distinct droppable gem, ×count for spares. Legendaries
+    /// can never be given away.
+    private var available: [(gem: Gem, count: Int)] {
+        let droppable = stash.filter { !$0.isDropped && $0.rarity != .legendary }
+        return Dictionary(grouping: droppable, by: \.gemID)
+            .compactMap { gemID, rows in
+                GemCatalog.entry(forGemID: gemID).map { (gem: $0.gem, count: rows.count) }
+            }
+            .sorted {
+                let a = Self.tierOrder.firstIndex(of: $0.gem.rarity) ?? 0
+                let b = Self.tierOrder.firstIndex(of: $1.gem.rarity) ?? 0
+                return a == b ? $0.gem.name < $1.gem.name : a < b
             }
     }
 
@@ -877,34 +890,42 @@ struct DropGemSheet: View {
                 .foregroundStyle(DS.Colors.ink)
                 .padding(.top, 20)
             if available.isEmpty {
-                Text("Your wallet is empty. Gems are earned by running — sync with Apple Health in your Stash.")
+                Text("Nothing to drop yet — gems you collect on runs (and your welcome gift) can be left here for another runner to find.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             } else {
-                Text("First runner to pass within 100 ft takes it.")
+                Text("From your stash — first runner to pass within 100 ft takes it.")
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
-                HStack(spacing: 12) {
-                    ForEach(available, id: \.0) { rarity, count in
-                        Button {
-                            drop(rarity)
-                        } label: {
-                            VStack(spacing: 4) {
-                                RarityBadge(rarity, size: 24)
-                                Text("×\(count)")
-                                    .font(.caption)
-                                    .foregroundStyle(DS.Colors.inkSecondary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(available, id: \.gem.id) { item in
+                            Button {
+                                drop(item.gem)
+                            } label: {
+                                VStack(spacing: 4) {
+                                    GemIcon(gemID: item.gem.id, size: 26)
+                                    Text(item.gem.name)
+                                        .font(.caption2)
+                                        .foregroundStyle(DS.Colors.ink)
+                                        .lineLimit(1)
+                                    Text(item.count > 1 ? "×\(item.count)"
+                                         : item.gem.rarity.rawValue.capitalized)
+                                        .font(.caption2)
+                                        .foregroundStyle(DS.Colors.inkSecondary)
+                                }
+                                .frame(width: 84, height: 84)
+                                .background(DS.Colors.snowCard,
+                                            in: RoundedRectangle(cornerRadius: 14))
+                                .overlay(RoundedRectangle(cornerRadius: 14)
+                                    .stroke(DS.Colors.hairline, lineWidth: 1))
                             }
-                            .frame(width: 64, height: 64)
-                            .background(DS.Colors.snowCard,
-                                        in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14)
-                                .stroke(DS.Colors.hairline, lineWidth: 1))
+                            .disabled(isDropping)
                         }
-                        .disabled(isDropping)
                     }
+                    .padding(.horizontal, 20)
                 }
             }
             if let error {
@@ -917,19 +938,20 @@ struct DropGemSheet: View {
         .frame(maxWidth: .infinity)
         .background(DS.Colors.snow)
         .task {
-            await session.refreshWallet()
+            // Sync dropped-state so a gem spent on another device (or a
+            // stale sheet) can't be offered twice.
+            await session.refreshStash()
         }
     }
 
-    private func drop(_ rarity: Rarity) {
+    private func drop(_ gem: Gem) {
         isDropping = true
         Task {
             do {
-                let gem = GemCatalog.gem(of: rarity)
                 let placed = try await API.shared.dropGem(gemID: gem.id,
                                                           lat: coordinate.lat,
                                                           lng: coordinate.lng)
-                session.spend(rarity)
+                session.markDropped(gemID: gem.id)
                 onDropped(placed)
                 dismiss()
             } catch {

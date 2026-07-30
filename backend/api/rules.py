@@ -37,11 +37,6 @@ def streak_multiplier(days: int) -> float:
     return min(1.5, 1.0 + 0.1 * (max(0, days) // 7))
 
 
-# Gem wallet minting (earn-by-running): total lifetime run distance (from
-# Apple Health, client-reported for now) mints gems at these thresholds —
-# one gem per N km per tier. Users start at 0. Legendary is never mintable.
-MINT_THRESHOLD_KM = {"common": 2.0, "uncommon": 5.0, "rare": 15.0, "epic": 40.0}
-
 # Standalone drop capture: within 100 ft while walking/running past
 # (Swift mirror: CollectionRules.dropCollectRadiusM).
 DROP_COLLECT_RADIUS_M = 30.5
