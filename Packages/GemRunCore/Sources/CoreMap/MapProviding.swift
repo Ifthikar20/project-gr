@@ -310,6 +310,13 @@ public struct ExploreMapView: View {
             }
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+        // A real, always-on compass (top-trailing): shows which way is
+        // north, and tapping it after a two-finger rotation snaps the map
+        // back to north-up — native MapKit behavior, always tappable.
+        .mapControls {
+            MapCompass()
+                .mapControlVisibility(.visible)
+        }
     }
 }
 
@@ -602,6 +609,12 @@ public struct ActiveRunMapView: View {
                 }
             }
             .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            // Always-on compass: north indicator while running, and the
+            // native tap-to-reset after any two-finger rotation.
+            .mapControls {
+                MapCompass()
+                    .mapControlVisibility(.visible)
+            }
             .onChange(of: collectedDropIDs) { old, new in
                 let fresh = new.subtracting(old)
                 guard !fresh.isEmpty else { return }
@@ -665,7 +678,9 @@ public struct ActiveRunMapView: View {
                         .overlay(Circle().stroke(MapPalette.ink.opacity(0.15), lineWidth: 1))
                         .shadow(color: MapPalette.ink.opacity(0.2), radius: 4, y: 2)
                 }
-                .padding(.top, 60)
+                // Below the map's compass (top-trailing) so neither control
+                // covers the other.
+                .padding(.top, 112)
                 .padding(.trailing, 16)
                 .accessibilityLabel("Recenter on runner")
                 .transition(.scale.combined(with: .opacity))

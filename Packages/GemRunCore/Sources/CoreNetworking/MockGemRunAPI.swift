@@ -266,7 +266,6 @@ public actor MockGemRunAPI: GemRunAPI {
 
     private var standaloneDrops: [UUID: GemDrop] = [:]
     private var myDropIDs: Set<UUID> = []                  // never collect your own
-    private var seededStandalone = false
 
     /// Server mirror of grant_welcome_gift: a deterministic starter set
     /// (3 common, 2 uncommon, 1 rare) lands in the stash at first login,
@@ -284,7 +283,9 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func nearbyDrops(lat: Double, lng: Double, radiusM: Int) async throws -> [GemDrop] {
         await call("GET /v1/drops?lat=\(lat)&lng=\(lng)&radius_m=\(radiusM)")
-        seedStandaloneIfNeeded(around: Coordinate(lat: lat, lng: lng))
+        // No phantom seeding: real gem placement lives on the backend and
+        // is verified walkable. A fixed offset pattern here once produced
+        // "the same 3 gems, equally spaced, anywhere" — sometimes on water.
         return Array(standaloneDrops.values)
     }
 
@@ -342,22 +343,6 @@ public actor MockGemRunAPI: GemRunAPI {
 
     /// "Someone else loaded the app and left gems near you": three drops from
     /// other runners within a few hundred meters, waiting to be run to.
-    private func seedStandaloneIfNeeded(around center: Coordinate) {
-        guard !seededStandalone else { return }
-        seededStandalone = true
-        let placements: [(Rarity, Double, Double)] = [
-            (.common, 220, 140), (.uncommon, -310, 260), (.rare, 90, -420),
-        ]
-        for (rarity, dLatM, dLngM) in placements {
-            let position = Self.offset(center, dLatM: dLatM, dLngM: dLngM)
-            let drop = GemDrop(id: UUID(), gemID: GemCatalog.gem(of: rarity).id,
-                               rarity: rarity, lat: position.lat, lng: position.lng,
-                               positionAlongRouteM: 0, respawnRule: .oneTime,
-                               placedBy: .creator)
-            standaloneDrops[drop.id] = drop
-        }
-    }
-
     // MARK: - Internals
 
     private func claimRespawn(_ drop: GemDrop) -> Bool {
@@ -372,8 +357,4 @@ public actor MockGemRunAPI: GemRunAPI {
         return true
     }
 
-    private static func offset(_ c: Coordinate, dLatM: Double, dLngM: Double) -> Coordinate {
-        Coordinate(lat: c.lat + dLatM / 111_320,
-                   lng: c.lng + dLngM / (111_320 * cos(c.lat * .pi / 180)))
-    }
 }

@@ -643,42 +643,48 @@ public struct ExploreRootView: View {
     /// returned, horizontally scrollable. Header row folds the carousel so
     /// the map isn't covered when you just want to look at gems.
     private var routeCards: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(routes.count) route\(routes.count == 1 ? "" : "s") nearby")
-                    .font(.footnote.bold())
-                    .foregroundStyle(DS.Colors.ink)
-                Spacer()
-                Button {
-                    Task { await regenerateRecommendations(force: true) }
-                } label: {
-                    if isRecommending {
-                        ProgressView().scaleEffect(0.7).padding(.horizontal, 4)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.footnote.bold())
-                            .foregroundStyle(DS.Colors.ink)
-                            .padding(6)
+        VStack(alignment: .trailing, spacing: 8) {
+            // No header bar — just a tiny arrowhead to fold/unfold the
+            // carousel (plus a refresh dot while it's open).
+            HStack(spacing: 8) {
+                if !isRoutesCollapsed {
+                    Button {
+                        Task { await regenerateRecommendations(force: true) }
+                    } label: {
+                        Group {
+                            if isRecommending {
+                                ProgressView().scaleEffect(0.55)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(DS.Colors.ink)
+                            }
+                        }
+                        .frame(width: 30, height: 30)
+                        .background(DS.Colors.snowCard.opacity(0.95), in: Circle())
+                        .overlay(Circle().stroke(DS.Colors.hairline, lineWidth: 1))
+                        .shadow(color: DS.Colors.ink.opacity(0.12), radius: 4, y: 1)
                     }
+                    .disabled(isRecommending)
+                    .accessibilityLabel("Refresh recommendations")
+                    .transition(.opacity)
                 }
-                .disabled(isRecommending)
-                .accessibilityLabel("Refresh recommendations")
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isRoutesCollapsed.toggle()
                     }
                 } label: {
                     Image(systemName: isRoutesCollapsed ? "chevron.up" : "chevron.down")
-                        .font(.footnote.bold())
+                        .font(.caption.bold())
                         .foregroundStyle(DS.Colors.ink)
-                        .padding(6)
+                        .frame(width: 30, height: 30)
+                        .background(DS.Colors.snowCard.opacity(0.95), in: Circle())
+                        .overlay(Circle().stroke(DS.Colors.hairline, lineWidth: 1))
+                        .shadow(color: DS.Colors.ink.opacity(0.12), radius: 4, y: 1)
                 }
                 .accessibilityLabel(isRoutesCollapsed ? "Show routes" : "Hide routes")
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 6)
-            .background(DS.Colors.snow.opacity(0.92), in: Capsule())
-            .padding(.horizontal, 16)
+            .padding(.trailing, 16)
 
             if !isRoutesCollapsed {
                 ScrollView(.horizontal, showsIndicators: false) {
