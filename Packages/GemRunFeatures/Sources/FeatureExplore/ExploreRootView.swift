@@ -263,17 +263,10 @@ public struct ExploreRootView: View {
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
-                Button {
+                PulseButton("Open Settings", fullWidth: false) {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         openURL(url)
                     }
-                } label: {
-                    Text("Open Settings")
-                        .font(.headline.bold())
-                        .foregroundStyle(DS.Colors.snowCard)
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 14)
-                        .background(DS.Colors.pulse, in: Capsule())
                 }
                 .padding(.top, 6)
             } else if firstLoad == .failed {
@@ -286,15 +279,8 @@ public struct ExploreRootView: View {
                 Text("Check your connection and try again.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
-                Button {
+                PulseButton("Retry", fullWidth: false) {
                     Task { await loadNearby() }
-                } label: {
-                    Text("Retry")
-                        .font(.headline.bold())
-                        .foregroundStyle(DS.Colors.snowCard)
-                        .padding(.horizontal, 34)
-                        .padding(.vertical, 14)
-                        .background(DS.Colors.pulse, in: Capsule())
                 }
                 .padding(.top, 6)
             } else {
@@ -326,16 +312,8 @@ public struct ExploreRootView: View {
     /// with or without nearby drops, so a runner who just wants to log km
     /// isn't blocked by an empty map.
     private var startRunButton: some View {
-        Button {
+        PulseButton("Start Run", icon: "figure.run") {
             session.startFreeRun(drops: nearbyDrops)
-        } label: {
-            Label("Start Run", systemImage: "figure.run")
-                .font(.headline.bold())
-                .foregroundStyle(DS.Colors.snowCard)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(DS.Colors.pulse, in: Capsule())
-                .shadow(color: DS.Colors.ink.opacity(0.25), radius: 10, y: 4)
         }
         .padding(.horizontal, 16)
     }
@@ -343,35 +321,19 @@ public struct ExploreRootView: View {
     private var actionButtons: some View {
         VStack(spacing: 10) {
             // Destination mode: tap a spot to plan a run from here → there.
-            Button {
+            IconOrbButton(systemImage: "mappin.and.ellipse",
+                          isActive: isDestinationMode) {
                 if isDestinationMode {
                     exitDestinationMode()
                 } else {
                     isDropMode = false
                     isDestinationMode = true
                 }
-            } label: {
-                Image(systemName: "mappin.and.ellipse")
-                    .font(.title3.bold())
-                    .foregroundStyle(isDestinationMode ? DS.Colors.snowCard : DS.Colors.ink)
-                    .frame(width: 48, height: 48)
-                    .background(isDestinationMode ? DS.Colors.pulse : DS.Colors.snowCard,
-                                in: Circle())
-                    .overlay(Circle().stroke(
-                        isDestinationMode ? .clear : DS.Colors.hairline, lineWidth: 1))
-                    .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
             }
 
             if FeatureFlags.shared.isEnabled(.routeCreation) {
-                Button {
+                IconOrbButton(systemImage: "plus", size: 56, isActive: true) {
                     session.isCreatingRoute = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.title2.bold())
-                        .foregroundStyle(DS.Colors.snowCard)
-                        .frame(width: 56, height: 56)
-                        .background(DS.Colors.pulse, in: Circle())
-                        .shadow(color: DS.Colors.ink.opacity(0.2), radius: 8, y: 3)
                 }
             }
         }
@@ -467,18 +429,10 @@ public struct ExploreRootView: View {
     /// path from user location to the dropped pin.
     private var startDestinationButton: some View {
         let ready = destination != nil && destinationPath.count > 1 && !isPlanningPath
-        return Button {
+        return PulseButton(ready ? "Start Run" : (destination == nil ? "Drop a pin first" : "Planning…"),
+                           icon: "figure.run",
+                           isLoading: destination != nil && isPlanningPath) {
             startDestinationRun()
-        } label: {
-            Label(ready ? "Start Run" : (destination == nil ? "Drop a pin first" : "Planning…"),
-                  systemImage: "figure.run")
-                .font(.headline.bold())
-                .foregroundStyle(DS.Colors.snowCard)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(ready ? DS.Colors.pulse : DS.Colors.pulse.opacity(0.4),
-                            in: Capsule())
-                .shadow(color: DS.Colors.ink.opacity(0.25), radius: 10, y: 4)
         }
         .disabled(!ready)
         .padding(.horizontal, 16)

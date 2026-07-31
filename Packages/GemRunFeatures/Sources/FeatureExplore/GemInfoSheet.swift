@@ -71,32 +71,17 @@ struct GemInfoSheet: View {
             }
 
             if let onRunToGem {
-                Button {
+                // Tinted by THIS gem's tier — the button itself reads as the
+                // rarity you're about to chase.
+                RarityButton(isPlanning ? "Planning your path…" : "Walk or run to collect",
+                             rarity: drop.rarity, isLoading: isPlanning) {
                     guard !isPlanning else { return }
                     isPlanning = true
                     Task {
                         await onRunToGem()
                         isPlanning = false
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        if isPlanning {
-                            ProgressView()
-                                .tint(DS.Colors.snowCard)
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "figure.run")
-                                .font(.footnote.bold())
-                        }
-                        Text(isPlanning ? "Planning your path…" : "Walk or run to collect")
-                            .font(.footnote.bold())
-                    }
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-                    .background(DS.Colors.pulse, in: Capsule())
                 }
-                .disabled(isPlanning)
                 .padding(.top, 6)
             } else {
                 Text("Walk or run to it to collect")

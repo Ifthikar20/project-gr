@@ -77,16 +77,9 @@ public struct OnboardingView: View {
                 .foregroundStyle(DS.Colors.inkSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 36)
-            Button {
+            PulseButton("Enable location", fullWidth: false) {
                 CLLocationManager().requestWhenInUseAuthorization()
                 withAnimation { page += 1 }
-            } label: {
-                Text("Enable location")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .padding(.horizontal, 32)
-                    .frame(height: 50)
-                    .background(DS.Colors.pulse, in: Capsule())
             }
             Button("Not now") { withAnimation { page += 1 } }
                 .font(.footnote)
@@ -117,16 +110,11 @@ public struct OnboardingView: View {
             .frame(width: 260, height: 46)
             .clipShape(Capsule())
 
-            Button {
+            GhostButton("Continue with Google", icon: "g.circle.fill",
+                        fullWidth: false) {
                 continueWithGoogle()
-            } label: {
-                Label("Continue with Google", systemImage: "g.circle.fill")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.ink)
-                    .frame(width: 260, height: 46)
-                    .background(DS.Colors.snowCard, in: Capsule())
-                    .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
             }
+            .frame(width: 260)
 
             Button("Continue as guest") {
                 session.signIn(provider: .guest, handle: handle, externalID: nil)

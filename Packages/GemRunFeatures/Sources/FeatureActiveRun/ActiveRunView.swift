@@ -217,24 +217,13 @@ public struct ActiveRunView: View {
             }
 
             HStack(spacing: 16) {
-                Button {
+                IconOrbButton(systemImage: engine.phase == .paused ? "play.fill" : "pause.fill",
+                              size: 64) {
                     engine.togglePause()
-                } label: {
-                    Image(systemName: engine.phase == .paused ? "play.fill" : "pause.fill")
-                        .font(.title2)
-                        .frame(width: 64, height: 64)
-                        .background(DS.Colors.snowCard, in: Circle())
-                        .overlay(Circle().stroke(DS.Colors.hairline, lineWidth: 1))
-                        .foregroundStyle(DS.Colors.ink)
                 }
-                // Deliberate friction (docs/03): long-press to stop, tap ignored.
-                Text("Hold to stop")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 64)
-                    .background(DS.Colors.pulse, in: RoundedRectangle(cornerRadius: 32))
-                    .onLongPressGesture(minimumDuration: 1) { finish() }
+                // Deliberate friction (docs/03): hold to stop, tap ignored —
+                // now with a visible fill sweep and haptics for the hold.
+                HoldToConfirmButton("Hold to stop", duration: 1) { finish() }
             }
         }
         .padding(20)

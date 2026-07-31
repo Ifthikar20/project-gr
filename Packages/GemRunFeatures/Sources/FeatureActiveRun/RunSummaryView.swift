@@ -53,13 +53,9 @@ struct RunSummaryView: View {
                               preview: SharePreview("My GemRun on \(summary.routeName)",
                                                     image: shareImage)) {
                         Label("Share run card", systemImage: "square.and.arrow.up")
-                            .font(DS.Typography.heading)
-                            .foregroundStyle(DS.Colors.ink)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(DS.Colors.snowCard, in: Capsule())
-                            .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+                            .ghostCTALabel()
                     }
+                    .buttonStyle(PressableStyle())
                     .padding(.horizontal, 20)
                 }
 

@@ -199,12 +199,9 @@ struct RouteDetailView: View {
                 }
             } label: {
                 Text("Start Run")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .padding(.horizontal, 36)
-                    .frame(height: 50)
-                    .background(DS.Colors.pulse, in: Capsule())
+                    .pulseCTALabel(fullWidth: false)
             }
+            .buttonStyle(PressableStyle())
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
