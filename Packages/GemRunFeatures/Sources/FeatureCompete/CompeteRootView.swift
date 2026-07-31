@@ -23,31 +23,47 @@ public struct CompeteRootView: View {
     enum Board: String, CaseIterable {
         case myRoutes = "My Routes"
         case week = "This Week"
+        case calories = "Calories"
     }
 
     public init() {}
 
+    /// Boards the current entitlements allow (Feature flags, Settings ›
+    /// Features). "My Routes" is always on.
+    private var visibleBoards: [Board] {
+        Board.allCases.filter { b in
+            switch b {
+            case .myRoutes: true
+            case .week: FeatureFlags.shared.isEnabled(.friendsBoard)
+            case .calories: FeatureFlags.shared.isEnabled(.caloriesInsights)
+            }
+        }
+    }
+
     public var body: some View {
+        // A board switched off while selected falls back to My Routes.
+        let active = visibleBoards.contains(board) ? board : .myRoutes
         NavigationStack {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    ForEach(Board.allCases, id: \.self) { b in
-                        Chip(b.rawValue, selected: board == b) { board = b }
+                    ForEach(visibleBoards, id: \.self) { b in
+                        Chip(b.rawValue, selected: active == b) { board = b }
                     }
                     Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
-                switch board {
+                switch active {
                 case .myRoutes: myRoutesBoard
                 case .week: weekBoard
+                case .calories: CaloriesView()
                 }
             }
             .background(DS.Colors.snow)
             .navigationTitle("Compete")
             .toolbar {
-                if board == .week {
+                if active == .week {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             isSearchPresented = true
@@ -66,7 +82,7 @@ public struct CompeteRootView: View {
                     withAnimation { friendEntries = refreshed }
                 }
             }
-            .task(id: board) { await load() }
+            .task(id: active) { await load(active) }
         }
     }
 
@@ -274,12 +290,12 @@ public struct CompeteRootView: View {
         .padding(40)
     }
 
-    private func load() async {
+    private func load(_ active: Board) async {
         isLoading = true
         defer { isLoading = false }
         // A failed load renders as an empty board — indistinguishable from
         // "no runs/friends yet" without these log lines.
-        switch board {
+        switch active {
         case .myRoutes:
             serverRuns = await GemLog.attempt(GemLog.session, "load my runs", {
                 try await API.shared.myRuns()
@@ -288,6 +304,8 @@ public struct CompeteRootView: View {
             friendEntries = await GemLog.attempt(GemLog.session, "load friends board", {
                 try await API.shared.friends()
             }) ?? []
+        case .calories:
+            break   // fully on-device — nothing to fetch
         }
     }
 

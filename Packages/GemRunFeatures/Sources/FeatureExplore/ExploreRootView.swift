@@ -362,15 +362,17 @@ public struct ExploreRootView: View {
                     .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
             }
 
-            Button {
-                session.isCreatingRoute = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.title2.bold())
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .frame(width: 56, height: 56)
-                    .background(DS.Colors.pulse, in: Circle())
-                    .shadow(color: DS.Colors.ink.opacity(0.2), radius: 8, y: 3)
+            if FeatureFlags.shared.isEnabled(.routeCreation) {
+                Button {
+                    session.isCreatingRoute = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.bold())
+                        .foregroundStyle(DS.Colors.snowCard)
+                        .frame(width: 56, height: 56)
+                        .background(DS.Colors.pulse, in: Circle())
+                        .shadow(color: DS.Colors.ink.opacity(0.2), radius: 8, y: 3)
+                }
             }
         }
         .padding(.trailing, 20)
@@ -516,6 +518,7 @@ public struct ExploreRootView: View {
     /// spot passes, we open the DropGemSheet; otherwise we surface the reason
     /// in the drop-mode banner without opening the sheet.
     private func validateAndOpenDrop(_ c: Coordinate) async {
+        guard FeatureFlags.shared.isEnabled(.gemGifting) else { return }
         isValidatingDrop = true
         dropError = nil
         defer { isValidatingDrop = false }
@@ -876,6 +879,10 @@ public struct ExploreRootView: View {
     /// live location, visiting different combinations of nearby gems. Debounced
     /// to moves > 100 m; `force=true` skips the debounce (refresh button).
     private func regenerateRecommendations(force: Bool) async {
+        guard FeatureFlags.shared.isEnabled(.suggestedRoutes) else {
+            if !recommendedRoutes.isEmpty { withAnimation { recommendedRoutes = [] } }
+            return
+        }
         guard !isRecommending, let here = live.coordinate else { return }
         if !force, let last = lastRecommendCenter,
            RouteGeometry.planarDistance(from: last, to: here) < 100 {

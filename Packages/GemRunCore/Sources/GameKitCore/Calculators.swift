@@ -58,3 +58,39 @@ public enum PlacementBudget {
         }
     }
 }
+
+/// Energy + step estimates from distance alone (no body-weight profile yet;
+/// docs/03's run card assumed the same model inline — this is now the single
+/// source both the card and Compete › Calories use).
+public enum CalorieRules {
+    /// ~MET-derived kcal per kg per km at recreational paces.
+    public static let runKcalPerKgKm = 1.03
+    public static let walkKcalPerKgKm = 0.53
+    /// Until a body-weight profile exists, everyone burns like 70 kg.
+    public static let assumedBodyKg = 70.0
+    /// Typical step yield when no recorded count survives for a run.
+    public static let runStepsPerKm = 1_050.0
+    public static let walkStepsPerKm = 1_300.0
+
+    public static func kcal(distanceM: Int, isWalk: Bool) -> Int {
+        let km = Double(distanceM) / 1_000
+        return Int((km * assumedBodyKg * (isWalk ? walkKcalPerKgKm : runKcalPerKgKm)).rounded())
+    }
+
+    /// Burn rate in kcal/hour for a finished effort.
+    public static func kcalPerHour(kcal: Int, durationS: Int) -> Int {
+        durationS > 0 ? Int((Double(kcal) * 3_600 / Double(durationS)).rounded()) : 0
+    }
+
+    /// Distance-based step estimate for history rows that predate any
+    /// recorded step count.
+    public static func estimatedSteps(distanceM: Int, isWalk: Bool) -> Int {
+        let km = Double(distanceM) / 1_000
+        return Int((km * (isWalk ? walkStepsPerKm : runStepsPerKm)).rounded())
+    }
+
+    /// Cadence in steps per minute.
+    public static func cadence(steps: Int, durationS: Int) -> Int {
+        durationS > 0 ? Int((Double(steps) * 60 / Double(durationS)).rounded()) : 0
+    }
+}

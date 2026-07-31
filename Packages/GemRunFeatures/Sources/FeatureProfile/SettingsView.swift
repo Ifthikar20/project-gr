@@ -44,6 +44,7 @@ struct SettingsView: View {
         List {
             accountSection
             permissionsSection
+            featuresSection
             dataSection
             legalSection
             aboutSection
@@ -247,6 +248,36 @@ struct SettingsView: View {
     }
 
     // MARK: - Data
+
+    /// Feature entitlements: every switchable surface, on-device toggles
+    /// (FeatureFlags). The gated UI disappears in place — no restart needed.
+    private var featuresSection: some View {
+        Section {
+            ForEach(Feature.allCases) { feature in
+                Toggle(isOn: Binding(
+                    get: { FeatureFlags.shared.isEnabled(feature) },
+                    set: { FeatureFlags.shared.set(feature, enabled: $0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(feature.title)
+                            .foregroundStyle(DS.Colors.ink)
+                        Text(feature.detail)
+                            .font(.caption)
+                            .foregroundStyle(DS.Colors.inkSecondary)
+                    }
+                }
+                .tint(DS.Colors.pulse)
+                .listRowBackground(DS.Colors.snowCard)
+            }
+        } header: {
+            Text("Features")
+        } footer: {
+            Text("Switch any part of GemRun off — it disappears everywhere "
+                 + "in the app until you switch it back on.")
+                .font(.caption)
+                .foregroundStyle(DS.Colors.inkSecondary)
+        }
+    }
 
     private var dataSection: some View {
         Section("Your data") {

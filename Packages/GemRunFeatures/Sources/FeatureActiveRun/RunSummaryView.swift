@@ -48,7 +48,7 @@ struct RunSummaryView: View {
 
                 splitsCard
 
-                if let shareImage {
+                if let shareImage, FeatureFlags.shared.isEnabled(.shareCard) {
                     ShareLink(item: shareImage,
                               preview: SharePreview("My GemRun on \(summary.routeName)",
                                                     image: shareImage)) {
