@@ -32,8 +32,17 @@ public actor MockGemRunAPI: GemRunAPI {
     }
 
     private func call(_ line: String) async {
-        print("[MockAPI] \(line)")
+        GemLog.api.debug("[mock] \(line, privacy: .public)")
         try? await Task.sleep(nanoseconds: AppConfig.mockLatencyMs * 1_000_000)
+    }
+
+    /// The mock fails the way Django fails — typed HTTPError with the same
+    /// title/code/status — so feature code that branches on `code` behaves
+    /// identically in mock mode (bare URLErrors made those catches dead).
+    private func reject(_ status: Int, _ title: String,
+                        code: String? = nil) -> HTTPGemRunAPI.HTTPError {
+        HTTPGemRunAPI.HTTPError(title: title, detail: nil, code: code,
+                                status: status)
     }
 
     // MARK: - Auth & user
@@ -85,7 +94,9 @@ public actor MockGemRunAPI: GemRunAPI {
 
     public func route(id: UUID) async throws -> Route {
         await call("GET /v1/routes/\(id.uuidString.prefix(8))")
-        guard let route = routes[id] else { throw URLError(.fileDoesNotExist) }
+        guard let route = routes[id] else {
+            throw reject(404, "Route not found")
+        }
         return route
     }
 
@@ -96,7 +107,7 @@ public actor MockGemRunAPI: GemRunAPI {
         guard route.gemDrops.count <= PlacementBudget.slots(forDistanceM: route.distanceM),
               points <= PlacementBudget.points(forDistanceM: route.distanceM),
               !route.gemDrops.contains(where: { $0.rarity == .legendary }) else {
-            throw URLError(.cannotParseResponse)
+            throw reject(422, "Gem placement rejected", code: "placement")
         }
         var published = route
         published.status = .published
@@ -123,7 +134,9 @@ public actor MockGemRunAPI: GemRunAPI {
 
         // Idempotency (docs/06): same key → same verdict, no double awards.
         if let existing = verdicts[request.idempotencyKey] { return existing }
-        guard let route = routes[routeID] else { throw URLError(.fileDoesNotExist) }
+        guard let route = routes[routeID] else {
+            throw reject(404, "Route not found")
+        }
 
         // Authoritative re-validation: replay the full track (docs/04).
         let geometry = RouteGeometry(polyline: route.polyline)
@@ -307,7 +320,7 @@ public actor MockGemRunAPI: GemRunAPI {
               let index = stashItems.firstIndex(where: {
                   $0.gemID == gemID && !($0.dropped ?? false)
               }) else {
-            throw URLError(.cannotParseResponse)
+            throw reject(422, "That gem isn't in your stash", code: "not_in_stash")
         }
         let spent = stashItems[index]
         stashItems[index] = StashItem(id: spent.id, gemID: spent.gemID,

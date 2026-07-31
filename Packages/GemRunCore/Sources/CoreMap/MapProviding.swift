@@ -857,16 +857,16 @@ public enum PathSnapper {
             let response = try await MKDirections(request: request).calculate()
             let ms = Int(Date().timeIntervalSince(started) * 1_000)
             guard let poly = response.routes.first?.polyline else {
-                print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): no route in \(ms) ms")
+                GemLog.map.debug("MKDirections walk (\(a.lat, privacy: .private), \(a.lng, privacy: .private)) -> (\(b.lat, privacy: .private), \(b.lng, privacy: .private)): no route in \(ms) ms")
                 return ([a, b], false)
             }
             var coords = [CLLocationCoordinate2D](repeating: .init(), count: poly.pointCount)
             poly.getCoordinates(&coords, range: NSRange(location: 0, length: poly.pointCount))
-            print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): \(poly.pointCount) pts in \(ms) ms")
+            GemLog.map.debug("MKDirections walk (\(a.lat, privacy: .private), \(a.lng, privacy: .private)) -> (\(b.lat, privacy: .private), \(b.lng, privacy: .private)): \(poly.pointCount) pts in \(ms) ms")
             return (coords.map { Coordinate(lat: $0.latitude, lng: $0.longitude) }, true)
         } catch {
             let ms = Int(Date().timeIntervalSince(started) * 1_000)
-            print("[Vendor] MKDirections walk (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)) FAILED after \(ms) ms: \(error.localizedDescription)")
+            GemLog.map.error("MKDirections walk FAILED after \(ms) ms: \(error.localizedDescription, privacy: .public)")
             return ([a, b], false)
         }
     }
@@ -884,11 +884,14 @@ public enum PathSnapper {
         request.transportType = .walking
         request.requestsAlternateRoutes = true
         let started = Date()
-        guard let response = try? await MKDirections(request: request).calculate() else {
-            print("[Vendor] MKDirections alternates (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)) FAILED after \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+        let response: MKDirections.Response
+        do {
+            response = try await MKDirections(request: request).calculate()
+        } catch {
+            GemLog.map.error("MKDirections alternates FAILED after \(Int(Date().timeIntervalSince(started) * 1_000)) ms: \(error.localizedDescription, privacy: .public)")
             return []
         }
-        print("[Vendor] MKDirections alternates (\(a.lat), \(a.lng)) → (\(b.lat), \(b.lng)): \(response.routes.count) route(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+        GemLog.map.debug("MKDirections alternates (\(a.lat, privacy: .private), \(a.lng, privacy: .private)) -> (\(b.lat, privacy: .private), \(b.lng, privacy: .private)): \(response.routes.count) route(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         var options: [[Coordinate]] = []
         for route in response.routes {
             let poly = route.polyline

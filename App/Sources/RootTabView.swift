@@ -1,4 +1,5 @@
 import CoreLocationKit
+import CoreModels
 import CorePersistence
 import DesignSystem
 import FeatureActiveRun
@@ -94,8 +95,19 @@ struct RootView: View {
         guard let pending = recoverable else { return }
         recoverable = nil
         let routeID = pending.routeID
-        guard let stored = try? context.fetch(FetchDescriptor<StoredRoute>(
-            predicate: #Predicate { $0.id == routeID })).first else {
+        let fetched: [StoredRoute]
+        do {
+            fetched = try context.fetch(FetchDescriptor<StoredRoute>(
+                predicate: #Predicate { $0.id == routeID }))
+        } catch {
+            // A transient fetch error is NOT "route not cached". Keep the
+            // buffer so recovery can be offered again — this branch used to
+            // delete the user's crash-recovered run.
+            GemLog.persist.error("resume fetch failed for route \(routeID.uuidString, privacy: .public): \(String(describing: error), privacy: .public)")
+            return
+        }
+        guard let stored = fetched.first else {
+            GemLog.persist.warning("resume: route \(routeID.uuidString, privacy: .public) not in cache — clearing stale buffer")
             RunBuffer.clear()
             return
         }

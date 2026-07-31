@@ -29,6 +29,7 @@ struct SettingsView: View {
     @State private var confirmingErase = false
     @State private var confirmingDelete = false
     @State private var isDeleting = false
+    @State private var deleteError: String?
     @State private var legalDoc: LegalDoc?
     // In-app Health switches (HealthPrefs) — mirrored into @State so the
     // toggles animate; every change writes straight back.
@@ -336,6 +337,12 @@ struct SettingsView: View {
                     Task { await deleteAccount() }
                 }
             }
+            if let deleteError {
+                Text(deleteError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .listRowBackground(DS.Colors.snowCard)
+            }
         } footer: {
             Text("Erase clears this phone only. Delete removes your account "
                  + "and history from our server, permanently.")
@@ -357,7 +364,9 @@ struct SettingsView: View {
         checkTask = Task {
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
-            let available = try? await API.shared.checkHandle(handle)
+            let available = await GemLog.attempt(GemLog.session, "handle availability check", {
+                try await API.shared.checkHandle(handle)
+            })
             guard !Task.isCancelled,
                   handle == newHandle.trimmingCharacters(in: .whitespaces)
             else { return }
@@ -377,7 +386,9 @@ struct SettingsView: View {
             do {
                 let updated = try await API.shared.updateMe(handle: handle)
                 session.profile?.handle = updated.handle
-                try? context.save()
+                GemLog.attempt(GemLog.persist, "save renamed handle") {
+                    try context.save()
+                }
                 newHandle = ""
                 handleStatus = .idle
             } catch let error as HTTPGemRunAPI.HTTPError
@@ -385,6 +396,7 @@ struct SettingsView: View {
                 // Someone grabbed it between the live check and Save.
                 handleStatus = .taken
             } catch {
+                GemLog.session.error("handle save failed: \(String(describing: error), privacy: .public)")
                 handleStatus = .failed
             }
             isSavingHandle = false
@@ -392,9 +404,17 @@ struct SettingsView: View {
     }
 
     private func eraseLocal() {
-        try? context.delete(model: StoredRun.self)
-        try? context.delete(model: StoredStashItem.self)
-        try? context.delete(model: StoredRoute.self)
+        // "Erase all local data" silently no-oping is worse than failing —
+        // log each step so a stuck row is diagnosable.
+        GemLog.attempt(GemLog.persist, "erase StoredRun rows") {
+            try context.delete(model: StoredRun.self)
+        }
+        GemLog.attempt(GemLog.persist, "erase StoredStashItem rows") {
+            try context.delete(model: StoredStashItem.self)
+        }
+        GemLog.attempt(GemLog.persist, "erase StoredRoute rows") {
+            try context.delete(model: StoredRoute.self)
+        }
         if let profile = session.profile {
             profile.xp = 0
             profile.level = 1
@@ -402,15 +422,24 @@ struct SettingsView: View {
             profile.streakShields = 0
             profile.streakLastDate = nil
         }
-        try? context.save()
+        GemLog.attempt(GemLog.persist, "save local erase") { try context.save() }
     }
 
     private func deleteAccount() async {
         isDeleting = true
         defer { isDeleting = false }
+        deleteError = nil
         // Server first (App Store 5.1.1(v): in-app deletion must really
-        // delete). Then wipe the phone and return to onboarding.
-        try? await API.shared.deleteAccount()
+        // delete). If the server call fails, STOP — wiping the phone and
+        // signing out anyway showed a "deleted" outcome while the account
+        // lived on, silently.
+        do {
+            try await API.shared.deleteAccount()
+        } catch {
+            GemLog.session.error("account deletion failed: \(String(describing: error), privacy: .public)")
+            deleteError = "Couldn't delete your account — check your connection and try again."
+            return
+        }
         eraseLocal()
         session.signOut()
     }

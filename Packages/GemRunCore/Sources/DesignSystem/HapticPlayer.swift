@@ -32,6 +32,9 @@ public final class HapticPlayer {
             let pattern = try CHHapticPattern(events: events, parameters: [])
             try engine.makePlayer(with: pattern).start(atTime: 0)
         } catch {
+            // By-design degradation to the UIKit generator — debug-level so
+            // an engineless simulator doesn't read as an error stream.
+            GemLog.run.debug("haptic pattern failed, using fallback: \(String(describing: error), privacy: .public)")
             fallback(pulses)
         }
     }

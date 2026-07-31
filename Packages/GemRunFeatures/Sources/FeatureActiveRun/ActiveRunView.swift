@@ -281,7 +281,7 @@ public struct ActiveRunView: View {
             identifier: "gem-collect-\(event.drop.id.uuidString)",
             content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
-        print("[Vendor] Local notification posted for pocketed collection (\(name))")
+        GemLog.run.debug("local notification posted for pocketed collection (\(name, privacy: .public))")
     }
 
     private func finish() {
@@ -329,8 +329,8 @@ public struct ActiveRunView: View {
         guard batteryAtStart > 0, now > 0, durationS > 60 else { return }
         let perHour = Double(batteryAtStart - now) * 100 * 3_600 / Double(durationS)
         // The docs/04 gate is < 8%/hour — tracked per TestFlight build.
-        print(String(format: "[Battery] %.1f%%/hour over %d min",
-                     perHour, durationS / 60))
+        // .info (not .debug) so it survives into sysdiagnose from testers.
+        GemLog.run.info("battery drain \(String(format: "%.1f", perHour), privacy: .public)%/hour over \(durationS / 60) min")
     }
 }
 

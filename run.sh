@@ -41,12 +41,15 @@ start_backend() {
     pip install -q -r requirements.txt
 
     # Verbose startup: show exactly what this backend will run with.
+    # Export the log level so the banner matches what Django actually
+    # receives (it used to print a default the server never saw).
+    export GEMRUN_LOG_LEVEL="${GEMRUN_LOG_LEVEL:-INFO}"
     echo "-- Python:  $(python --version 2>&1)  (venv: backend/.venv)"
     echo "-- Git:     $(git log --oneline -1 2>/dev/null || echo 'unknown')"
     echo "-- Config:  WALKABILITY_MODE=${WALKABILITY_MODE:-overpass}" \
          "PRESENCE_DROP_MIN_RUNS=${PRESENCE_DROP_MIN_RUNS:-0}" \
          "SEED_DEMO=${SEED_DEMO:-1}" \
-         "GEMRUN_LOG_LEVEL=${GEMRUN_LOG_LEVEL:-INFO}"
+         "GEMRUN_LOG_LEVEL=${GEMRUN_LOG_LEVEL}"
     python - <<'PYEOF'
 import ssl, urllib.request
 try:

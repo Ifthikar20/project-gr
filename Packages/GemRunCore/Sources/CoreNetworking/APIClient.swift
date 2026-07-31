@@ -208,20 +208,39 @@ public final class HTTPGemRunAPI: GemRunAPI {
 
     private struct Empty: Codable {}
 
-    public struct HTTPError: Error, Decodable {
+    public struct HTTPError: Error, Decodable, LocalizedError {
         public let title: String
         public let detail: String?
         public let code: String?
+        /// HTTP status — not part of the problem+json body; filled at the
+        /// throw site so feature code can branch on 401 vs 409 vs 500
+        /// instead of string-matching. -1 when transport never happened.
+        public var status: Int = -1
+
+        private enum CodingKeys: String, CodingKey { case title, detail, code }
+
+        public var errorDescription: String? {
+            detail.map { "\(title) — \($0)" } ?? title
+        }
     }
 
     private func get<T: Decodable>(_ path: String,
                                    query: [String: String] = [:]) async throws -> T {
-        var components = URLComponents(url: baseURL.appending(path: "v1/\(path)"),
-                                       resolvingAgainstBaseURL: false)!
+        // User-typed input (handle checks, player search) reaches this URL
+        // build — a force-unwrap here was a keystroke-triggered crash.
+        guard var components = URLComponents(url: baseURL.appending(path: "v1/\(path)"),
+                                             resolvingAgainstBaseURL: false) else {
+            GemLog.api.error("GET /v1/\(path, privacy: .public): base URL rejected by URLComponents")
+            throw URLError(.badURL)
+        }
         if !query.isEmpty {
             components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
-        var request = URLRequest(url: components.url!)
+        guard let url = components.url else {
+            GemLog.api.error("GET /v1/\(path, privacy: .public): could not compose request URL")
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
         authorize(&request)
         let (data, response) = try await session.data(for: request)
         return try decode(data, response, context: "GET /v1/\(path)")
@@ -244,28 +263,30 @@ public final class HTTPGemRunAPI: GemRunAPI {
         }
     }
 
-    /// Decode with verbose logging: every call logs its outcome to the
-    /// console, and failures log the FULL error — a keyNotFound decode
-    /// mismatch silently emptied the map once; never again.
+    /// Decode with verbose logging: every call logs its outcome, and
+    /// failures log the FULL error — a keyNotFound decode mismatch silently
+    /// emptied the map once; never again. Failures are `.error` (persisted
+    /// on device); success chatter is `.debug` (live-capture only).
     private func decode<T: Decodable>(_ data: Data, _ response: URLResponse,
                                       context: String) throws -> T {
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let error = (try? decoder.decode(HTTPError.self, from: data))
+            var error = (try? decoder.decode(HTTPError.self, from: data))
                 ?? HTTPError(title: "HTTP \(http.statusCode)", detail: nil, code: nil)
-            print("[API] \(context) → \(http.statusCode) ERROR: \(error.title)"
-                  + (error.detail.map { " — \($0)" } ?? ""))
+            error.status = http.statusCode
+            let detailSuffix = error.detail.map { " — \($0)" } ?? ""
+            GemLog.api.error("\(context, privacy: .public) -> \(http.statusCode) ERROR: \(error.title, privacy: .public)\(detailSuffix, privacy: .public)")
             throw error
         }
         if data.isEmpty, let empty = Empty() as? T {
-            print("[API] \(context) → OK (empty)")
+            GemLog.api.debug("\(context, privacy: .public) -> OK (empty)")
             return empty
         }
         do {
             let value = try decoder.decode(T.self, from: data)
-            print("[API] \(context) → OK (\(data.count) bytes)")
+            GemLog.api.debug("\(context, privacy: .public) -> OK (\(data.count) bytes)")
             return value
         } catch {
-            print("[API] \(context) → DECODE FAILED: \(error)")
+            GemLog.api.error("\(context, privacy: .public) -> DECODE FAILED: \(String(describing: error), privacy: .public)")
             throw error
         }
     }

@@ -13,13 +13,15 @@ enum HealthKitWriter {
     /// a run, since the motion coprocessor flushes step samples in batches.
     static func steps(from start: Date, to end: Date) async -> Int {
         guard HealthPrefs.readSteps else {
-            print("[Vendor] HealthKit steps read skipped — in-app switch off")
+            GemLog.health.debug("steps read skipped — in-app switch off")
             return 0
         }
         guard HKHealthStore.isHealthDataAvailable() else { return 0 }
         let store = HKHealthStore()
         let type = HKQuantityType(.stepCount)
-        _ = try? await store.requestAuthorization(toShare: [], read: [type])
+        await GemLog.attempt(GemLog.health, "steps read authorization") {
+            try await store.requestAuthorization(toShare: [], read: [type])
+        }
         let queried = Date()
         return await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
@@ -32,9 +34,9 @@ enum HealthKitWriter {
                 if let error, count == 0 {
                     // 0 + error usually = read authorization not granted
                     // (Apple reports denied reads as "no data" by design).
-                    print("[Vendor] HealthKit steps query → 0 in \(ms) ms (\(error.localizedDescription))")
+                    GemLog.health.error("steps query -> 0 in \(ms) ms: \(error.localizedDescription, privacy: .public)")
                 } else {
-                    print("[Vendor] HealthKit steps query → \(Int(count)) in \(ms) ms")
+                    GemLog.health.debug("steps query -> \(Int(count)) in \(ms) ms")
                 }
                 continuation.resume(returning: Int(count))
             }
@@ -44,7 +46,7 @@ enum HealthKitWriter {
 
     static func save(_ summary: RunCompletionSummary) async {
         guard HealthPrefs.saveWorkouts else {
-            print("[Vendor] HealthKit workout save skipped — in-app switch off")
+            GemLog.health.debug("workout save skipped — in-app switch off")
             return
         }
         guard HKHealthStore.isHealthDataAvailable(),
@@ -69,12 +71,12 @@ enum HealthKitWriter {
             try await builder.addSamples([distance])
             try await builder.endCollection(at: end)
             _ = try await builder.finishWorkout()
-            print("[Vendor] HealthKit workout saved (\(summary.isWalk ? "walk" : "run"), \(summary.distanceM) m, \(summary.durationS) s)")
+            GemLog.health.debug("workout saved (\(summary.isWalk ? "walk" : "run", privacy: .public), \(summary.distanceM) m, \(summary.durationS) s)")
         } catch {
             // Authorization declined or entitlement absent — non-fatal by
             // design, but never silent: this is the line that explains a
             // run missing from the Health app.
-            print("[Vendor] HealthKit workout save FAILED: \(error.localizedDescription)")
+            GemLog.health.error("workout save FAILED: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

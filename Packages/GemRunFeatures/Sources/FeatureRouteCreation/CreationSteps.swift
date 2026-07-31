@@ -244,10 +244,18 @@ struct PublishStepView: View {
             do {
                 let published = try await API.shared.publishRoute(route)
                 context.insert(StoredRoute(route: published))
-                try? context.save()
+                GemLog.attempt(GemLog.persist, "save published route") {
+                    try context.save()
+                }
                 onDone()
             } catch {
-                publishError = "Publish failed — check your gem placement and try again."
+                GemLog.session.error("route publish failed: \(String(describing: error), privacy: .public)")
+                // Use the server's actual reason when it sent one — the old
+                // copy guessed "check your gem placement", which was wrong
+                // for a timeout or a 500.
+                let http = error as? HTTPGemRunAPI.HTTPError
+                publishError = http?.errorDescription
+                    ?? "Publish failed — check your connection and try again."
             }
             isPublishing = false
         }

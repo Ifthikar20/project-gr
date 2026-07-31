@@ -135,7 +135,16 @@ final class CreationModel {
             return
         }
         planError = nil
-        let placemarks = try? await CLGeocoder().geocodeAddressString(query)
+        let placemarks: [CLPlacemark]?
+        do {
+            placemarks = try await CLGeocoder().geocodeAddressString(query)
+        } catch {
+            // Distinguish "no such address" from "geocoder unreachable" —
+            // the same UI copy hid two different problems.
+            GemLog.map.error("geocode failed: \(String(describing: error), privacy: .public)")
+            planError = "Couldn't look up that address — check your connection."
+            return
+        }
         guard let location = placemarks?.first?.location else {
             planError = "Couldn't find that address."
             return

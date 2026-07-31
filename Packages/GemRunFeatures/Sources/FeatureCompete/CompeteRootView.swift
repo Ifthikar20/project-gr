@@ -249,7 +249,13 @@ public struct CompeteRootView: View {
 
     private func remove(_ entry: FriendEntry) {
         withAnimation { friendEntries.removeAll { $0.id == entry.id } }
-        Task { try? await API.shared.removeFriend(profileID: entry.id) }
+        Task {
+            // The row is optimistically gone from the UI — a failed unfollow
+            // (friend reappears on next load) was untraceable without this.
+            await GemLog.attempt(GemLog.session, "unfollow \(entry.handle)", {
+                try await API.shared.removeFriend(profileID: entry.id)
+            })
+        }
     }
 
     // MARK: - Shared
@@ -271,11 +277,17 @@ public struct CompeteRootView: View {
     private func load() async {
         isLoading = true
         defer { isLoading = false }
+        // A failed load renders as an empty board — indistinguishable from
+        // "no runs/friends yet" without these log lines.
         switch board {
         case .myRoutes:
-            serverRuns = (try? await API.shared.myRuns()) ?? []
+            serverRuns = await GemLog.attempt(GemLog.session, "load my runs", {
+                try await API.shared.myRuns()
+            }) ?? []
         case .week:
-            friendEntries = (try? await API.shared.friends()) ?? []
+            friendEntries = await GemLog.attempt(GemLog.session, "load friends board", {
+                try await API.shared.friends()
+            }) ?? []
         }
     }
 
@@ -398,13 +410,19 @@ struct PlayerSearchSheet: View {
         }
         isSearching = true
         defer { isSearching = false }
-        results = (try? await API.shared.searchPlayers(query: text)) ?? []
+        results = await GemLog.attempt(GemLog.session, "player search", {
+            try await API.shared.searchPlayers(query: text)
+        }) ?? []
     }
 
     private func add(_ player: PlayerSummary) {
         addedIDs.insert(player.id)
         Task {
-            if let refreshed = try? await API.shared.addFriend(profileID: player.id) {
+            // The button already flipped to "Added" — a failed follow needs
+            // at least a trace, since the UI can't take it back here.
+            if let refreshed = await GemLog.attempt(GemLog.session, "follow \(player.handle)", {
+                try await API.shared.addFriend(profileID: player.id)
+            }) {
                 onBoardRefreshed(refreshed)
             }
         }

@@ -1,4 +1,5 @@
 import CoreLocationKit
+import CoreModels
 import CorePersistence
 import SwiftData
 import SwiftUI
@@ -12,11 +13,23 @@ struct GemRunApp: App {
     private let container: ModelContainer
 
     init() {
+        let schema = Schema([StoredRoute.self, StoredRun.self,
+                             StoredStashItem.self, StoredProfile.self])
         do {
-            container = try ModelContainer(
-                for: StoredRoute.self, StoredRun.self, StoredStashItem.self, StoredProfile.self)
+            container = try ModelContainer(for: schema)
         } catch {
-            fatalError("Failed to create SwiftData container: \(error)")
+            // A failed migration / corrupt store used to be an unconditional
+            // launch crash for every installed user. Fall back to an
+            // in-memory store instead: the app opens, server data re-syncs,
+            // and the fault is on record for diagnosis.
+            GemLog.persist.fault("SwiftData container failed — falling back to in-memory store: \(String(describing: error), privacy: .public)")
+            do {
+                container = try ModelContainer(
+                    for: schema,
+                    configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+            } catch {
+                fatalError("Failed to create even an in-memory SwiftData container: \(error)")
+            }
         }
     }
 

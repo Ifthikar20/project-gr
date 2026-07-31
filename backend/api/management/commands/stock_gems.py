@@ -24,8 +24,17 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         lat, lng, radius = opts["lat"], opts["lng"], opts["radius"]
         # Stocking follows the per-mile contract; --radius only widens the
-        # inventory report below.
-        created = system_drops.top_up_area(lat, lng)
+        # inventory report below. Startup stocking is best-effort: run.sh
+        # runs this under `set -e` before runserver, so an exception here
+        # (a half-answer from Overpass, a placement bug) must degrade to a
+        # warning — presence triggers restock on the first map open anyway.
+        try:
+            created = system_drops.top_up_area(lat, lng)
+        except Exception as exc:
+            self.stdout.write(self.style.WARNING(
+                f"Stocking failed ({exc!r}) — continuing; the presence "
+                "trigger will retry on the first map open."))
+            created = 0
 
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))

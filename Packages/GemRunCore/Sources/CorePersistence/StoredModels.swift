@@ -33,13 +33,24 @@ public final class StoredRoute {
         self.statusRaw = route.status.rawValue
         self.creatorHandle = route.creatorHandle
         self.runCount = route.runCount
-        self.gemDropsData = (try? JSONEncoder().encode(route.gemDrops)) ?? Data()
-        self.elevationProfileData = route.elevationProfile.flatMap { try? JSONEncoder().encode($0) }
+        // A silent encode failure here is the "cached route has no gems"
+        // failure mode — log it at the moment it happens, not when the
+        // empty map is discovered later.
+        self.gemDropsData = GemLog.attempt(GemLog.persist, "encode cached route gems", {
+            try JSONEncoder().encode(route.gemDrops)
+        }) ?? Data()
+        self.elevationProfileData = route.elevationProfile.flatMap { profile in
+            GemLog.attempt(GemLog.persist, "encode elevation profile") {
+                try JSONEncoder().encode(profile)
+            }
+        }
         self.createdAt = Date()
     }
 
     public var gemDrops: [GemDrop] {
-        (try? JSONDecoder().decode([GemDrop].self, from: gemDropsData)) ?? []
+        GemLog.attempt(GemLog.persist, "decode cached route gems", {
+            try JSONDecoder().decode([GemDrop].self, from: gemDropsData)
+        }) ?? []
     }
 
     public func toRoute() -> Route {
@@ -48,8 +59,10 @@ public final class StoredRoute {
               difficulty: RouteDifficulty(rawValue: difficultyRaw) ?? .moderate,
               status: RouteStatus(rawValue: statusRaw) ?? .published,
               creatorHandle: creatorHandle, runCount: runCount, gemDrops: gemDrops,
-              elevationProfile: elevationProfileData.flatMap {
-                  try? JSONDecoder().decode([Int].self, from: $0)
+              elevationProfile: elevationProfileData.flatMap { data in
+                  GemLog.attempt(GemLog.persist, "decode elevation profile") {
+                      try JSONDecoder().decode([Int].self, from: data)
+                  }
               })
     }
 }
