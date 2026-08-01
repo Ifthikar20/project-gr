@@ -263,17 +263,10 @@ public struct ExploreRootView: View {
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
-                Button {
+                PulseButton("Open Settings", fullWidth: false) {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         openURL(url)
                     }
-                } label: {
-                    Text("Open Settings")
-                        .font(.headline.bold())
-                        .foregroundStyle(DS.Colors.snowCard)
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 14)
-                        .background(DS.Colors.pulse, in: Capsule())
                 }
                 .padding(.top, 6)
             } else if firstLoad == .failed {
@@ -286,15 +279,8 @@ public struct ExploreRootView: View {
                 Text("Check your connection and try again.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
-                Button {
+                PulseButton("Retry", fullWidth: false) {
                     Task { await loadNearby() }
-                } label: {
-                    Text("Retry")
-                        .font(.headline.bold())
-                        .foregroundStyle(DS.Colors.snowCard)
-                        .padding(.horizontal, 34)
-                        .padding(.vertical, 14)
-                        .background(DS.Colors.pulse, in: Capsule())
                 }
                 .padding(.top, 6)
             } else {
@@ -326,16 +312,8 @@ public struct ExploreRootView: View {
     /// with or without nearby drops, so a runner who just wants to log km
     /// isn't blocked by an empty map.
     private var startRunButton: some View {
-        Button {
+        PulseButton("Start Run", icon: "figure.run") {
             session.startFreeRun(drops: nearbyDrops)
-        } label: {
-            Label("Start Run", systemImage: "figure.run")
-                .font(.headline.bold())
-                .foregroundStyle(DS.Colors.snowCard)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(DS.Colors.pulse, in: Capsule())
-                .shadow(color: DS.Colors.ink.opacity(0.25), radius: 10, y: 4)
         }
         .padding(.horizontal, 16)
     }
@@ -343,34 +321,20 @@ public struct ExploreRootView: View {
     private var actionButtons: some View {
         VStack(spacing: 10) {
             // Destination mode: tap a spot to plan a run from here → there.
-            Button {
+            IconOrbButton(systemImage: "mappin.and.ellipse",
+                          isActive: isDestinationMode) {
                 if isDestinationMode {
                     exitDestinationMode()
                 } else {
                     isDropMode = false
                     isDestinationMode = true
                 }
-            } label: {
-                Image(systemName: "mappin.and.ellipse")
-                    .font(.title3.bold())
-                    .foregroundStyle(isDestinationMode ? DS.Colors.snowCard : DS.Colors.ink)
-                    .frame(width: 48, height: 48)
-                    .background(isDestinationMode ? DS.Colors.pulse : DS.Colors.snowCard,
-                                in: Circle())
-                    .overlay(Circle().stroke(
-                        isDestinationMode ? .clear : DS.Colors.hairline, lineWidth: 1))
-                    .shadow(color: DS.Colors.ink.opacity(0.15), radius: 6, y: 2)
             }
 
-            Button {
-                session.isCreatingRoute = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.title2.bold())
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .frame(width: 56, height: 56)
-                    .background(DS.Colors.pulse, in: Circle())
-                    .shadow(color: DS.Colors.ink.opacity(0.2), radius: 8, y: 3)
+            if FeatureFlags.shared.isEnabled(.routeCreation) {
+                IconOrbButton(systemImage: "plus", size: 56, isActive: true) {
+                    session.isCreatingRoute = true
+                }
             }
         }
         .padding(.trailing, 20)
@@ -465,18 +429,10 @@ public struct ExploreRootView: View {
     /// path from user location to the dropped pin.
     private var startDestinationButton: some View {
         let ready = destination != nil && destinationPath.count > 1 && !isPlanningPath
-        return Button {
+        return PulseButton(ready ? "Start Run" : (destination == nil ? "Drop a pin first" : "Planning…"),
+                           icon: "figure.run",
+                           isLoading: destination != nil && isPlanningPath) {
             startDestinationRun()
-        } label: {
-            Label(ready ? "Start Run" : (destination == nil ? "Drop a pin first" : "Planning…"),
-                  systemImage: "figure.run")
-                .font(.headline.bold())
-                .foregroundStyle(DS.Colors.snowCard)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(ready ? DS.Colors.pulse : DS.Colors.pulse.opacity(0.4),
-                            in: Capsule())
-                .shadow(color: DS.Colors.ink.opacity(0.25), radius: 10, y: 4)
         }
         .disabled(!ready)
         .padding(.horizontal, 16)
@@ -516,11 +472,13 @@ public struct ExploreRootView: View {
     /// spot passes, we open the DropGemSheet; otherwise we surface the reason
     /// in the drop-mode banner without opening the sheet.
     private func validateAndOpenDrop(_ c: Coordinate) async {
+        guard FeatureFlags.shared.isEnabled(.gemGifting) else { return }
         isValidatingDrop = true
         dropError = nil
         defer { isValidatingDrop = false }
-        let pastTrails = (try? context.fetch(FetchDescriptor<StoredRun>()))?
-            .compactMap(\.trackPolyline) ?? []
+        let pastTrails = (GemLog.attempt(GemLog.persist, "fetch past trails for drop check", {
+            try context.fetch(FetchDescriptor<StoredRun>())
+        }) ?? []).compactMap(\.trackPolyline)
         let published = routes.map(\.polyline)
         let verdict = await DropValidator.validate(
             c, pastTrails: pastTrails, nearbyRoutes: published)
@@ -596,12 +554,17 @@ public struct ExploreRootView: View {
         lastGeocodedCoord = fix
         let location = CLLocation(latitude: fix.lat, longitude: fix.lng)
         let started = Date()
-        guard let mark = try? await CLGeocoder()
-            .reverseGeocodeLocation(location).first else {
-            print("[Vendor] CLGeocoder reverse (\(fix.lat), \(fix.lng)) FAILED after \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+        let mark: CLPlacemark?
+        do {
+            mark = try await CLGeocoder().reverseGeocodeLocation(location).first
+        } catch {
+            GemLog.map.error("CLGeocoder reverse failed after \(Int(Date().timeIntervalSince(started) * 1_000)) ms: \(error.localizedDescription, privacy: .public)")
             return
         }
-        print("[Vendor] CLGeocoder reverse (\(fix.lat), \(fix.lng)): '\(mark.thoroughfare ?? mark.locality ?? "?")' in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+        guard let mark else { return }
+        // Coordinates and the resolved street stay private — this used to
+        // print the user's exact location and address to the console.
+        GemLog.map.debug("CLGeocoder reverse: '\(mark.thoroughfare ?? mark.locality ?? "?")' in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         var parts = [mark.thoroughfare ?? mark.subLocality ?? mark.name,
                      mark.locality ?? mark.subAdministrativeArea]
             .compactMap { $0 }
@@ -759,7 +722,7 @@ public struct ExploreRootView: View {
             center = Coordinate(lat: last.coordinate.latitude,
                                 lng: last.coordinate.longitude)
         } else {
-            print("[Explore] skipping fetch — no GPS fix yet")
+            GemLog.explore.debug("skipping fetch — no GPS fix yet")
             // Back to "Finding you…" — the first-fix onChange watcher will
             // re-enter here the moment GPS lands.
             if firstLoad != .ready { firstLoad = .locating }
@@ -771,21 +734,30 @@ public struct ExploreRootView: View {
         // Covers the cached-CLLocationManager path, where the live-fix
         // onChange (the usual geocode trigger) hasn't fired yet.
         Task { await updateLocationLabel(for: center) }
-        print("[Explore] fetching nearby at (\(center.lat), \(center.lng))")
+        GemLog.explore.debug("fetching nearby at (\(center.lat, privacy: .private), \(center.lng, privacy: .private))")
         let t0 = Date()
 
         // Routes and drops go out TOGETHER; only drops gates the reveal —
         // the routes call (and its cache upsert) lands whenever it lands.
-        let routesTask = Task {
-            try? await API.shared.nearbyRoutes(
-                lat: center.lat, lng: center.lng, radiusM: 8_000)
+        let routesTask = Task { () -> [Route]? in
+            do {
+                return try await API.shared.nearbyRoutes(
+                    lat: center.lat, lng: center.lng, radiusM: 8_000)
+            } catch {
+                // Not covered by the Retry cover (only drops gate it), so
+                // this log line is the ONLY witness when the routes endpoint
+                // fails — a map that "looks fine but has no routes, forever"
+                // starts here.
+                GemLog.explore.error("nearbyRoutes failed: \(String(describing: error), privacy: .public)")
+                return nil
+            }
         }
         var revealMs = 0
         do {
             let page = try await API.shared.nearbyDrops(
                 lat: center.lat, lng: center.lng, radiusM: 8_000)
             revealMs = Int(Date().timeIntervalSince(t0) * 1_000)
-            print("[Explore] drops: \(page.drops.count)")
+            GemLog.explore.debug("drops: \(page.drops.count)")
             // Reveal the map only now — pins land in the same frame, so an
             // unstocked map is never on screen.
             withAnimation {
@@ -794,7 +766,7 @@ public struct ExploreRootView: View {
             }
             handleStocking(page.stocking)
         } catch {
-            print("[Explore] nearbyDrops FAILED: \(error)")
+            GemLog.explore.error("nearbyDrops failed: \(String(describing: error), privacy: .public)")
             // Keep the cover up with a Retry — a bare map with zero gems
             // must never stand in for a failed fetch. Refreshes after the
             // first reveal keep the stale pins instead.
@@ -802,7 +774,7 @@ public struct ExploreRootView: View {
         }
 
         if let fetched = await routesTask.value {
-            print("[Explore] routes: \(fetched.count)")
+            GemLog.explore.debug("routes: \(fetched.count)")
             // Refresh, not just insert: re-encoding cached rows picks up
             // server-side changes AND migrates gem blobs stored under the
             // old (pre-CodingKeys) key spelling.
@@ -822,12 +794,14 @@ public struct ExploreRootView: View {
                     context.delete(stored)
                 }
             }
-            try? context.save()
-        } else {
-            print("[Explore] nearbyRoutes FAILED")
+            // Failing here after the delete+reinsert pass can leave the
+            // cache inconsistent — worth a persisted error line.
+            GemLog.attempt(GemLog.persist, "save route cache refresh") {
+                try context.save()
+            }
         }
         let totalMs = Int(Date().timeIntervalSince(t0) * 1_000)
-        print("[Explore] reveal in \(revealMs) ms; full load \(totalMs) ms")
+        GemLog.explore.debug("reveal in \(revealMs) ms; full load \(totalMs) ms")
         isLoadingNearby = false
         // Recommendations run OUTSIDE the guarded section: their several
         // MKDirections calls take seconds, and holding isLoadingNearby
@@ -859,6 +833,10 @@ public struct ExploreRootView: View {
     /// live location, visiting different combinations of nearby gems. Debounced
     /// to moves > 100 m; `force=true` skips the debounce (refresh button).
     private func regenerateRecommendations(force: Bool) async {
+        guard FeatureFlags.shared.isEnabled(.suggestedRoutes) else {
+            if !recommendedRoutes.isEmpty { withAnimation { recommendedRoutes = [] } }
+            return
+        }
         guard !isRecommending, let here = live.coordinate else { return }
         if !force, let last = lastRecommendCenter,
            RouteGeometry.planarDistance(from: last, to: here) < 100 {
@@ -869,7 +847,7 @@ public struct ExploreRootView: View {
         lastRecommendCenter = here
         let planned = await RouteRecommender.recommend(from: here, drops: nearbyDrops)
         withAnimation { recommendedRoutes = planned }
-        print("[Explore] recommended: \(planned.count)")
+        GemLog.explore.debug("recommended: \(planned.count)")
     }
 }
 
@@ -1020,7 +998,11 @@ struct DropGemSheet: View {
                 onDropped(placed)
                 dismiss()
             } catch {
-                self.error = "Couldn't drop the gem — try again."
+                GemLog.explore.error("drop gem failed: \(String(describing: error), privacy: .public)")
+                // Prefer the server's own reason ("not walkable", "not in
+                // your stash") over a guess.
+                let http = error as? HTTPGemRunAPI.HTTPError
+                self.error = http?.errorDescription ?? "Couldn't drop the gem — try again."
             }
             isDropping = false
         }
@@ -1068,6 +1050,13 @@ final class LiveLocation: NSObject, CLLocationManagerDelegate {
         let coord = Coordinate(lat: loc.coordinate.latitude,
                                lng: loc.coordinate.longitude)
         Task { @MainActor in self.coordinate = coord }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager,
+                                     didFailWithError error: Error) {
+        // Explains a map stuck on "Finding you…" — no delegate observed
+        // CoreLocation errors anywhere before this.
+        GemLog.explore.error("CoreLocation failed on Explore: \(String(describing: error), privacy: .public)")
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -1143,7 +1132,7 @@ enum DropValidator {
 
         let started = Date()
         let response = try? await MKLocalSearch(request: request).start()
-        print("[Vendor] MKLocalSearch POIs (\(c.lat), \(c.lng)): \(response?.mapItems.count ?? -1) item(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
+        GemLog.map.debug("MKLocalSearch POIs (\(c.lat, privacy: .private), \(c.lng, privacy: .private)): \(response?.mapItems.count ?? -1) item(s) in \(Int(Date().timeIntervalSince(started) * 1_000)) ms")
         guard let items = response?.mapItems, !items.isEmpty else {
             return .denied(reason: "Drop only on trails you've run or a public spot (park, cafe, transit).")
         }

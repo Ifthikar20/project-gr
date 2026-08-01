@@ -10,6 +10,7 @@ Three-valued result so callers choose their own fail policy:
     False — Overpass answered and found nothing walkable there
     None  — check disabled (WALKABILITY_MODE != "overpass") or unreachable
 """
+import http.client
 import json
 import logging
 import ssl
@@ -26,6 +27,13 @@ try:
     _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 except ImportError:      # certifi missing → default trust store
     _SSL_CONTEXT = None
+    # requirements.txt calls this out as a real footgun: stock macOS
+    # Pythons ship without linked system certs, so every HTTPS call can
+    # fail. Name the root cause once, here, instead of leaving only the
+    # per-mirror failure symptoms downstream.
+    log.warning("certifi is not installed — falling back to the system "
+                "trust store; if every Overpass call fails with SSL "
+                "errors, `pip install -r requirements.txt`")
 
 # Pedestrian-legal highway values (OSM wiki: guidelines for pedestrian
 # navigation). Motorway/trunk/primary are excluded by omission.
@@ -146,9 +154,13 @@ def query_overpass(query, timeout, deadline=None, purpose="query"):
                      purpose, url, time.monotonic() - started,
                      len(payload.get("elements", [])))
             return payload
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             # The exact reason matters — SSL cert failures, timeouts, and
             # rate limits all look like "unreachable" without this line.
+            # HTTPException covers truncated bodies (IncompleteRead,
+            # LineTooLong), which are not OSErrors and used to escape this
+            # loop entirely — crashing `manage.py stock_gems` (and with it
+            # run.sh's launch) on a half-answer from a struggling mirror.
             log.warning("overpass[%s]: %s failed after %.1fs: %r",
                         purpose, url, time.monotonic() - started, exc)
     _down_until = time.monotonic() + CIRCUIT_COOLDOWN_S

@@ -58,6 +58,7 @@ public struct PillButton: View {
                 .frame(height: 52)
                 .background(DS.Colors.pulse, in: Capsule())
         }
+        .buttonStyle(PressableStyle())
     }
 }
 
@@ -91,6 +92,7 @@ public struct Chip: View {
             .background(selected ? DS.Colors.pulse : DS.Colors.snowCard, in: Capsule())
             .overlay(Capsule().stroke(selected ? .clear : DS.Colors.hairline, lineWidth: 1))
         }
+        .buttonStyle(PressableStyle())
     }
 }
 

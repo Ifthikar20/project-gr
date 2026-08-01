@@ -4,6 +4,7 @@ seconds, encoded polylines, fuzzed Rare+ drops, idempotent run completion.
 """
 import hashlib
 import json
+import logging
 import math
 import secrets
 import uuid
@@ -22,6 +23,8 @@ from .models import (ClaimAttempt, Friendship, GemDrop, Profile, Route, Run,
                      StashItem, Token)
 
 FUZZ_RADIUS_M = 150
+
+log = logging.getLogger("api.views")
 
 
 # ---------------------------------------------------------------- helpers
@@ -44,6 +47,32 @@ def body_of(request):
         return json.loads(request.body or b"{}")
     except json.JSONDecodeError:
         return None
+
+
+def clean_track(raw):
+    """Keep only well-formed GPS samples — numeric t/lat/lng, with accuracy
+    and speed defaulted. validation.py and closest_track_distance index
+    these keys directly, so one malformed sample in a 1,800-sample track
+    used to 500 the whole settlement (rolling back the run, unlogged)."""
+    samples = []
+    raw = raw if isinstance(raw, list) else []
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        try:
+            samples.append({
+                "t": float(s["t"]),
+                "lat": float(s["lat"]),
+                "lng": float(s["lng"]),
+                "horizontal_accuracy": float(s.get("horizontal_accuracy", 0)),
+                "speed": float(s.get("speed", 0)),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    if len(samples) < len(raw):
+        log.warning("track cleaning dropped %d of %d malformed sample(s)",
+                    len(raw) - len(samples), len(raw))
+    return samples
 
 
 def digest(value):
@@ -147,7 +176,11 @@ def route_json(route, viewer=None, collected_ids=None, active_drops=None):
 @csrf_exempt
 @require_http_methods(["POST"])
 def auth_provider(request, provider):
-    if provider not in ("apple", "google"):
+    # "guest" gets the same stable identity mechanics as the real
+    # providers: the client sends a per-install id, stored hashed, so a
+    # guest keeps ONE account across sessions instead of minting a new
+    # profile every sign-in.
+    if provider not in ("apple", "google", "guest"):
         return problem(404, "Unknown auth provider")
     data = body_of(request)
     if data is None:
@@ -155,6 +188,10 @@ def auth_provider(request, provider):
     external_id = data.get("external_user_id")
     if not settings.ALLOW_ALL_ACCOUNTS:
         # Token verification (Apple identityToken / Google idToken) lands here.
+        # This 501s EVERY sign-in — if the flag was flipped before
+        # verification shipped, the log is the only place that says so.
+        log.warning("sign-in rejected: ALLOW_ALL_ACCOUNTS is off but token "
+                    "verification is not implemented (auth_strict_mode)")
         return problem(501, "Identity token verification not yet enabled",
                        code="auth_strict_mode")
     handle = (data.get("handle") or "runner").strip() or "runner"
@@ -282,30 +319,47 @@ def publish_route(request):
                        code="loop_rejected")
 
     drops = data.get("gem_drops") or []
-    errors = validate_placement(drops, distance_m, geom)
-    if errors:
-        return problem(422, "Gem placement rejected", code="placement",
-                       detail="; ".join(errors))
+    # Malformed drop entries (bad UUIDs, missing keys, non-numeric
+    # positions) are a 422 like any other placement problem — not an
+    # unlogged 500 that rolls back the publish.
+    try:
+        errors = validate_placement(drops, distance_m, geom)
+        if errors:
+            # The client enforces this same budget offline, so a hit here
+            # means a tampered client OR client/server rule drift after a
+            # deploy — either way, worth a trace.
+            log.warning("route publish rejected for profile %s: %s",
+                        profile.id, "; ".join(errors))
+            return problem(422, "Gem placement rejected", code="placement",
+                           detail="; ".join(errors))
 
-    difficulty = "easy" if distance_m < 4000 else "moderate" if distance_m < 9000 else "hard"
-    route = Route.objects.create(
-        id=uuid.UUID(data["id"]) if data.get("id") else uuid.uuid4(),
-        creator=profile, name=data["name"][:40],
-        description=(data.get("description") or None),
-        polyline=data["polyline"], distance_m=distance_m,
-        elevation_gain_m=int(data.get("elevation_gain_m") or 0),
-        elevation_profile=data.get("elevation_profile"),
-        difficulty=difficulty, status="published",
-        lat=coords[0][0], lng=coords[0][1])
-    for d in drops:
-        GemDrop.objects.create(
-            id=uuid.UUID(d["id"]) if d.get("id") else uuid.uuid4(),
-            route=route, gem_id=uuid.UUID(d["gem_id"]), rarity=d["rarity"],
-            lat=d["lat"], lng=d["lng"],
-            position_along_route_m=int(d["position_along_route_m"]),
-            respawn_rule=d.get("respawn_rule")
-                or ("daily" if d["rarity"] in ("common", "uncommon") else "once_per_user"),
-            placed_by="creator")
+        difficulty = "easy" if distance_m < 4000 else "moderate" if distance_m < 9000 else "hard"
+        # Atomic: a malformed drop halfway through the list must not leave
+        # a half-published route behind.
+        with transaction.atomic():
+            route = Route.objects.create(
+                id=uuid.UUID(data["id"]) if data.get("id") else uuid.uuid4(),
+                creator=profile, name=data["name"][:40],
+                description=(data.get("description") or None),
+                polyline=data["polyline"], distance_m=distance_m,
+                elevation_gain_m=int(data.get("elevation_gain_m") or 0),
+                elevation_profile=data.get("elevation_profile"),
+                difficulty=difficulty, status="published",
+                lat=coords[0][0], lng=coords[0][1])
+            for d in drops:
+                GemDrop.objects.create(
+                    id=uuid.UUID(d["id"]) if d.get("id") else uuid.uuid4(),
+                    route=route, gem_id=uuid.UUID(d["gem_id"]), rarity=d["rarity"],
+                    lat=d["lat"], lng=d["lng"],
+                    position_along_route_m=int(d["position_along_route_m"]),
+                    respawn_rule=d.get("respawn_rule")
+                        or ("daily" if d["rarity"] in ("common", "uncommon") else "once_per_user"),
+                    placed_by="creator")
+    except (KeyError, TypeError, ValueError) as exc:
+        log.warning("route publish payload malformed for profile %s: %r",
+                    profile.id, exc)
+        return problem(422, "Malformed route payload", code="malformed",
+                       detail=repr(exc))
     return JsonResponse(route_json(route, profile))
 
 
@@ -353,6 +407,8 @@ def route_detail(request, route_id):
         return JsonResponse(route_json(route, profile_from(request)))
     profile = profile_from(request)
     if profile is None or route.creator_id != profile.id:
+        log.warning("route modify denied: profile %s is not the creator of "
+                    "route %s", profile.id if profile else None, route.id)
         return problem(403, "Only the creator can modify a route")
     if request.method == "PATCH":
         data = body_of(request) or {}
@@ -404,9 +460,16 @@ def complete_run(request, route_id):
     if existing is not None and existing.verdict is not None:
         return JsonResponse(existing.verdict)
 
-    track = data.get("track") or []
-    claimed = [uuid.UUID(c) for c in (data.get("claimed_collections") or [])]
-    started_at = parse_iso(data["started_at"]) if data.get("started_at") else datetime.now(tz.utc)
+    track = clean_track(data.get("track") or [])
+    try:
+        claimed = [uuid.UUID(c) for c in (data.get("claimed_collections") or [])]
+        started_at = (parse_iso(data["started_at"])
+                      if data.get("started_at") else datetime.now(tz.utc))
+    except (TypeError, ValueError, AttributeError) as exc:
+        log.warning("run completion payload malformed for profile %s: %r",
+                    profile.id, exc)
+        return problem(400, "Malformed completion payload", code="malformed",
+                       detail=repr(exc))
 
     geom = RouteGeometry(polyline_decode(route.polyline))
     verdict_v = validation.validate(track, geom)
@@ -741,6 +804,13 @@ def drops(request):
         try:
             stocking = system_drops.presence_trigger(lat, lng)
         except Exception:
+            # Still best-effort — the map read must survive — but never
+            # silent: this swallow used to hide the entire stocking
+            # pipeline (DB lock exhaustion, executor failures, placement
+            # bugs) while every response stayed a clean 200.
+            log.exception("presence trigger failed at (%.4f, %.4f) — "
+                          "serving the map read without restocking",
+                          lat, lng)
             stocking = False
         dlat = radius / 111_320
         dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
@@ -761,8 +831,16 @@ def drops(request):
         return problem(401, "Sign in required")
     data = body_of(request) or {}
     gem_id = data.get("gem_id")
-    entry = catalog.entry_for(uuid.UUID(gem_id)) if gem_id else None
+    try:
+        entry = catalog.entry_for(uuid.UUID(gem_id)) if gem_id else None
+    except (ValueError, AttributeError, TypeError):
+        entry = None
     if entry is None:
+        # A well-formed UUID that isn't in the catalog means the app build
+        # and server build disagree about the shared catalog — not a user
+        # mistake.
+        log.warning("drop rejected: unknown gem id %r from profile %s",
+                    gem_id, profile.id)
         return problem(422, "Unknown gem")
     rarity = entry["rarity"]
     if rarity == "legendary":
@@ -777,6 +855,9 @@ def drops(request):
     # road or driveway does not count.
     if walkability.is_walkable(
             lat, lng, highways=walkability.PEDESTRIAN_HIGHWAYS) is False:
+        # Only a definite "no" from OSM lands here — a spike in these is an
+        # upstream data/query regression, not a user-behavior change.
+        log.warning("drop rejected as not walkable at (%.5f, %.5f)", lat, lng)
         return problem(422, "Gems can only be dropped on walkable paths",
                        code="not_walkable")
     with transaction.atomic():
@@ -787,6 +868,12 @@ def drops(request):
                         dropped_at__isnull=True)
                 .order_by("collected_at").first())
         if item is None:
+            # Inside the row lock: this can be a legitimately empty stash,
+            # or the losing side of a double-spend race — exactly what the
+            # lock exists to catch, so leave a trace either way.
+            log.warning("drop rejected: gem %s not spendable in stash for "
+                        "profile %s (empty or lost double-spend race)",
+                        entry["id"], profile.id)
             return problem(422, "That gem isn't in your stash",
                            code="not_in_stash")
         item.dropped_at = datetime.now(tz.utc)
@@ -809,8 +896,14 @@ def collect_drops(request):
     if profile is None:
         return problem(401, "Sign in required")
     data = body_of(request) or {}
-    track = data.get("track") or []
-    claimed = [uuid.UUID(c) for c in (data.get("claimed") or [])]
+    track = clean_track(data.get("track") or [])
+    try:
+        claimed = [uuid.UUID(c) for c in (data.get("claimed") or [])]
+    except (TypeError, ValueError, AttributeError) as exc:
+        log.warning("collect payload malformed for profile %s: %r",
+                    profile.id, exc)
+        return problem(400, "Malformed collect payload", code="malformed",
+                       detail=repr(exc))
     now = datetime.now(tz.utc)
     awarded = []
     for drop_id in claimed:

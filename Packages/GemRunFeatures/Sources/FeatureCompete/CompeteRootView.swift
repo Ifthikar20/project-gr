@@ -9,9 +9,10 @@ import SwiftUI
 /// "My Routes": every run you've completed, newest first, as cards —
 /// local SwiftData history merged with the server's copy (GET /v1/runs/mine)
 /// so a fresh install still shows the past.
-/// "This Week": the friends board — you plus everyone you follow, ranked by
+/// "Friends": the friends board — you plus everyone you follow, ranked by
 /// this week's XP. Swipe a friend left to remove; the magnifier searches
 /// players by username to add.
+@MainActor
 public struct CompeteRootView: View {
     @Query(sort: \StoredRun.startedAt, order: .reverse) private var runs: [StoredRun]
     @State private var board = Board.myRoutes
@@ -22,32 +23,48 @@ public struct CompeteRootView: View {
 
     enum Board: String, CaseIterable {
         case myRoutes = "My Routes"
-        case week = "This Week"
+        case week = "Friends"
+        case calories = "Calories"
     }
 
     public init() {}
 
+    /// Boards the current entitlements allow (Feature flags, Settings ›
+    /// Features). "My Routes" is always on.
+    private var visibleBoards: [Board] {
+        Board.allCases.filter { b in
+            switch b {
+            case .myRoutes: true
+            case .week: FeatureFlags.shared.isEnabled(.friendsBoard)
+            case .calories: FeatureFlags.shared.isEnabled(.caloriesInsights)
+            }
+        }
+    }
+
     public var body: some View {
+        // A board switched off while selected falls back to My Routes.
+        let active = visibleBoards.contains(board) ? board : .myRoutes
         NavigationStack {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    ForEach(Board.allCases, id: \.self) { b in
-                        Chip(b.rawValue, selected: board == b) { board = b }
+                    ForEach(visibleBoards, id: \.self) { b in
+                        Chip(b.rawValue, selected: active == b) { board = b }
                     }
                     Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
-                switch board {
+                switch active {
                 case .myRoutes: myRoutesBoard
                 case .week: weekBoard
+                case .calories: CaloriesView()
                 }
             }
             .background(DS.Colors.snow)
             .navigationTitle("Compete")
             .toolbar {
-                if board == .week {
+                if active == .week {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             isSearchPresented = true
@@ -66,7 +83,7 @@ public struct CompeteRootView: View {
                     withAnimation { friendEntries = refreshed }
                 }
             }
-            .task(id: board) { await load() }
+            .task(id: active) { await load(active) }
         }
     }
 
@@ -176,7 +193,7 @@ public struct CompeteRootView: View {
             .foregroundStyle(DS.Colors.inkSecondary)
     }
 
-    // MARK: - This Week (friends board)
+    // MARK: - Friends (weekly board)
 
     private var weekBoard: some View {
         Group {
@@ -249,7 +266,13 @@ public struct CompeteRootView: View {
 
     private func remove(_ entry: FriendEntry) {
         withAnimation { friendEntries.removeAll { $0.id == entry.id } }
-        Task { try? await API.shared.removeFriend(profileID: entry.id) }
+        Task {
+            // The row is optimistically gone from the UI — a failed unfollow
+            // (friend reappears on next load) was untraceable without this.
+            await GemLog.attempt(GemLog.session, "unfollow \(entry.handle)", {
+                try await API.shared.removeFriend(profileID: entry.id)
+            })
+        }
     }
 
     // MARK: - Shared
@@ -268,14 +291,22 @@ public struct CompeteRootView: View {
         .padding(40)
     }
 
-    private func load() async {
+    private func load(_ active: Board) async {
         isLoading = true
         defer { isLoading = false }
-        switch board {
+        // A failed load renders as an empty board — indistinguishable from
+        // "no runs/friends yet" without these log lines.
+        switch active {
         case .myRoutes:
-            serverRuns = (try? await API.shared.myRuns()) ?? []
+            serverRuns = await GemLog.attempt(GemLog.session, "load my runs", {
+                try await API.shared.myRuns()
+            }) ?? []
         case .week:
-            friendEntries = (try? await API.shared.friends()) ?? []
+            friendEntries = await GemLog.attempt(GemLog.session, "load friends board", {
+                try await API.shared.friends()
+            }) ?? []
+        case .calories:
+            break   // fully on-device — nothing to fetch
         }
     }
 
@@ -398,13 +429,19 @@ struct PlayerSearchSheet: View {
         }
         isSearching = true
         defer { isSearching = false }
-        results = (try? await API.shared.searchPlayers(query: text)) ?? []
+        results = await GemLog.attempt(GemLog.session, "player search", {
+            try await API.shared.searchPlayers(query: text)
+        }) ?? []
     }
 
     private func add(_ player: PlayerSummary) {
         addedIDs.insert(player.id)
         Task {
-            if let refreshed = try? await API.shared.addFriend(profileID: player.id) {
+            // The button already flipped to "Added" — a failed follow needs
+            // at least a trace, since the UI can't take it back here.
+            if let refreshed = await GemLog.attempt(GemLog.session, "follow \(player.handle)", {
+                try await API.shared.addFriend(profileID: player.id)
+            }) {
                 onBoardRefreshed(refreshed)
             }
         }

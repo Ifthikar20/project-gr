@@ -1004,3 +1004,132 @@ class ApiTests(TestCase):
         self.assertIn("00000000-0000-0000-0000-00000000000a", ids)
         # Ancient Relics start at int 40 (0x28 = Bone).
         self.assertIn("00000000-0000-0000-0000-000000000028", ids)
+
+    # ------------------------------------- logging & exception handling
+
+    def test_presence_trigger_failure_never_breaks_map_read_and_is_logged(self):
+        """The map read survives a stocking crash — but never silently:
+        the swallow at views.drops used to hide the whole pipeline."""
+        with mock.patch("api.system_drops.presence_trigger",
+                        side_effect=RuntimeError("stocking exploded")):
+            with self.assertLogs("api.views", level="ERROR") as logs:
+                response = self.client.get(
+                    "/v1/drops", {"lat": 37.0, "lng": -122.0, "radius_m": 5000})
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.json()["stocking"], False)
+        self.assertTrue(any("presence trigger failed" in line
+                            for line in logs.output))
+
+    def test_unhandled_view_error_is_problem_json_500_with_request_id(self):
+        """An uncaught exception must reach the client as the problem+json
+        shape HTTPGemRunAPI decodes — with a request id that also appears
+        in the server-side traceback log (works with DEBUG=False too)."""
+        self.publish_route()
+        route_id = Route.objects.get().id
+        with mock.patch("api.validation.validate",
+                        side_effect=RuntimeError("boom")):
+            with self.assertLogs("api.request", level="ERROR") as logs:
+                response = self.complete(route_id, track(3.0), [])
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response["Content-Type"], "application/problem+json")
+        body = response.json()
+        self.assertEqual(body["code"], "internal")
+        request_id = response["X-Request-ID"]
+        self.assertIn(request_id, body["detail"])
+        self.assertTrue(any(request_id in line for line in logs.output))
+
+    def test_every_request_logs_one_line_with_request_id(self):
+        with self.assertLogs("api.request", level="INFO") as logs:
+            response = self.client.get("/v1/gems/catalog")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.has_header("X-Request-ID"))
+        line = "\n".join(logs.output)
+        self.assertIn("GET /v1/gems/catalog", line)
+        self.assertIn(response["X-Request-ID"], line)
+
+    def test_v1_405_and_unknown_path_are_problem_json(self):
+        """@require_http_methods 405s and resolver 404s are text/html out
+        of the box — under /v1/ both must keep the error contract."""
+        denied = self.client.delete("/v1/handles/check")
+        self.assertEqual(denied.status_code, 405)
+        self.assertEqual(denied["Content-Type"], "application/problem+json")
+        self.assertEqual(denied.json()["code"], "method_not_allowed")
+        missing = self.client.get("/v1/definitely-not-a-thing")
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(missing["Content-Type"], "application/problem+json")
+        self.assertEqual(missing.json()["code"], "not_found")
+
+    def test_malformed_publish_payload_is_422_and_leaves_no_route(self):
+        bad = self.gem("common", 400)
+        bad["gem_id"] = "not-a-uuid"
+        with self.assertLogs("api.views", level="WARNING"):
+            response = self.publish_route(gems=[bad])
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "malformed")
+        # Atomic: the half-published route rolled back with its drops.
+        self.assertEqual(Route.objects.count(), 0)
+        self.assertEqual(GemDrop.objects.count(), 0)
+
+    def test_malformed_collect_ids_are_400_not_500(self):
+        response = self.post("/v1/drops/collect",
+                             {"claimed": ["nope"], "track": []}, auth=True)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "malformed")
+
+    def test_garbage_track_samples_are_cleaned_not_500(self):
+        """One malformed sample in a long track must not roll back the
+        whole settlement — clean_track drops it and the run still counts."""
+        self.publish_route()
+        route_id = Route.objects.get().id
+        samples = track(3.0) + [{"t": None}, {"lat": 1.0}, "junk", 42]
+        response = self.complete(route_id, samples, [])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "valid")
+
+    def test_truncated_overpass_body_is_unreachable_not_a_crash(self):
+        """http.client.IncompleteRead is not an OSError — it used to escape
+        the mirror loop and crash stock_gems (killing run.sh's launch)."""
+        import http.client
+        walkability._down_until = 0.0
+        with override_settings(WALKABILITY_MODE="overpass"):
+            with mock.patch("api.walkability.urllib.request.urlopen",
+                            side_effect=http.client.IncompleteRead(b"")):
+                with self.assertLogs("api.walkability", level="WARNING"):
+                    verdict = walkability.is_walkable(37.0, -122.0)
+        walkability._down_until = 0.0
+        self.assertIsNone(verdict)
+
+    def test_stock_gems_command_survives_a_stocking_failure(self):
+        out = io.StringIO()
+        with mock.patch("api.system_drops.top_up_area",
+                        side_effect=RuntimeError("placement bug")):
+            call_command("stock_gems", stdout=out)
+        self.assertIn("Stocking failed", out.getvalue())
+
+    # ------------------------------------------------- unique accounts
+
+    def test_same_external_id_is_the_same_account(self):
+        """Unique accounts: the hashed external id is the identity. The same
+        id signing in twice lands on ONE profile; a different id gets its
+        own — and the raw id never appears in the database."""
+        first = self.post("/v1/auth/apple",
+                          {"handle": "ali", "external_user_id": "apple-user-1"})
+        again = self.post("/v1/auth/apple",
+                          {"handle": "ali", "external_user_id": "apple-user-1"})
+        other = self.post("/v1/auth/apple",
+                          {"handle": "sam", "external_user_id": "apple-user-2"})
+        self.assertEqual(first.json()["profile"]["id"],
+                         again.json()["profile"]["id"])
+        self.assertNotEqual(first.json()["profile"]["id"],
+                            other.json()["profile"]["id"])
+        self.assertFalse(Profile.objects.filter(
+            external_user_id="apple-user-1").exists())
+
+    def test_guest_provider_gets_a_stable_unique_account(self):
+        first = self.post("/v1/auth/guest",
+                          {"handle": "wanderer", "external_user_id": "device-abc"})
+        self.assertEqual(first.status_code, 200)
+        again = self.post("/v1/auth/guest",
+                          {"handle": "wanderer", "external_user_id": "device-abc"})
+        self.assertEqual(first.json()["profile"]["id"],
+                         again.json()["profile"]["id"])

@@ -1,4 +1,6 @@
+import CoreAuth
 import CoreLocationKit
+import CoreModels
 import CorePersistence
 import SwiftData
 import SwiftUI
@@ -12,11 +14,23 @@ struct GemRunApp: App {
     private let container: ModelContainer
 
     init() {
+        let schema = Schema([StoredRoute.self, StoredRun.self,
+                             StoredStashItem.self, StoredProfile.self])
         do {
-            container = try ModelContainer(
-                for: StoredRoute.self, StoredRun.self, StoredStashItem.self, StoredProfile.self)
+            container = try ModelContainer(for: schema)
         } catch {
-            fatalError("Failed to create SwiftData container: \(error)")
+            // A failed migration / corrupt store used to be an unconditional
+            // launch crash for every installed user. Fall back to an
+            // in-memory store instead: the app opens, server data re-syncs,
+            // and the fault is on record for diagnosis.
+            GemLog.persist.fault("SwiftData container failed — falling back to in-memory store: \(String(describing: error), privacy: .public)")
+            do {
+                container = try ModelContainer(
+                    for: schema,
+                    configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+            } catch {
+                fatalError("Failed to create even an in-memory SwiftData container: \(error)")
+            }
         }
     }
 
@@ -29,6 +43,11 @@ struct GemRunApp: App {
                 .preferredColorScheme(.light)   // "Daybreak Pulse" is a light system
                 .task {
                     session.attach(context: container.mainContext)
+                    // After attach (restore needs the stored profile):
+                    // adopt the persisted session token — or re-register a
+                    // tokenless sign-in — so a relaunch is the SAME account,
+                    // not an unauthenticated stranger (docs/18).
+                    await AuthService(session: session).restoreSession()
                 }
         }
     }

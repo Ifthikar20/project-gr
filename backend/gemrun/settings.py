@@ -23,6 +23,12 @@ MIDDLEWARE = [
     # Routes payloads carry polylines + elevation profiles — the chunkiest
     # JSON we serve; gzip cuts them to a fraction on the wire.
     "django.middleware.gzip.GZipMiddleware",
+    # Order matters: RequestLog assigns the request id on the way in and
+    # logs the FINAL status on the way out; ProblemJSONError (below it)
+    # turns unhandled exceptions and Django's HTML 404/405s into the
+    # problem+json shape the iOS client decodes (api/middleware.py).
+    "api.middleware.RequestLogMiddleware",
+    "api.middleware.ProblemJSONErrorMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
 
@@ -97,9 +103,17 @@ PRESENCE_DROP_MIN_RUNS = int(os.environ.get("PRESENCE_DROP_MIN_RUNS", 3))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Verbose app logging: every Overpass attempt (with the exact failure —
-# SSL, timeout, rate limit), every gem spawn, every bootstrap decision.
-# Shows in the console / backend/.server.log. GEMRUN_LOG_LEVEL=DEBUG|WARNING
-# to adjust.
+# SSL, timeout, rate limit), every gem spawn, every bootstrap decision,
+# one line per request, and a traceback for every unhandled exception
+# (api/middleware.py). Shows in the console / backend/.server.log.
+# GEMRUN_LOG_LEVEL=DEBUG|WARNING to adjust.
+_LOG_LEVEL = os.environ.get("GEMRUN_LOG_LEVEL", "INFO").upper()
+if _LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+    # A typo here used to crash dictConfig at boot; fall back loudly instead.
+    import sys
+    sys.stderr.write(f"GEMRUN_LOG_LEVEL={_LOG_LEVEL!r} is not a log level; "
+                     "using INFO\n")
+    _LOG_LEVEL = "INFO"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -111,7 +125,13 @@ LOGGING = {
         "console": {"class": "logging.StreamHandler", "formatter": "gemrun"},
     },
     "loggers": {
-        "api": {"handlers": ["console"],
-                "level": os.environ.get("GEMRUN_LOG_LEVEL", "INFO")},
+        # Children (api.views, api.request, api.system_drops, …) propagate
+        # here — one handler, one format, one level knob.
+        "api": {"handlers": ["console"], "level": _LOG_LEVEL},
+        # Belt-and-braces for errors raised outside api.middleware's reach:
+        # without this, DEBUG=False sends 500 tracebacks nowhere at all
+        # (Django's default console handler is DEBUG-only and mail_admins
+        # is unconfigured).
+        "django.request": {"handlers": ["console"], "level": "ERROR"},
     },
 }

@@ -79,6 +79,12 @@ public final class LiveRunRecorder: NSObject, CLLocationManagerDelegate {
 
     // MARK: - CLLocationManagerDelegate
 
+    public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // kCLErrorDomain code 0 (locationUnknown) is transient noise; real
+        // failures (denied, network) explain a run that stopped recording.
+        GemLog.run.error("CoreLocation failed during run: \(String(describing: error), privacy: .public)")
+    }
+
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let start = startTime else { return }
         for loc in locations {

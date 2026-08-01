@@ -3,6 +3,7 @@ import CoreModels
 import CorePersistence
 import DesignSystem
 import SwiftUI
+import UIKit
 
 /// The exportable run card (docs/03 §8), Daybreak Pulse: the same face the
 /// in-app flip card leads with — wordmark, route, hero distance, the full
@@ -10,6 +11,9 @@ import SwiftUI
 /// real emojis. Rendered offscreen by ImageRenderer at 3×.
 struct ShareCardView: View {
     let summary: RunCompletionSummary
+    /// Real street snapshot of the traveled track (TrackSnapshotter) —
+    /// nil (offline, no track) falls back to the abstract route shape.
+    var mapImage: UIImage? = nil
 
     var body: some View {
         VStack(spacing: 14) {
@@ -28,10 +32,14 @@ struct ShareCardView: View {
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
 
-            // Hero: the run's shape with the headline distance overlaid —
-            // same trading-card anatomy as the in-app flip card.
+            // Hero: the actual streets you ran, with the headline distance
+            // overlaid — same trading-card anatomy as the in-app flip card.
             ZStack {
-                if let polyline = summary.pathPolyline {
+                if let mapImage {
+                    Image(uiImage: mapImage)
+                        .resizable()
+                        .scaledToFill()
+                } else if let polyline = summary.pathPolyline {
                     let coords = PolylineCodec.decode(polyline)
                     if coords.count > 1 {
                         RouteShapeView(coords: coords)
@@ -59,6 +67,7 @@ struct ShareCardView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 190)
             .background(DS.Colors.snow, in: RoundedRectangle(cornerRadius: 16))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16)
                 .stroke(DS.Colors.hairline, lineWidth: 1))
 
@@ -69,13 +78,6 @@ struct ShareCardView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Spacer()
-                Text(summary.isWalk ? "WALK" : "RUN")
-                    .font(.system(size: 11, weight: .heavy))
-                    .kerning(0.8)
-                    .foregroundStyle(DS.Colors.snowCard)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(DS.Colors.pulse, in: Capsule())
             }
 
             HStack(spacing: 8) {

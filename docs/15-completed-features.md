@@ -167,7 +167,7 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 - **My Routes**: your completed runs as cards — server truth
   (`GET /v1/runs/mine`) merged with local runs (local wins on conflict),
   so finished runs survive reinstalls once synced.
-- **This Week**: the friends board, ranked by weekly XP (week resets
+- **Friends**: the friends board, ranked by weekly XP (week resets
   Monday 00:00 UTC), with weekly distance and run counts. You are always
   on the board.
 - **Swipe left on a friend → remove** (one-directional follow model —
@@ -270,7 +270,7 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 - **Imperial everywhere**: miles, feet, min/mi via one formatter
   (`CoreModels/UnitFormat.swift`, 1609.344 m/mi); models stay metric.
 - **Design system**: Daybreak Pulse — snow surfaces, ink text, one pulse
-  accent (#FC4C02); rarity = pulse-opacity ramp + distinct glyphs (never
+  accent (#EF3B23); rarity = pulse-opacity ramp + distinct glyphs (never
   color alone).
 - **Custom gem art pipeline**: drop PNGs into `GEMS_REPO/` (named by
   material — "Emerald_Gem.png") and build: `scripts/import-gem-art.sh`

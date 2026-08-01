@@ -475,5 +475,15 @@ def presence_trigger(lat, lng):
         if key in _inflight:
             return pending               # this cell is already being stocked
         _inflight.add(key)
-    _executor.submit(_background_job, key, lat, lng)
+    try:
+        _executor.submit(_background_job, key, lat, lng)
+    except Exception:
+        # submit() itself can raise (interpreter shutdown, thread-spawn
+        # failure under fd/memory pressure). The worker's own finally is
+        # the only code that discards the key — if it never runs, the key
+        # leaks and this cell silently never restocks again for the life
+        # of the process.
+        with _inflight_lock:
+            _inflight.discard(key)
+        log.exception("could not queue top-up for cell %s", (key,))
     return pending

@@ -2,7 +2,7 @@ import CoreModels
 import SwiftUI
 
 /// "Daybreak Pulse" (docs/03): the entire app uses EXACTLY three colors —
-/// snow surfaces, ink text, and one race-orange accent — Airbnb-style
+/// snow surfaces, ink text, and one ember-red accent — Airbnb-style
 /// (one brand color reserved for what matters, neutrals everywhere else).
 /// Opacity/tint steps of a hue count as the same color. Nothing else.
 public enum DS {
@@ -16,8 +16,10 @@ public enum DS {
         public static let inkSecondary = ink.opacity(0.55)
         public static let hairline = ink.opacity(0.12)
 
-        // 3 — Pulse: THE accent (CTAs, gems, streaks, live stats, own rows)
-        public static let pulse = Color(red: 0.988, green: 0.298, blue: 0.008)  // #FC4C02
+        // 3 — Pulse: THE accent (CTAs, gems, streaks, live stats, own rows).
+        // Ember red — deliberately red-shifted off #FC4C02, which is
+        // Strava's exact brand orange.
+        public static let pulse = Color(red: 0.937, green: 0.231, blue: 0.137)  // #EF3B23
 
         /// Rarity is a pulse ramp — never a new hue (docs/03 restyle).
         public static func rarity(_ rarity: Rarity) -> Color {

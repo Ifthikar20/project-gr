@@ -13,30 +13,26 @@ struct DrawStepView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             DrawingMapView(pathCoords: model.pathCoords,
-                           waypoints: model.planMode == .draw ? model.waypoints : [],
-                           destination: model.planMode == .destination
-                               ? model.destination : nil) { coord in
-                switch model.planMode {
-                case .draw: model.addWaypoint(coord)
-                case .destination: model.setDestination(coord)
-                }
+                           waypoints: model.waypoints,
+                           destination: nil) { coord in
+                model.addWaypoint(coord)
             }
             .ignoresSafeArea(edges: .bottom)
 
             VStack(spacing: 10) {
-                Picker("Mode", selection: $model.planMode) {
-                    Text("Draw it").tag(CreationModel.PlanMode.draw)
-                    Text("To a destination").tag(CreationModel.PlanMode.destination)
+                // Start rule — locked once the first dot lands; undo back to
+                // an empty map to change it.
+                Toggle(isOn: $model.startFromMyLocation) {
+                    Label("Start from my location", systemImage: "location.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(DS.Colors.ink)
                 }
-                .pickerStyle(.segmented)
+                .tint(DS.Colors.pulse)
+                .disabled(!model.waypoints.isEmpty)
 
-                switch model.planMode {
-                case .draw: drawControls
-                case .destination: destinationControls
-                }
+                drawControls
 
-                let nextBlocked = model.distanceM < 1_000
-                    || model.isSnapping || model.isPlanning
+                let nextBlocked = model.distanceM < 1_000 || model.isSnapping
                 PillButton("Next: place gems") { model.step = .gems }
                     .disabled(nextBlocked)
                     .opacity(nextBlocked ? 0.5 : 1)
@@ -97,53 +93,6 @@ struct DrawStepView: View {
         .animation(.easeInOut(duration: 0.2), value: model.pathNotice)
     }
 
-    /// Destination mode (docs/03 update): start = current location or a
-    /// typed address; tap the map to drop the destination pin.
-    private var destinationControls: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                TextField("Start: address (or use my location)",
-                          text: $model.startAddress)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
-                    .onSubmit { Task { await model.geocodeStart() } }
-                Button {
-                    model.useCurrentLocationStart()
-                } label: {
-                    Image(systemName: "location.fill")
-                        .foregroundStyle(model.customStart == nil
-                            ? DS.Colors.pulse : DS.Colors.ink)
-                        .frame(width: 40, height: 34)
-                        .background(DS.Colors.snowCard,
-                                    in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8)
-                            .stroke(DS.Colors.hairline, lineWidth: 1))
-                }
-            }
-            HStack {
-                if model.isPlanning {
-                    ProgressView().controlSize(.small)
-                    Text("Finding a walkable path…")
-                        .font(.caption)
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                } else if let error = model.planError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(DS.Colors.pulse)
-                } else if model.destination == nil {
-                    Text("Tap the map to drop your destination pin")
-                        .font(.caption)
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                } else {
-                    Text(String(format: "%.2f mi to your pin",
-                                UnitFormat.miles(fromMeters: Double(model.distanceM))))
-                        .font(.caption.bold())
-                        .foregroundStyle(DS.Colors.ink)
-                }
-                Spacer()
-            }
-        }
-    }
 }
 
 @MainActor
@@ -244,10 +193,18 @@ struct PublishStepView: View {
             do {
                 let published = try await API.shared.publishRoute(route)
                 context.insert(StoredRoute(route: published))
-                try? context.save()
+                GemLog.attempt(GemLog.persist, "save published route") {
+                    try context.save()
+                }
                 onDone()
             } catch {
-                publishError = "Publish failed — check your gem placement and try again."
+                GemLog.session.error("route publish failed: \(String(describing: error), privacy: .public)")
+                // Use the server's actual reason when it sent one — the old
+                // copy guessed "check your gem placement", which was wrong
+                // for a timeout or a 500.
+                let http = error as? HTTPGemRunAPI.HTTPError
+                publishError = http?.errorDescription
+                    ?? "Publish failed — check your connection and try again."
             }
             isPublishing = false
         }

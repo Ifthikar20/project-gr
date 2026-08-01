@@ -2,16 +2,15 @@ import CoreMap
 import CoreModels
 import CorePersistence
 import DesignSystem
+import GameKitCore
 import MapKit
 import SwiftUI
 
-/// Rough energy estimate from distance alone (no body-weight profile yet):
-/// ~1.03 kcal/kg/km running, ~0.53 walking, 70 kg assumed. Shared by the
-/// summary card and the exported share card.
+/// Energy estimate shared by the summary card, the exported share card, and
+/// Compete › Calories — one model (CalorieRules), stated once.
 extension RunCompletionSummary {
     var approxCalories: Int {
-        let km = Double(distanceM) / 1_000
-        return Int(km * 70 * (isWalk ? 0.53 : 1.03))
+        CalorieRules.kcal(distanceM: distanceM, isWalk: isWalk)
     }
 }
 
@@ -225,13 +224,6 @@ struct RunCardView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Spacer()
-                    Text(summary.isWalk ? "WALK" : "RUN")
-                        .font(.system(size: 10, weight: .heavy))
-                        .kerning(0.8)
-                        .foregroundStyle(DS.Colors.snowCard)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(DS.Colors.pulse, in: Capsule())
                 }
 
                 HStack(alignment: .top, spacing: 10) {

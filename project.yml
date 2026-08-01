@@ -79,7 +79,7 @@ targets:
         GemRunAPIBaseURL: $(GEMRUN_API_URL)
     dependencies:
       - package: GemRunCore
-        products: [CoreModels, DesignSystem, CoreMap, CorePersistence, CoreLocationKit]
+        products: [CoreModels, DesignSystem, CoreMap, CorePersistence, CoreLocationKit, CoreAuth]
       - package: GemRunFeatures
         products:
           - FeatureOnboarding

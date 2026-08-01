@@ -83,9 +83,13 @@ public final class SessionStore {
     /// just-finished runs are matched by drop id so nothing duplicates;
     /// dropped-state syncs down so the drop sheet can't offer a spent gem.
     public func refreshStash() async {
-        guard let context,
-              let items = try? await API.shared.stash().items else { return }
-        let existing = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        guard let context else { return }
+        guard let items = await GemLog.attempt(GemLog.session, "stash sync GET /v1/stash", {
+            try await API.shared.stash().items
+        }) else { return }
+        let existing = GemLog.attempt(GemLog.persist, "fetch local stash rows", {
+            try context.fetch(FetchDescriptor<StoredStashItem>())
+        }) ?? []
         let byID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
         let byDropID = Dictionary(existing.compactMap { row in
             row.gemDropID.map { ($0, row) }
@@ -114,17 +118,21 @@ public final class SessionStore {
                 isDropped: item.dropped ?? false))
             changed = true
         }
-        if changed { try? context.save() }
+        if changed {
+            GemLog.attempt(GemLog.persist, "save stash sync") { try context.save() }
+        }
     }
 
     /// Flag one local copy of this gem as given away (mirror of the server
     /// marking the stash row dropped) so the drop sheet updates instantly.
     public func markDropped(gemID: UUID) {
         guard let context else { return }
-        let rows = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        let rows = GemLog.attempt(GemLog.persist, "fetch stash for markDropped", {
+            try context.fetch(FetchDescriptor<StoredStashItem>())
+        }) ?? []
         if let row = rows.first(where: { $0.gemID == gemID && !$0.isDropped }) {
             row.isDropped = true
-            try? context.save()
+            GemLog.attempt(GemLog.persist, "save markDropped") { try context.save() }
         }
     }
 
@@ -139,8 +147,10 @@ public final class SessionStore {
     /// Submit a finished free run; persist only what the server awarded.
     public func recordFreeCompletion(track: [TrackSample], collected: [GemDrop],
                                      durationS: Int, distanceM: Int) async -> RunCompletionSummary {
-        let result = try? await API.shared.collectDrops(claimed: collected.map(\.id),
-                                                        track: track)
+        let result = await GemLog.attempt(GemLog.session, "free-run collect POST /v1/drops/collect", {
+            try await API.shared.collectDrops(claimed: collected.map(\.id),
+                                              track: track)
+        })
         let awarded = result?.awardedDrops ?? []
         let xp = result?.xpEarned ?? 0
         // Named runs (recommended routes, "Run to <gem>") keep their name in
@@ -163,7 +173,7 @@ public final class SessionStore {
                 p.xp -= XPRules.xpToAdvance(from: p.level)
                 p.level += 1
             }
-            try? context.save()
+            GemLog.attempt(GemLog.persist, "save free-run gems + XP") { try context.save() }
         }
         let pace = distanceM > 50 ? Int(Double(durationS) / (Double(distanceM) / 1_000)) : 0
         return RunCompletionSummary(
@@ -191,18 +201,21 @@ public final class SessionStore {
 
     public func attach(context: ModelContext) {
         self.context = context
-        profile = try? context.fetch(FetchDescriptor<StoredProfile>()).first
+        // A failed fetch here silently routes the user back to Onboarding —
+        // worth distinguishing from "genuinely no profile yet" in the log.
+        profile = (GemLog.attempt(GemLog.persist, "load stored profile", {
+            try context.fetch(FetchDescriptor<StoredProfile>())
+        }) ?? []).first
         // Pull server stash truth (welcome gift included) at launch.
         Task { await refreshStash() }
     }
 
-    public func createProfile(handle: String) {
-        signIn(provider: .guest, handle: handle, externalID: nil)
-    }
-
-    /// Sign-in entry for every provider. While `AuthFlags.allowAllAccounts` is
-    /// on (TEMPORARY), any attempt succeeds — including provider failures and
-    /// guests. Once Django verifies tokens, unverified sign-ins are rejected.
+    /// The LOCAL half of sign-in: persist the identity on this device and
+    /// open the app. Server registration (POST /v1/auth/{provider}, token
+    /// keeping, launch restore) is CoreAuth's `AuthService` — identity is
+    /// not persistence's job. While `AuthFlags.allowAllAccounts` is on
+    /// (TEMPORARY), any attempt succeeds; once Django verifies tokens,
+    /// unverified sign-ins are rejected.
     @discardableResult
     public func signIn(provider: AuthProvider, handle: String,
                        externalID: String?) -> Bool {
@@ -220,13 +233,8 @@ public final class SessionStore {
             context.insert(p)
             profile = p
         }
-        try? context.save()
+        GemLog.attempt(GemLog.persist, "save profile on sign-in") { try context.save() }
         isOnboarded = true
-        // Register with the API (mock today; Django exchanges the identity
-        // token for a JWT here, docs/06) — POST /v1/auth/apple | /google.
-        if let handle = profile?.handle {
-            Task { _ = try? await API.shared.auth(handle: handle) }
-        }
         return true
     }
 
@@ -249,7 +257,9 @@ public final class SessionStore {
     /// gems that would be revoked.
     public func collectableRoute(from route: Route) -> Route {
         guard let context else { return route }
-        let stash = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+        let stash = GemLog.attempt(GemLog.persist, "fetch stash for respawn filter", {
+            try context.fetch(FetchDescriptor<StoredStashItem>())
+        }) ?? []
         let today = Calendar.current.startOfDay(for: Date())
         var filtered = route
         filtered.gemDrops = route.gemDrops.filter { drop in
@@ -281,8 +291,16 @@ public final class SessionStore {
             clientStreakDays: profile?.streakCount ?? 0)
 
         // POST /v1/runs/{id}/complete — the authoritative verdict.
-        let verdict = try? await API.shared.completeRun(routeID: result.route.id,
-                                                        request: request)
+        var verdict: RunVerdict?
+        do {
+            verdict = try await API.shared.completeRun(routeID: result.route.id,
+                                                       request: request)
+        } catch {
+            // Deliberate fallback, but never a silent one: the server will
+            // not know about this run until a future sync (docs/10's retry
+            // queue), and local validation stands in for the verdict.
+            GemLog.session.error("run settlement failed — falling back to local validation: \(String(describing: error), privacy: .public)")
+        }
 
         let status = verdict?.status ?? v.status
         let awardedDrops = verdict?.awardedDrops
@@ -345,7 +363,9 @@ public final class SessionStore {
             // Stash groups by (the themed sets left the UI), so the bonus
             // tracks a goal the user can actually see filling up.
             if let profile {
-                let stash = (try? context.fetch(FetchDescriptor<StoredStashItem>())) ?? []
+                let stash = GemLog.attempt(GemLog.persist, "fetch stash for tier bonus", {
+                    try context.fetch(FetchDescriptor<StoredStashItem>())
+                }) ?? []
                 let owned = Set(stash.map(\.gemID))
                 for (tier, entries) in Dictionary(grouping: GemCatalog.entries,
                                                   by: \.gem.rarity) {
@@ -374,11 +394,17 @@ public final class SessionStore {
             trackPolyline: trackCoords.count > 1 ? PolylineCodec.encode(trackCoords) : nil))
 
         let routeID = result.route.id
-        if let stored = try? context.fetch(FetchDescriptor<StoredRoute>(
-            predicate: #Predicate { $0.id == routeID })).first {
-            stored.runCount += 1
+        let cachedRoutes = GemLog.attempt(GemLog.persist, "fetch cached route for runCount", {
+            try context.fetch(FetchDescriptor<StoredRoute>(
+                predicate: #Predicate { $0.id == routeID }))
+        }) ?? []
+        cachedRoutes.first?.runCount += 1
+        // The final write of the whole completion: the run row, the awarded
+        // gems, XP and level-ups all commit here. Failing silently meant a
+        // celebrated run could vanish without a trace.
+        GemLog.attempt(GemLog.persist, "save completed run + awarded gems") {
+            try context.save()
         }
-        try? context.save()
         return completedSet
     }
 

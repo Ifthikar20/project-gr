@@ -24,6 +24,8 @@ let package = Package(
             .product(name: "CoreModels", package: "GemRunCore"),
             .product(name: "DesignSystem", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
+            // Sign-in buttons call the auth service; no provider logic here.
+            .product(name: "CoreAuth", package: "GemRunCore"),
         ]),
         .target(name: "FeatureExplore", dependencies: [
             .product(name: "CoreModels", package: "GemRunCore"),
@@ -60,6 +62,8 @@ let package = Package(
             .product(name: "DesignSystem", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
             .product(name: "CoreNetworking", package: "GemRunCore"),
+            // CalorieRules for the Calories board.
+            .product(name: "GameKitCore", package: "GemRunCore"),
         ]),
         .target(name: "FeatureProfile", dependencies: [
             .product(name: "CoreModels", package: "GemRunCore"),

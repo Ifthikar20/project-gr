@@ -217,7 +217,14 @@ public enum GemCatalog {
 
     /// Any catalog gem of the given rarity (used when placing drops).
     public static func gem(of rarity: Rarity) -> Gem {
-        entries.first { $0.gem.rarity == rarity }!.gem
+        guard let match = entries.first(where: { $0.gem.rarity == rarity }) else {
+            // Every rarity ships in the catalog today; if an edit ever
+            // removes one, degrade to the first entry instead of trapping
+            // mid-placement (this was a force-unwrap).
+            GemLog.session.fault("catalog has no \(rarity.rawValue, privacy: .public) gems — falling back to \(entries[0].gem.name, privacy: .public)")
+            return entries[0].gem
+        }
+        return match.gem
     }
 
     /// A random gem of the given rarity — used by placement so we don't drop
