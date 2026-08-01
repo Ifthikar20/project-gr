@@ -37,7 +37,6 @@ public struct RouteCreationFlow: View {
 @Observable
 final class CreationModel {
     enum Step { case draw, gems, publish }
-    enum PlanMode { case draw, destination }
 
     /// One verified segment between consecutive numbered dots. `options`
     /// holds every walkable alternate MKDirections offered for the pair —
@@ -50,7 +49,12 @@ final class CreationModel {
     }
 
     var step: Step = .draw
-    var planMode: PlanMode = .draw
+    /// Start rule for the draw step: ON (default) plants the runner's live
+    /// position as the route's first dot the moment the first tap lands —
+    /// the drawn route begins where the run will. OFF = the first pin drop
+    /// is the start (the original behavior). Locked once drawing begins;
+    /// undoing back to an empty map unlocks it.
+    var startFromMyLocation = true
     var waypoints: [Coordinate] = []
     /// Idle invariant: legs.count == max(0, waypoints.count - 1). While the
     /// snap worker drains, trailing waypoints briefly outnumber legs.
@@ -62,34 +66,19 @@ final class CreationModel {
     var placementError: String?
     /// Transient "No walkable path to that spot." style message; auto-clears.
     var pathNotice: String?
-    /// Draw-mode "Finding a walkable path…" indicator (worker lifetime).
+    /// "Finding a walkable path…" indicator (worker lifetime).
     var isSnapping = false
     @ObservationIgnored private var snapWorker: Task<Void, Never>?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
 
-    // Destination mode: start (current location or a typed address) → pin.
-    var destination: Coordinate?
-    var destinationPath: [Coordinate] = []
-    var startAddress = ""
-    /// nil = "use my current location" (the default).
-    var customStart: Coordinate?
-    var planError: String?
-    var isPlanning = false
-    @ObservationIgnored private var planGeneration = 0
-
-    /// Single source of truth for the drawn/published polyline, derived per
-    /// mode. Draw mode concatenates the chosen path of each verified leg —
-    /// unverified geometry is structurally impossible here.
+    /// Single source of truth for the drawn/published polyline: the chosen
+    /// path of each verified leg, concatenated — unverified geometry is
+    /// structurally impossible here.
     var pathCoords: [Coordinate] {
-        switch planMode {
-        case .draw:
-            guard let first = waypoints.first else { return [] }
-            var out = [first]
-            for leg in legs { out.append(contentsOf: leg.path.dropFirst()) }
-            return out
-        case .destination:
-            return destinationPath
-        }
+        guard let first = waypoints.first else { return [] }
+        var out = [first]
+        for leg in legs { out.append(contentsOf: leg.path.dropFirst()) }
+        return out
     }
 
     /// "Another path" is offered only for the most recent settled leg, and
@@ -114,81 +103,20 @@ final class CreationModel {
         }
     }
 
-    /// Destination mode: a map tap drops the destination pin and the route
-    /// snaps from the start point to it.
-    func setDestination(_ c: Coordinate) {
-        destination = c
-        Task { await planToDestination() }
-    }
-
-    func useCurrentLocationStart() {
-        customStart = nil
-        startAddress = ""
-        Task { await planToDestination() }
-    }
-
-    /// Geocode a typed address into the start point.
-    func geocodeStart() async {
-        let query = startAddress.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else {
-            useCurrentLocationStart()
-            return
-        }
-        planError = nil
-        let placemarks: [CLPlacemark]?
-        do {
-            placemarks = try await CLGeocoder().geocodeAddressString(query)
-        } catch {
-            // Distinguish "no such address" from "geocoder unreachable" —
-            // the same UI copy hid two different problems.
-            GemLog.map.error("geocode failed: \(String(describing: error), privacy: .public)")
-            planError = "Couldn't look up that address — check your connection."
-            return
-        }
-        guard let location = placemarks?.first?.location else {
-            planError = "Couldn't find that address."
-            return
-        }
-        customStart = Coordinate(lat: location.coordinate.latitude,
-                                 lng: location.coordinate.longitude)
-        await planToDestination()
-    }
-
-    private func planToDestination() async {
-        guard let destination else { return }
-        planError = nil
-        let start: Coordinate
-        if let customStart {
-            start = customStart
-        } else if let here = CLLocationManager().location {
-            start = Coordinate(lat: here.coordinate.latitude,
-                               lng: here.coordinate.longitude)
-        } else {
-            planError = "Waiting for your location — or type a start address."
-            return
-        }
-        // Generation token: rapid re-pinning can finish out of order, and an
-        // older plan must never overwrite a newer pin's result.
-        planGeneration += 1
-        let generation = planGeneration
-        isPlanning = true
-        defer { isPlanning = false }
-        let result = await PathSnapper.snapVerified(from: start, to: destination)
-        guard generation == planGeneration else { return }
-        guard result.snapped else {
-            // Never keep the straight-line fallback: an unreachable pin is
-            // rejected outright, and a fresh tap is the retry gesture.
-            self.destination = nil
-            destinationPath = []
-            planError = "No walkable path there — try a closer pin."
-            return
-        }
-        destinationPath = result.path
-    }
-
-    /// Draw mode: the numbered dot appears instantly; the serial worker
-    /// verifies a walking path to it and rejects the dot if none exists.
+    /// The numbered dot appears instantly; the serial worker verifies a
+    /// walking path to it and rejects the dot if none exists. With "start
+    /// from my location" on, the very first tap also plants the start dot
+    /// at the runner's live position — the leg from you to your tap goes
+    /// through the same walkability verification as any other.
     func addWaypoint(_ c: Coordinate) {
+        if startFromMyLocation, waypoints.isEmpty {
+            if let here = CLLocationManager().location {
+                waypoints.append(Coordinate(lat: here.coordinate.latitude,
+                                            lng: here.coordinate.longitude))
+            } else {
+                showPathNotice("No location fix yet — starting from your first pin.")
+            }
+        }
         waypoints.append(c)
         ensureSnapWorker()
     }

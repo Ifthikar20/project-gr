@@ -347,7 +347,7 @@ flowchart LR
         direction TB
         A1["🗺️ Tap waypoints —<br/>each leg snaps to Apple<br/>walking directions"]:::map
         A2["Unroutable tap →<br/>dot rejected + notice<br/>(fail closed, no straight lines)"]:::card
-        A3["Modes: Draw it ·<br/>To a destination (geocoded)"]:::card
+        A3["Starts at your live location<br/>(toggle: first pin instead)"]:::card
         A4["Next gate: ≥ 1 km<br/>+ no snap in flight"]:::pulse
         A1 ~~~ A2 ~~~ A3 ~~~ A4
     end
