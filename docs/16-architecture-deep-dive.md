@@ -41,7 +41,7 @@ flowchart LR
     A --> B --> D --> E --> A
     C --> B
     E --> C
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
 ```
 
@@ -120,7 +120,7 @@ flowchart TB
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     classDef ext fill:#E3E4E5,stroke:#7F8083,color:#16181D
     style IOS fill:#FAFAF8,stroke:#16181D,color:#16181D
     style FEAT fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
@@ -207,11 +207,11 @@ nothing else is allowed on screen.
 flowchart LR
     SNOW["<b>Snow</b><br/>#FAFAF8<br/>app background<br/>+ #FFFFFF cards"]:::snow
     INK["<b>Ink</b><br/>#16181D<br/>text · 55% secondary<br/>· 12% hairlines"]:::ink
-    PULSE["<b>Pulse</b><br/>#FC4C02<br/>the single accent:<br/>actions, pace, rarity"]:::pulse
+    PULSE["<b>Pulse</b><br/>#EF3B23<br/>the single accent:<br/>actions, pace, rarity"]:::pulse
     SNOW ~~~ INK ~~~ PULSE
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
 ```
 
 **Rarity is an accent ramp, not new colors** — pulse at rising opacity,
@@ -226,11 +226,11 @@ flowchart LR
     E["✦ Epic<br/>pulse 88%"]:::e
     L["♛ Legendary<br/>pulse 100%"]:::l
     C --> U --> R --> E --> L
-    classDef c fill:#FEC9B3,stroke:#16181D,color:#16181D
-    classDef u fill:#FDA680,stroke:#16181D,color:#16181D
-    classDef r fill:#FD824E,stroke:#16181D,color:#16181D
-    classDef e fill:#FC6120,stroke:#16181D,color:#FFFFFF
-    classDef l fill:#FC4C02,stroke:#16181D,color:#FFFFFF
+    classDef c fill:#FAC4BD,stroke:#16181D,color:#16181D
+    classDef u fill:#F79D91,stroke:#16181D,color:#16181D
+    classDef r fill:#F47665,stroke:#16181D,color:#16181D
+    classDef e fill:#F1533D,stroke:#16181D,color:#FFFFFF
+    classDef l fill:#EF3B23,stroke:#16181D,color:#FFFFFF
 ```
 
 | Layer | Tokens |
@@ -267,7 +267,7 @@ flowchart LR
     CRASH(["Crash recovery:<br/>RunBuffer.pending() < 30 min<br/>→ 'Resume your run?'"]):::ext -.-> RUN
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     classDef ext fill:#E3E4E5,stroke:#7F8083,color:#16181D
     style TABS fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
@@ -293,8 +293,8 @@ flowchart TB
     end
     classDef snow fill:#FAFAF8,stroke:#7F8083,color:#16181D
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
-    classDef map fill:#FEC9B3,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef map fill:#FAC4BD,stroke:#E3E4E5,color:#16181D
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     style EXPLORE fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -330,8 +330,8 @@ flowchart TB
         D1 ~~~ D2 ~~~ D3 ~~~ D4 ~~~ D5 ~~~ D6
     end
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
-    classDef map fill:#FDA680,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef map fill:#F79D91,stroke:#E3E4E5,color:#16181D
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     style DETAIL fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -368,8 +368,8 @@ flowchart LR
     end
     S1 --> S2 --> S3
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
-    classDef map fill:#FD824E,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef map fill:#F47665,stroke:#E3E4E5,color:#16181D
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     style S1 fill:#FAFAF8,stroke:#16181D,color:#16181D
     style S2 fill:#FAFAF8,stroke:#16181D,color:#16181D
     style S3 fill:#FAFAF8,stroke:#16181D,color:#16181D
@@ -394,8 +394,8 @@ flowchart TB
         R1 ~~~ R2 ~~~ R3 ~~~ R4 ~~~ R5
     end
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
-    classDef map fill:#FC6120,stroke:#E3E4E5,color:#FFFFFF
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef map fill:#F1533D,stroke:#E3E4E5,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     style RUN fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
@@ -426,8 +426,8 @@ flowchart TB
         M1 ~~~ M2 ~~~ M3 ~~~ M4 ~~~ M5 ~~~ M6
     end
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
-    classDef map fill:#FDA680,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef map fill:#F79D91,stroke:#E3E4E5,color:#16181D
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     style SUM fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -459,7 +459,7 @@ flowchart LR
         PA ~~~ PB ~~~ PC ~~~ PD
     end
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
-    classDef map fill:#FEC9B3,stroke:#E3E4E5,color:#16181D
+    classDef map fill:#FAC4BD,stroke:#E3E4E5,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     style STASH fill:#FAFAF8,stroke:#16181D,color:#16181D
     style COMP fill:#FAFAF8,stroke:#16181D,color:#16181D
@@ -488,7 +488,7 @@ sequenceDiagram
     participant S as SessionStore
     participant API as API.shared
 
-    rect rgb(254, 201, 179)
+    rect rgb(250, 196, 189)
         note over GPS,ENG: during the run — screen may be off (background location on, run-scoped)
         GPS->>REC: raw CLLocation stream
         REC->>REC: reject bad accuracy / stale >5 s / negative speed<br/>3-sample weighted smoothing (0.5/0.3/0.2)
@@ -554,7 +554,7 @@ flowchart TB
     CN --> CM
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     style FEATURES fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -710,9 +710,9 @@ flowchart TB
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
-    classDef t1 fill:#FC6120,stroke:#16181D,color:#FFFFFF
-    classDef t2 fill:#FDA680,stroke:#16181D,color:#16181D
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef t1 fill:#F1533D,stroke:#16181D,color:#FFFFFF
+    classDef t2 fill:#F79D91,stroke:#16181D,color:#16181D
 ```
 
 **The per-mile contract** (docs/14 §2.1) — every count is radial, and only
@@ -748,7 +748,7 @@ sequenceDiagram
     alt already settled
         DB-->>C: stored verdict, byte-for-byte (never double-awards)
     else first settlement
-        rect rgb(254, 201, 179)
+        rect rgb(250, 196, 189)
             note over V,VAL: replay — the client's claims are hints, not facts
             V->>VAL: validate(track, geometry) + replay_collections(...)
             VAL-->>V: status valid/flagged/invalid + flags<br/>(adherence · coverage · teleport · pace bounds)<br/>+ the drops the track ACTUALLY earned<br/>(30.5 m radius · monotonic progress · hysteresis)
@@ -943,7 +943,7 @@ flowchart TB
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     classDef ext fill:#E3E4E5,stroke:#7F8083,color:#16181D
     style PODS fill:#FAFAF8,stroke:#16181D,color:#16181D
     style PG fill:#FAFAF8,stroke:#16181D,color:#16181D

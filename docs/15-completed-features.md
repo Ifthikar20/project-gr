@@ -270,7 +270,7 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 - **Imperial everywhere**: miles, feet, min/mi via one formatter
   (`CoreModels/UnitFormat.swift`, 1609.344 m/mi); models stay metric.
 - **Design system**: Daybreak Pulse — snow surfaces, ink text, one pulse
-  accent (#FC4C02); rarity = pulse-opacity ramp + distinct glyphs (never
+  accent (#EF3B23); rarity = pulse-opacity ramp + distinct glyphs (never
   color alone).
 - **Custom gem art pipeline**: drop PNGs into `GEMS_REPO/` (named by
   material — "Emerald_Gem.png") and build: `scripts/import-gem-art.sh`

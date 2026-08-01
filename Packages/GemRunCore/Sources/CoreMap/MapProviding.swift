@@ -16,7 +16,7 @@ public extension Coordinate {
 // Mirrors DesignSystem's 3-color "Daybreak Pulse" tokens (CoreMap stays
 // independent of DesignSystem by design — docs/07 dependency rule).
 public enum MapPalette {
-    public static let pulse = Color(red: 0.988, green: 0.298, blue: 0.008)   // #FC4C02
+    public static let pulse = Color(red: 0.937, green: 0.231, blue: 0.137)   // #EF3B23 ember red
     public static let ink = Color(red: 0.086, green: 0.094, blue: 0.114)     // #16181D
 
     public static func rarity(_ r: Rarity) -> Color {

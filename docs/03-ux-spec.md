@@ -36,7 +36,7 @@ Push navigation within tabs:
 |---|---|---|
 | Snow | #FAFAF8 bg / #FFFFFF cards | Surfaces |
 | Ink | #16181D (+0.55 secondary text, +0.12 hairlines) | Text, icons |
-| Pulse | #FC4C02 race orange (+ tint ramp) | THE accent: CTAs, gems, streaks, live pace, own rows |
+| Pulse | #EF3B23 ember red (+ tint ramp) | THE accent: CTAs, gems, streaks, live pace, own rows |
 
 - **Rarity = pulse ramp + glyph + label** (double-encoded, grayscale/color-blind safe): Common `diamond` 0.30 → Uncommon `diamond.fill` 0.50 → Rare `rhombus.fill` 0.70 → Epic `seal.fill` 0.88 → Legendary `crown.fill` 1.0.
 - **Map:** light standard style, POIs suppressed; pulse polylines and glyph gem markers. *Constraint:* MapKit tiles keep Apple's own palette — the 3-color rule governs app chrome and overlays; a fully on-palette map is a benefit of the pending Mapbox custom style.

@@ -37,7 +37,7 @@ flowchart LR
     M2 -.->|"free run instead"| M6
     M5 --> M7 & M8 & M9 & M10
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
 ```
 
@@ -644,7 +644,7 @@ flowchart TB
     COMPLETE --> VERDICT --> LOCAL
     SEARCH -->|"profile_id"| ADD
     CHECK -->|"available"| PATCHME
-    classDef pulse fill:#FC4C02,stroke:#FC4C02,color:#FFFFFF
+    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
