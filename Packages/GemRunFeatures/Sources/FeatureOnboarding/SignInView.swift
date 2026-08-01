@@ -12,6 +12,7 @@ import UIKit
 /// photo has been added yet, a designed ember-gradient fallback keeps the
 /// page whole — probed once via UIImage, the same pattern as CoreMap's
 /// GemArtProbe. All provider logic lives in AuthService.
+@MainActor
 struct SignInView: View {
     @Environment(SessionStore.self) private var session
     @State private var handle = ""
