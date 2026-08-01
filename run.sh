@@ -22,6 +22,25 @@ PID_FILE="backend/.server.pid"
 
 say() { printf '\n== %s\n' "$*"; }
 
+# Sign-in backdrop: drop running-background.jpg at the repo root and it ships
+# in the next build (SignInView probes the "running-background" asset and
+# falls back to a gradient while it's absent).
+import_signin_backdrop() {
+    [ -f "running-background.jpg" ] || return 0
+    local set_dir="App/Resources/Assets.xcassets/running-background.imageset"
+    mkdir -p "$set_dir"
+    cp running-background.jpg "$set_dir/running-background.jpg"
+    cat > "$set_dir/Contents.json" <<'JSON'
+{
+  "images" : [
+    { "filename" : "running-background.jpg", "idiom" : "universal" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}
+JSON
+    echo "-- Sign-in backdrop imported (running-background.jpg)"
+}
+
 start_backend() {
     say "Backend: Django API on port ${API_PORT}"
     command -v python3 >/dev/null || { echo "python3 is required"; exit 1; }
@@ -158,6 +177,7 @@ run_app() {
     # Custom gem art: PNGs dropped in GEMS_REPO/ become catalog imagesets
     # (downscaled once at import so in-app decode stays cheap).
     if [ -f scripts/import-gem-art.sh ]; then bash scripts/import-gem-art.sh; fi
+    import_signin_backdrop
 
     say "Building (first build takes a few minutes)"
     # Build number = git commit count: every commit bumps it, so each build
@@ -292,6 +312,7 @@ EOF
     # Custom gem art: PNGs dropped in GEMS_REPO/ become catalog imagesets
     # (downscaled once at import so in-app decode stays cheap).
     if [ -f scripts/import-gem-art.sh ]; then bash scripts/import-gem-art.sh; fi
+    import_signin_backdrop
 
     say "Building (signed for device — first build takes a few minutes)"
     # Build number = git commit count: every commit bumps it, so each build
