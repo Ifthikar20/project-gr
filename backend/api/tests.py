@@ -1105,3 +1105,31 @@ class ApiTests(TestCase):
                         side_effect=RuntimeError("placement bug")):
             call_command("stock_gems", stdout=out)
         self.assertIn("Stocking failed", out.getvalue())
+
+    # ------------------------------------------------- unique accounts
+
+    def test_same_external_id_is_the_same_account(self):
+        """Unique accounts: the hashed external id is the identity. The same
+        id signing in twice lands on ONE profile; a different id gets its
+        own — and the raw id never appears in the database."""
+        first = self.post("/v1/auth/apple",
+                          {"handle": "ali", "external_user_id": "apple-user-1"})
+        again = self.post("/v1/auth/apple",
+                          {"handle": "ali", "external_user_id": "apple-user-1"})
+        other = self.post("/v1/auth/apple",
+                          {"handle": "sam", "external_user_id": "apple-user-2"})
+        self.assertEqual(first.json()["profile"]["id"],
+                         again.json()["profile"]["id"])
+        self.assertNotEqual(first.json()["profile"]["id"],
+                            other.json()["profile"]["id"])
+        self.assertFalse(Profile.objects.filter(
+            external_user_id="apple-user-1").exists())
+
+    def test_guest_provider_gets_a_stable_unique_account(self):
+        first = self.post("/v1/auth/guest",
+                          {"handle": "wanderer", "external_user_id": "device-abc"})
+        self.assertEqual(first.status_code, 200)
+        again = self.post("/v1/auth/guest",
+                          {"handle": "wanderer", "external_user_id": "device-abc"})
+        self.assertEqual(first.json()["profile"]["id"],
+                         again.json()["profile"]["id"])

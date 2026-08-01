@@ -23,7 +23,7 @@
 ```mermaid
 flowchart LR
     M0["0 · Launch<br/>NO network"]:::snow
-    M1["1 · Sign in<br/>POST /auth/apple"]:::pulse
+    M1["1 · Sign in<br/>POST /auth/{provider}"]:::pulse
     M2["2 · Map opens<br/>GET /routes + GET /drops<br/>(parallel)"]:::pulse
     M3["3 · Stash tab<br/>GET /stash"]:::card
     M4["4 · Start route run<br/>POST /runs"]:::pulse
@@ -61,23 +61,33 @@ else, callable in any order once signed in.
 
 ---
 
-## Moment 0 — App launch: **zero network**
+## Moment 0 — App launch: **zero network** (almost)
 
 **WHEN:** the app process starts.
 
-Nothing is sent. `SessionStore.attach()` reads the local SwiftData profile and
-the `isOnboarded` flag from UserDefaults; `API.shared` is lazy and hasn't even
-opened a connection. The first packet leaves the phone at **sign-in** (fresh
-install) or at the **first map open** (returning user).
+Nothing is sent in the normal case. `SessionStore.attach()` reads the local
+SwiftData profile and the `isOnboarded` flag from UserDefaults; then
+`AuthService.restoreSession()` (CoreAuth, docs/18) hands the **persisted
+session token** back to the API client — a local adopt, **no packet**. The
+first request leaves the phone at **sign-in** (fresh install) or at the
+**first map open** (returning user), already wearing its Bearer header.
 
-> ➜ **FEEDS:** nothing — that's the point. Launch is instant and offline-safe.
+The one exception: a signed-in profile with **no stored token** (its
+registration POST failed offline once, or the install predates token
+persistence). Restore then re-sends Moment 1's auth request with the stored
+identity in the background — same external id, so the server returns the
+**same account**, and the token is persisted for next time.
+
+> ➜ **FEEDS:** the adopted token → the `Authorization` header on everything
+> below. Launch stays instant and offline-safe either way.
 
 ---
 
 ## Moment 1 — Sign in (Onboarding, last page)
 
 **WHEN:** the user taps *Sign in with Apple* / *Continue as guest* on the
-final onboarding page.
+final onboarding page. The path names the provider — `/v1/auth/apple`,
+`/google`, or `/guest`.
 
 **REQUEST**
 
@@ -86,7 +96,14 @@ POST /v1/auth/apple
 Content-Type: application/json
 ```
 ```jsonc
-{ "handle": "ali" }
+{
+  "handle": "ali",
+  // The provider's STABLE user id: Apple's per-team `credential.user`,
+  // Google's subject id, or the per-install guest UUID. The server stores
+  // only its SHA-256 hash — and uses it to return the SAME profile on
+  // every sign-in. This is what makes accounts unique (docs/18).
+  "external_user_id": "001745.6f1a…c9d2.0921"
+}
 ```
 
 **RESPONSE — 200**
@@ -112,7 +129,9 @@ doesn't see them here; it *discovers* them in Moment 3.
 
 > ➜ **FEEDS:**
 > - `token` → the `Authorization: Bearer` header on **every request for the
->   rest of this document**. The single most important handoff in the app.
+>   rest of this document** — and it's **persisted**, so Moment 0 of the
+>   *next* launch adopts it without a network call. The single most
+>   important handoff in the app.
 > - `profile` → the local `StoredProfile` (handle, level, streak shown in
 >   Profile tab without another call).
 
@@ -122,12 +141,11 @@ doesn't see them here; it *discovers* them in Moment 3.
 501 { "title": "Identity token verification not yet enabled", "code": "auth_strict_mode" }
 ```
 
-**Dev-posture honesty:** today the client sends *only* `handle` — no
-`external_user_id`, no Apple identity token (that's the docs/10 auth work), so
-the server mints a fresh profile per sign-in. And the token lives in a client
-variable, **not the Keychain yet** ("Phase F polish") — after a relaunch,
-requests go out with no Bearer header and the dev server falls back to the
-shared `dev-fallback` guest profile.
+**Dev-posture honesty:** the client sends the stable `external_user_id` but
+**not yet the provider's identity token** — cryptographic proof of that id is
+the docs/10 work, so today's server trusts the claim (fine for dev, a flip
+for launch). The token persists in UserDefaults; moving it into the
+**Keychain** is the docs/10 hardening item.
 
 ---
 
@@ -615,7 +633,7 @@ difficulty, your `creator_handle` filled in, `run_count: 0`.
 
 ```mermaid
 flowchart TB
-    AUTH["1 · POST /auth/apple"]:::pulse
+    AUTH["1 · POST /auth/{provider}"]:::pulse
     TOKEN(["token — attached as the Bearer<br/>header on every call below"]):::ink
     ROUTES["2a · GET /routes"]:::card
     DROPS["2b · GET /drops"]:::card
@@ -662,7 +680,7 @@ settlement doesn't depend on any earlier response surviving a crash.
 
 | Endpoint | Fires at | Response feeds |
 |---|---|---|
-| `POST /v1/auth/{apple\|google}` | Moment 1 — onboarding | `token` → every later call · `profile` → local store |
+| `POST /v1/auth/{apple\|google\|guest}` | Moment 1 — onboarding · Moment 0 token-recovery | `token` → every later call (persisted for relaunch) · `profile` → local store |
 | `GET /v1/routes` | Moment 2 — map open / refetch triggers | SwiftData route cache (server-authoritative) |
 | `GET /v1/drops` | Moment 2 — same triggers | map pins · `claimed` ids for Moment 6 · `stocking` → self-refetch |
 | `GET /v1/stash` | Moment 3 — Stash tab / after runs | local stash merge · `dropped` gates Moment 7 |
@@ -687,11 +705,13 @@ settlement doesn't depend on any earlier response surviving a crash.
 
 ## Current dev-posture notes (so this doc stays honest)
 
-1. **Auth sends only `handle` today** — no identity token, no
-   `external_user_id`. Real Apple/Google verification is the docs/10 exit
-   work; until then the server mints a new profile per sign-in.
-2. **The bearer token is not persisted** (no Keychain yet) — a relaunch drops
-   it, and dev-mode requests fall back to the shared guest profile.
+1. **Auth sends `handle` + `external_user_id`, but no identity token yet** —
+   accounts are unique and stable (same external id → same profile, hashed at
+   rest), but cryptographic *proof* of the id (Apple `identityToken` / Google
+   `idToken` verification) is the docs/10 exit work.
+2. **The bearer token persists in UserDefaults, not the Keychain yet** — a
+   relaunch adopts it silently (Moment 0); moving it to the Keychain is the
+   docs/10 hardening item.
 3. **`run_id` from Moment 4 is informational** — settlement is addressed by
    route id, idempotency by a client key.
 4. **`streak_extended` in the verdict isn't decoded by the client yet** — the

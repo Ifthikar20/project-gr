@@ -33,11 +33,22 @@ public final class HTTPGemRunAPI: GemRunAPI {
 
     // MARK: - GemRunAPI
 
-    public func auth(handle: String) async throws -> AuthResponse {
-        let response: AuthResponse = try await send("POST", "auth/apple",
-                                                    body: ["handle": handle])
+    private struct AuthRequest: Encodable {
+        let handle: String
+        let externalUserId: String?
+    }
+
+    public func auth(provider: AuthProvider, handle: String,
+                     externalID: String?) async throws -> AuthResponse {
+        let response: AuthResponse = try await send(
+            "POST", "auth/\(provider.rawValue)",
+            body: AuthRequest(handle: handle, externalUserId: externalID))
         token = response.token
         return response
+    }
+
+    public func adopt(sessionToken: String?) async {
+        token = sessionToken
     }
 
     public func me() async throws -> UserProfile {

@@ -176,7 +176,11 @@ def route_json(route, viewer=None, collected_ids=None, active_drops=None):
 @csrf_exempt
 @require_http_methods(["POST"])
 def auth_provider(request, provider):
-    if provider not in ("apple", "google"):
+    # "guest" gets the same stable identity mechanics as the real
+    # providers: the client sends a per-install id, stored hashed, so a
+    # guest keeps ONE account across sessions instead of minting a new
+    # profile every sign-in.
+    if provider not in ("apple", "google", "guest"):
         return problem(404, "Unknown auth provider")
     data = body_of(request)
     if data is None:

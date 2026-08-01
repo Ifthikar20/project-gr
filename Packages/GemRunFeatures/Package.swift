@@ -24,6 +24,8 @@ let package = Package(
             .product(name: "CoreModels", package: "GemRunCore"),
             .product(name: "DesignSystem", package: "GemRunCore"),
             .product(name: "CorePersistence", package: "GemRunCore"),
+            // Sign-in buttons call the auth service; no provider logic here.
+            .product(name: "CoreAuth", package: "GemRunCore"),
         ]),
         .target(name: "FeatureExplore", dependencies: [
             .product(name: "CoreModels", package: "GemRunCore"),

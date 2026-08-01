@@ -47,10 +47,15 @@ public actor MockGemRunAPI: GemRunAPI {
 
     // MARK: - Auth & user
 
-    public func auth(handle: String) async throws -> AuthResponse {
-        await call("POST /v1/auth/apple  (handle: \(handle))")
+    public func auth(provider: AuthProvider, handle: String,
+                     externalID: String?) async throws -> AuthResponse {
+        await call("POST /v1/auth/\(provider.rawValue)  (handle: \(handle))")
         profile.handle = handle
         return AuthResponse(token: "mock-jwt-\(UUID().uuidString.prefix(8))", profile: profile)
+    }
+
+    public func adopt(sessionToken: String?) async {
+        // The mock has no transport; the session is always "this device".
     }
 
     public func me() async throws -> UserProfile {

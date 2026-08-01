@@ -210,13 +210,12 @@ public final class SessionStore {
         Task { await refreshStash() }
     }
 
-    public func createProfile(handle: String) {
-        signIn(provider: .guest, handle: handle, externalID: nil)
-    }
-
-    /// Sign-in entry for every provider. While `AuthFlags.allowAllAccounts` is
-    /// on (TEMPORARY), any attempt succeeds — including provider failures and
-    /// guests. Once Django verifies tokens, unverified sign-ins are rejected.
+    /// The LOCAL half of sign-in: persist the identity on this device and
+    /// open the app. Server registration (POST /v1/auth/{provider}, token
+    /// keeping, launch restore) is CoreAuth's `AuthService` — identity is
+    /// not persistence's job. While `AuthFlags.allowAllAccounts` is on
+    /// (TEMPORARY), any attempt succeeds; once Django verifies tokens,
+    /// unverified sign-ins are rejected.
     @discardableResult
     public func signIn(provider: AuthProvider, handle: String,
                        externalID: String?) -> Bool {
@@ -236,21 +235,6 @@ public final class SessionStore {
         }
         GemLog.attempt(GemLog.persist, "save profile on sign-in") { try context.save() }
         isOnboarded = true
-        // Register with the API (mock today; Django exchanges the identity
-        // token for a JWT here, docs/06) — POST /v1/auth/apple | /google.
-        if let handle = profile?.handle {
-            Task {
-                do {
-                    _ = try await API.shared.auth(handle: handle)
-                } catch {
-                    // The session keeps working locally, but every later
-                    // request now goes out WITHOUT a bearer token — the
-                    // "scattered unrelated 401s" bug starts exactly here,
-                    // so name it loudly at its cause.
-                    GemLog.session.error("auth POST failed — continuing unauthenticated: \(String(describing: error), privacy: .public)")
-                }
-            }
-        }
         return true
     }
 

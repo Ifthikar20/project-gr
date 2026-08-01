@@ -231,8 +231,16 @@ public protocol GemRunAPI: Sendable {
     /// handle counts as free.
     func checkHandle(_ handle: String) async throws -> Bool
 
-    // Auth & user — POST /v1/auth/apple, GET/PATCH/DELETE /v1/users/me
-    func auth(handle: String) async throws -> AuthResponse
+    // Auth & user — POST /v1/auth/{provider}, GET/PATCH/DELETE /v1/users/me
+    /// Register/recognize an account. `externalID` is the provider's stable
+    /// user id (Apple credential.user, Google id, or the per-install guest
+    /// id) — the server stores only its hash and uses it to return the SAME
+    /// account on every sign-in.
+    func auth(provider: AuthProvider, handle: String,
+              externalID: String?) async throws -> AuthResponse
+    /// Adopt a previously issued session token (app relaunch): all later
+    /// calls carry it. nil clears the session (sign-out).
+    func adopt(sessionToken: String?) async
     func me() async throws -> UserProfile
     func updateMe(handle: String?) async throws -> UserProfile
     func deleteAccount() async throws

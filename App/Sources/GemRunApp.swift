@@ -1,3 +1,4 @@
+import CoreAuth
 import CoreLocationKit
 import CoreModels
 import CorePersistence
@@ -42,6 +43,11 @@ struct GemRunApp: App {
                 .preferredColorScheme(.light)   // "Daybreak Pulse" is a light system
                 .task {
                     session.attach(context: container.mainContext)
+                    // After attach (restore needs the stored profile):
+                    // adopt the persisted session token — or re-register a
+                    // tokenless sign-in — so a relaunch is the SAME account,
+                    // not an unauthenticated stranger (docs/18).
+                    await AuthService(session: session).restoreSession()
                 }
         }
     }

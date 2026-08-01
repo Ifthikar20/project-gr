@@ -1,4 +1,5 @@
 import AuthenticationServices
+import CoreAuth
 import CoreModels
 import CorePersistence
 import DesignSystem
@@ -11,7 +12,9 @@ import UIKit
 /// scrim, with the identity controls staggering in from below. When no
 /// photo has been added yet, a designed ember-gradient fallback keeps the
 /// page whole — probed once via UIImage, the same pattern as CoreMap's
-/// GemArtProbe. All provider logic lives in AuthService.
+/// GemArtProbe. All provider logic lives in CoreAuth's AuthService; every
+/// button here does exactly what it says (docs/18) — Google only appears
+/// when the build can actually perform it.
 @MainActor
 struct SignInView: View {
     @Environment(SessionStore.self) private var session
@@ -83,11 +86,13 @@ struct SignInView: View {
                 .clipShape(Capsule())
                 .shadow(color: DS.Colors.ink.opacity(0.3), radius: 8, y: 3)
 
-                GhostButton("Continue with Google", icon: "g.circle.fill",
-                            fullWidth: false) {
-                    report(auth.signInWithGoogle(preferredHandle: handle))
+                if AuthService.isGoogleSignInAvailable {
+                    GhostButton("Continue with Google", icon: "g.circle.fill",
+                                fullWidth: false) {
+                        report(auth.signInWithGoogle(preferredHandle: handle))
+                    }
+                    .frame(width: 280)
                 }
-                .frame(width: 280)
             }
             .entrance(revealed, delay: 0.22)
 
@@ -116,12 +121,18 @@ struct SignInView: View {
             }
             .entrance(revealed, delay: 0.34)
 
-            Spacer().frame(height: 30)
+            // The paged TabView is full-bleed now, so this margin measures
+            // from the physical screen edge: clear the home indicator AND
+            // the page dots that overlay the bottom of the screen.
+            Spacer().frame(height: 56)
         }
     }
 
     private func report(_ outcome: AuthService.Outcome) {
-        if case .failure(let message) = outcome {
+        switch outcome {
+        case .success, .cancelled:
+            break   // success dismisses onboarding; cancel was a choice
+        case .failure(let message):
             withAnimation { authError = message }
         }
     }

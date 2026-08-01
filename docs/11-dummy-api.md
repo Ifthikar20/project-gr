@@ -15,7 +15,7 @@ Every mock call logs to the Xcode console with its real path, e.g. `🌐 [MockAP
 
 | # | HTTP (Django implements) | Swift call | Used by | Mock behavior |
 |---|---|---|---|---|
-| 1 | `POST /v1/auth/apple` | `auth(handle:)` | Onboarding (via `SessionStore.createProfile`) | Returns fake JWT + profile |
+| 1 | `POST /v1/auth/{provider}` | `auth(provider:handle:externalID:)` | Onboarding (via `CoreAuth.AuthService`, docs/18) | Returns fake JWT + profile |
 | 2 | `GET /v1/users/me` | `me()` | (available; profile is cached locally) | Returns stored profile |
 | 3 | `PATCH /v1/users/me` | `updateMe(handle:)` | (available for settings) | Updates handle |
 | 4 | `DELETE /v1/users/me` | `deleteAccount()` | (available for settings) | Wipes mock state |
@@ -62,4 +62,4 @@ If the API call fails entirely, `SessionStore` falls back to on-device validatio
 - Implement the 14 paths above under `/v1` with DRF; snake_case JSON, ISO 8601 dates (the Swift client already encodes/decodes that way).
 - Port the validation pipeline from `GameKitCore` (`RouteGeometry`, `CollectionEngine`, `RunValidator`) — the constants live in `CollectionRules` and the Swift fixture tests in `GameKitCoreTests` double as server test vectors.
 - Replace `clientStreakDays` (mock-only trust) with server-owned streak state.
-- Auth: exchange the Sign in with Apple identity token for a JWT (docs/06); the mock's `auth(handle:)` is a stand-in.
+- Auth: verify the Sign in with Apple identity token server-side (docs/06, docs/18); the mock's `auth(provider:handle:externalID:)` accepts the identity without proof.

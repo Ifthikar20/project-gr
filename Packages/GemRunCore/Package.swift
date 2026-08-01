@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "DesignSystem", targets: ["DesignSystem"]),
         .library(name: "CoreNetworking", targets: ["CoreNetworking"]),
         .library(name: "CorePersistence", targets: ["CorePersistence"]),
+        .library(name: "CoreAuth", targets: ["CoreAuth"]),
         .library(name: "CoreLocationKit", targets: ["CoreLocationKit"]),
         .library(name: "CoreMap", targets: ["CoreMap"]),
         .library(name: "GameKitCore", targets: ["GameKitCore"]),
@@ -22,6 +23,12 @@ let package = Package(
         .target(name: "CoreNetworking", dependencies: ["CoreModels", "GameKitCore"]),
         .target(name: "CorePersistence",
                 dependencies: ["CoreModels", "GameKitCore", "CoreNetworking"]),
+        // The auth service (docs/18): provider credential handling, guest
+        // identity, server registration, token persistence, launch restore.
+        // Sits above persistence + networking so neither of them — and no
+        // feature — carries identity logic of its own.
+        .target(name: "CoreAuth",
+                dependencies: ["CoreModels", "CoreNetworking", "CorePersistence"]),
         .target(name: "CoreLocationKit", dependencies: ["CoreModels", "GameKitCore"]),
         .target(name: "CoreMap", dependencies: ["CoreModels"]),
         // Pure game logic — no UI/IO. The most heavily tested module.

@@ -7,7 +7,7 @@ import SwiftUI
 /// Value prop → location priming → sign-in, under 60 seconds (docs/03 §1),
 /// Daybreak Pulse: snow background, ink display type, pulse CTAs. The final
 /// page is the full-bleed SignInView; all provider handling lives in
-/// AuthService (the docs/10 real-auth landing zone).
+/// CoreAuth's AuthService (docs/18, the docs/10 real-auth landing zone).
 @MainActor
 public struct OnboardingView: View {
     @State private var page = 0
@@ -26,17 +26,21 @@ public struct OnboardingView: View {
     public var body: some View {
         ZStack {
             DS.Colors.snow.ignoresSafeArea()
-            VStack(spacing: 24) {
-                TabView(selection: $page) {
-                    ForEach(0..<Self.pages.count, id: \.self) { i in
-                        pageView(Self.pages[i]).tag(i)
-                    }
-                    locationPriming.tag(Self.pages.count)
-                    SignInView().tag(Self.pages.count + 1)
+            // The TabView owns the WHOLE screen: a paged TabView hosts its
+            // pages in a container that doesn't pass safe-area regions
+            // through, so a page can never reach the edges on its own —
+            // extending the TabView itself is what lets the sign-in photo
+            // run truly full-bleed under the page dots.
+            TabView(selection: $page) {
+                ForEach(0..<Self.pages.count, id: \.self) { i in
+                    pageView(Self.pages[i]).tag(i)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .always))
-                .indexViewStyle(.page(backgroundDisplayMode: .always))
+                locationPriming.tag(Self.pages.count)
+                SignInView().tag(Self.pages.count + 1)
             }
+            .tabViewStyle(.page(indexDisplayMode: .always))
+            .indexViewStyle(.page(backgroundDisplayMode: .always))
+            .ignoresSafeArea()
         }
     }
 

@@ -143,6 +143,7 @@ Read in order — each doc only depends on lower-numbered ones.
 | [15 — Completed Features](docs/15-completed-features.md) | Screen-by-screen inventory of what exists today |
 | [16 — Architecture Deep-Dive](docs/16-architecture-deep-dive.md) | Illustrated: full-stack architecture, design system & every screen, frameworks, scaling to 10k concurrent users |
 | [17 — The Wire Trace](docs/17-wire-trace.md) | Every request & response from app launch onward: full payloads, when each fires, and which response feeds which call |
+| [18 — The Auth Service](docs/18-auth-service.md) | CoreAuth: provider sign-ins, stable unique accounts, token persistence & launch restore — and the future backend split |
 
 ## The two hard problems (named up front)
 
