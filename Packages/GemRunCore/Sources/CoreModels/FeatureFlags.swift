@@ -31,7 +31,7 @@ public enum Feature: String, CaseIterable, Identifiable, Sendable {
         case .routeCreation: "The + button on Explore and the draw-a-route flow."
         case .suggestedRoutes: "Auto-planned routes through nearby gems on the Explore carousel."
         case .gemGifting: "Placing gems from your stash on the map for others."
-        case .friendsBoard: "The This Week board and player search under Compete."
+        case .friendsBoard: "The Friends board and player search under Compete."
         case .shareCard: "The shareable run-card image on the run summary."
         }
     }

@@ -9,7 +9,7 @@ import SwiftUI
 /// "My Routes": every run you've completed, newest first, as cards —
 /// local SwiftData history merged with the server's copy (GET /v1/runs/mine)
 /// so a fresh install still shows the past.
-/// "This Week": the friends board — you plus everyone you follow, ranked by
+/// "Friends": the friends board — you plus everyone you follow, ranked by
 /// this week's XP. Swipe a friend left to remove; the magnifier searches
 /// players by username to add.
 @MainActor
@@ -23,7 +23,7 @@ public struct CompeteRootView: View {
 
     enum Board: String, CaseIterable {
         case myRoutes = "My Routes"
-        case week = "This Week"
+        case week = "Friends"
         case calories = "Calories"
     }
 
@@ -193,7 +193,7 @@ public struct CompeteRootView: View {
             .foregroundStyle(DS.Colors.inkSecondary)
     }
 
-    // MARK: - This Week (friends board)
+    // MARK: - Friends (weekly board)
 
     private var weekBoard: some View {
         Group {

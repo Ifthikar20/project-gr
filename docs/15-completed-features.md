@@ -167,7 +167,7 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
 - **My Routes**: your completed runs as cards — server truth
   (`GET /v1/runs/mine`) merged with local runs (local wins on conflict),
   so finished runs survive reinstalls once synced.
-- **This Week**: the friends board, ranked by weekly XP (week resets
+- **Friends**: the friends board, ranked by weekly XP (week resets
   Monday 00:00 UTC), with weekly distance and run counts. You are always
   on the board.
 - **Swipe left on a friend → remove** (one-directional follow model —

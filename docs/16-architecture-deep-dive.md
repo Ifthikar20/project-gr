@@ -444,9 +444,9 @@ flowchart LR
     end
     subgraph COMP["📱 Compete"]
         direction TB
-        CA["Chips: My Routes ·<br/>This Week"]:::card
+        CA["Chips: My Routes ·<br/>Friends · Calories"]:::card
         CB["My Routes — local runs ⊕<br/>server /v1/runs/mine<br/>(local wins on conflict)"]:::card
-        CC["This Week — friends board<br/>by weekly XP, you in pulse,<br/>swipe to unfollow"]:::map
+        CC["Friends — weekly board<br/>by weekly XP, you in pulse,<br/>swipe to unfollow"]:::map
         CD["🔍 Player search —<br/>debounced, ≥ 2 chars"]:::card
         CA ~~~ CB ~~~ CC ~~~ CD
     end

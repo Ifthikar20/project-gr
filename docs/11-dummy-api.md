@@ -27,7 +27,7 @@ Every mock call logs to the Xcode console with its real path, e.g. `🌐 [MockAP
 | 10 | `POST /v1/runs/{id}/complete` | `completeRun(routeID:request:)` | **Run finish** (via `SessionStore.recordCompletion`) | The big one — see below |
 | 11 | `GET /v1/stash` | `stash()` | (available; Stash reads local cache) | Returns awarded items |
 | 12 | `GET /v1/routes/{id}/leaderboard` | `routeLeaderboard(routeID:window:)` | **Compete → Routes** | Fake competitors + your real times, ranked; your row flagged `isMe` |
-| 13 | `GET /v1/leaderboards/local?geohash` | `localLeaderboard(geohash:)` | **Compete → This Week** | Fake neighborhood board with your weekly score inserted |
+| 13 | `GET /v1/leaderboards/local?geohash` | `localLeaderboard(geohash:)` | **Compete → Friends** | Fake neighborhood board with your weekly score inserted |
 | 14 | `GET /v1/gems/catalog` | `gemCatalog()` | (available; catalog ships in-app) | Returns the gem catalog |
 
 **Wallet & standalone drops (earn-by-running):**
