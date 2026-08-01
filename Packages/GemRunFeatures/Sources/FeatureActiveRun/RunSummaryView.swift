@@ -1,7 +1,9 @@
+import CoreMap
 import CoreModels
 import CorePersistence
 import DesignSystem
 import SwiftUI
+import UIKit
 
 /// The reward ceremony (docs/03 §8), Daybreak Pulse: one flippable run
 /// card (stats on the front, the finds' real-material stories on the
@@ -68,14 +70,24 @@ struct RunSummaryView: View {
         .background(DS.Colors.snow.ignoresSafeArea())
         .onAppear {
             revealNext()
-            renderShareCard()
+            Task { await renderShareCard() }
         }
     }
 
-    /// Renders the share card offscreen (docs/03 §8).
+    /// Renders the share card offscreen (docs/03 §8): first a real street
+    /// snapshot of the traveled track (MKMapSnapshotter — live Map views
+    /// export blank through ImageRenderer), then the card around it.
     @MainActor
-    private func renderShareCard() {
-        let renderer = ImageRenderer(content: ShareCardView(summary: summary))
+    private func renderShareCard() async {
+        var mapImage: UIImage?
+        if let polyline = summary.pathPolyline {
+            let coords = PolylineCodec.decode(polyline)
+            // Matches the card's hero slot: width 460 − 2×26 padding.
+            mapImage = await TrackSnapshotter.image(
+                for: coords, size: CGSize(width: 408, height: 190))
+        }
+        let renderer = ImageRenderer(content: ShareCardView(summary: summary,
+                                                            mapImage: mapImage))
         renderer.scale = 3
         if let uiImage = renderer.uiImage {
             shareImage = Image(uiImage: uiImage)

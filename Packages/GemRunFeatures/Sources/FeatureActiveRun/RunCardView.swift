@@ -224,13 +224,6 @@ struct RunCardView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Spacer()
-                    Text(summary.isWalk ? "WALK" : "RUN")
-                        .font(.system(size: 10, weight: .heavy))
-                        .kerning(0.8)
-                        .foregroundStyle(DS.Colors.snowCard)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(DS.Colors.pulse, in: Capsule())
                 }
 
                 HStack(alignment: .top, spacing: 10) {
