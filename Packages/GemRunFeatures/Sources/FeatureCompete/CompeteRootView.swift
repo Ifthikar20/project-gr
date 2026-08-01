@@ -12,6 +12,7 @@ import SwiftUI
 /// "This Week": the friends board — you plus everyone you follow, ranked by
 /// this week's XP. Swipe a friend left to remove; the magnifier searches
 /// players by username to add.
+@MainActor
 public struct CompeteRootView: View {
     @Query(sort: \StoredRun.startedAt, order: .reverse) private var runs: [StoredRun]
     @State private var board = Board.myRoutes

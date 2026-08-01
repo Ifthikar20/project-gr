@@ -6,6 +6,7 @@ import SwiftUI
 /// The reward ceremony (docs/03 §8), Daybreak Pulse: one flippable run
 /// card (stats on the front, the finds' real-material stories on the
 /// back), honest validation states, splits, share.
+@MainActor
 struct RunSummaryView: View {
     let summary: RunCompletionSummary
     let onDone: () -> Void
