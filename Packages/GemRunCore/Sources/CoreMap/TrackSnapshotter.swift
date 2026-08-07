@@ -55,10 +55,10 @@ public enum TrackSnapshotter {
             path.lineWidth = 4
             path.lineCapStyle = .round
             path.lineJoinStyle = .round
-            UIColor(MapPalette.pulse).setStroke()
+            UIColor(MapPalette.map).setStroke()
             path.stroke()
             dot(at: points[0], color: UIColor(MapPalette.ink))
-            dot(at: points[points.count - 1], color: UIColor(MapPalette.pulse))
+            dot(at: points[points.count - 1], color: UIColor(MapPalette.map))
         }
     }
 

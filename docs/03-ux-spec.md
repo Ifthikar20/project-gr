@@ -30,16 +30,17 @@ Push navigation within tabs:
 > cards carrying the visual weight — soft 16pt corners, one diffuse shadow,
 > hairline dividers, pill CTAs, generous whitespace.
 
-- **Exactly three colors, nothing else** (opacity/tint steps of a hue count as the same color):
+- **Exactly two accents over the neutrals, nothing else** (opacity/tint steps of a hue count as the same color) — the same pair the landing page maintains:
 
 | Token | Value | Role |
 |---|---|---|
 | Snow | #FAFAF8 bg / #FFFFFF cards | Surfaces |
 | Ink | #16181D (+0.55 secondary text, +0.12 hairlines) | Text, icons |
-| Pulse | #EF3B23 ember red (+ tint ramp) | THE accent: CTAs, gems, streaks, live pace, own rows |
+| Map | #61FF00 map green (+ tint ramp) | Map & game graphics: route lines, pins, waypoint markers, on-map controls — always ink ON it, never white |
+| Pulse | #5F40BF violet (+ tint ramp) | Chrome accent: CTAs, streaks, live pace, own rows |
 
 - **Rarity = pulse ramp + glyph + label** (double-encoded, grayscale/color-blind safe): Common `diamond` 0.30 → Uncommon `diamond.fill` 0.50 → Rare `rhombus.fill` 0.70 → Epic `seal.fill` 0.88 → Legendary `crown.fill` 1.0.
-- **Map:** light standard style, POIs suppressed; pulse polylines and glyph gem markers. *Constraint:* MapKit tiles keep Apple's own palette — the 3-color rule governs app chrome and overlays; a fully on-palette map is a benefit of the pending Mapbox custom style.
+- **Map:** light standard style, POIs suppressed; map-green polylines and glyph gem markers. *Constraint:* MapKit tiles keep Apple's own palette — the two-accent rule governs app chrome and overlays; a fully on-palette map is a benefit of the pending Mapbox custom style.
 - **Cards:** Airbnb listing-card anatomy — mini map preview as the "photo" header on route cards; Route Detail is a listing page (map hero → hairline-separated sections → sticky bottom bar with facts left, pulse pill right).
 - **Type:** SF Pro Rounded, display 26/semibold, heading 20/semibold — medium weights; the cards, not the type, carry the weight. Stats stay bold.
 - **Gem iconography:** SF Symbol glyph per rarity tier (table above), tinted by pulse step. Silhouette (ink 12%) = uncollected.

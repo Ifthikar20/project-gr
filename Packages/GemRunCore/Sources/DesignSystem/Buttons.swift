@@ -161,12 +161,16 @@ public struct IconOrbButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(size >= 56 ? .title2.bold() : .title3.bold())
-                .foregroundStyle(isActive ? DS.Colors.snowCard : DS.Colors.ink)
+                .foregroundStyle(isActive ? DS.Colors.onMap : DS.Colors.ink)
                 .frame(width: size, height: size)
-                .background(isActive ? DS.Colors.pulse : DS.Colors.snowCard,
+                // These orbs float ON the map (Explore FAB stack, run
+                // controls), so the active fill is map green with ink on
+                // it — the landing page's FAB treatment, not a chrome CTA.
+                .background(isActive ? DS.Colors.map : DS.Colors.snowCard,
                             in: Circle())
                 .overlay(Circle().stroke(
-                    isActive ? Color.clear : DS.Colors.hairline, lineWidth: 1))
+                    isActive ? DS.Colors.ink.opacity(0.35) : DS.Colors.hairline,
+                    lineWidth: 1))
                 .shadow(color: DS.Colors.ink.opacity(isActive ? 0.2 : 0.15),
                         radius: size >= 56 ? 8 : 6, y: size >= 56 ? 3 : 2)
         }

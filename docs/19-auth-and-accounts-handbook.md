@@ -8,7 +8,7 @@
 > built from verified gaps. Sign-in and relaunch mechanics live in docs/18
 > §3–4 and are not repeated here.
 
-Palette key, same as docs/16–18 — <span>🟥</span> pulse `#EF3B23` (actions &
+Palette key, same as docs/16–18 — <span>🟪</span> pulse `#5F40BF` (actions &
 identity flow) · ⬛ ink `#16181D` (data at rest) · ⬜ snow `#FAFAF8` / white
 cards (client surfaces).
 
@@ -77,7 +77,7 @@ flowchart TB
     DB --> SURFACE
     DB --> FREED
 
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D

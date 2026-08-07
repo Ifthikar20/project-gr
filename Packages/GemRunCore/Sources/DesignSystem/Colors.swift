@@ -1,10 +1,12 @@
 import CoreModels
 import SwiftUI
 
-/// "Daybreak Pulse" (docs/03): the entire app uses EXACTLY three colors —
-/// snow surfaces, ink text, and one ember-red accent — Airbnb-style
-/// (one brand color reserved for what matters, neutrals everywhere else).
-/// Opacity/tint steps of a hue count as the same color. Nothing else.
+/// "Daybreak Pulse" (docs/03): the app maintains EXACTLY two accents over
+/// snow-and-ink neutrals — the same pair as the landing page. Map green
+/// belongs to map & game graphics (routes, gems, pins); pulse violet is
+/// the chrome accent (CTAs, streaks, live stats, own rows). Text stays
+/// ink — never a hue. Opacity/tint steps of a hue count as the same
+/// color. Nothing else.
 public enum DS {
     public enum Colors {
         // 1 — Snow: surfaces
@@ -16,10 +18,13 @@ public enum DS {
         public static let inkSecondary = ink.opacity(0.55)
         public static let hairline = ink.opacity(0.12)
 
-        // 3 — Pulse: THE accent (CTAs, gems, streaks, live stats, own rows).
-        // Ember red — deliberately red-shifted off #FC4C02, which is
-        // Strava's exact brand orange.
-        public static let pulse = Color(red: 0.937, green: 0.231, blue: 0.137)  // #EF3B23
+        // 3 — Pulse: the chrome accent (CTAs, streaks, live stats, own rows).
+        public static let pulse = Color(red: 0.373, green: 0.251, blue: 0.749)  // #5F40BF
+
+        // 4 — Map: map & game graphics — the landing page's --map token.
+        // Too bright to carry white: glyphs/text ON it use onMap (ink).
+        public static let map = Color(red: 0.380, green: 1.0, blue: 0.0)        // #61FF00
+        public static let onMap = ink
 
         /// Rarity is a pulse ramp — never a new hue (docs/03 restyle).
         public static func rarity(_ rarity: Rarity) -> Color {

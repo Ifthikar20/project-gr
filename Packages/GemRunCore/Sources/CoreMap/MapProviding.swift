@@ -13,11 +13,15 @@ public extension Coordinate {
     var cl: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: lat, longitude: lng) }
 }
 
-// Mirrors DesignSystem's 3-color "Daybreak Pulse" tokens (CoreMap stays
+// Mirrors DesignSystem's "Daybreak Pulse" tokens (CoreMap stays
 // independent of DesignSystem by design — docs/07 dependency rule).
+// Everything CoreMap draws IS map graphics, so its accent is the landing
+// page's map green — with ink ON it (green is too bright to carry white).
 public enum MapPalette {
-    public static let pulse = Color(red: 0.937, green: 0.231, blue: 0.137)   // #EF3B23 ember red
+    public static let map = Color(red: 0.380, green: 1.0, blue: 0.0)         // #61FF00 map green
     public static let ink = Color(red: 0.086, green: 0.094, blue: 0.114)     // #16181D
+    /// Glyphs/text on a solid map-green background.
+    public static let onMap = ink
 
     public static func rarity(_ r: Rarity) -> Color {
         let step: Double = switch r {
@@ -27,7 +31,7 @@ public enum MapPalette {
         case .epic: 0.88
         case .legendary: 1.0
         }
-        return pulse.opacity(step)
+        return map.opacity(step)
     }
 
     public static func glyph(_ r: Rarity) -> String {
@@ -291,7 +295,7 @@ public struct ExploreMapView: View {
             // dropped destination pin, so runners see the path before starting.
             if previewPath.count > 1 {
                 MapPolyline(coordinates: previewPath.map(\.cl))
-                    .stroke(MapPalette.pulse,
+                    .stroke(MapPalette.map,
                             style: StrokeStyle(lineWidth: 3, dash: [8, 5]))
             }
             if let destinationPin {
@@ -306,7 +310,7 @@ public struct ExploreMapView: View {
                 // suggestion in Apple Maps).
                 if route.id == selectedID {
                     MapPolyline(coordinates: coords)
-                        .stroke(MapPalette.pulse, lineWidth: 5)
+                        .stroke(MapPalette.map, lineWidth: 5)
                 }
                 if let start = coords.first {
                     Annotation(route.name, coordinate: start) {
@@ -317,10 +321,10 @@ public struct ExploreMapView: View {
                                 Text("\(route.gemDrops.count)")
                                     .font(.caption.bold())
                             }
-                            .foregroundStyle(.white)
+                            .foregroundStyle(MapPalette.onMap)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .background(MapPalette.pulse, in: Capsule())
+                            .background(MapPalette.map, in: Capsule())
                             .shadow(color: MapPalette.ink.opacity(0.2), radius: 4, y: 1)
                         }
                     }
@@ -352,7 +356,7 @@ public struct RoutePreviewMap: View {
         let coords = PolylineCodec.decode(route.polyline)
         Map(initialPosition: .region(region(for: coords))) {
             MapPolyline(coordinates: coords.map(\.cl))
-                .stroke(MapPalette.pulse, lineWidth: 4)
+                .stroke(MapPalette.map, lineWidth: 4)
             ForEach(route.gemDrops) { drop in
                 Annotation("", coordinate: drop.coordinate.cl) {
                     if collectedDropIDs.contains(drop.id) {
@@ -392,15 +396,15 @@ public struct DrawingMapView: View {
             Map(initialPosition: .userLocation(fallback: .automatic)) {
                 if pathCoords.count > 1 {
                     MapPolyline(coordinates: pathCoords.map(\.cl))
-                        .stroke(MapPalette.pulse, lineWidth: 4)
+                        .stroke(MapPalette.map, lineWidth: 4)
                 }
                 ForEach(Array(waypoints.enumerated()), id: \.offset) { i, wp in
                     Annotation("", coordinate: wp.cl) {
                         Text("\(i + 1)")
                             .font(.caption2.bold())
-                            .foregroundStyle(.white)
+                            .foregroundStyle(MapPalette.onMap)
                             .frame(width: 20, height: 20)
-                            .background(MapPalette.pulse, in: Circle())
+                            .background(MapPalette.map, in: Circle())
                             .shadow(color: MapPalette.ink.opacity(0.2), radius: 3, y: 1)
                             .transition(.scale(scale: 1.3, anchor: .bottom)
                                 .combined(with: .opacity))
@@ -432,10 +436,10 @@ public struct DestinationPin: View {
         VStack(spacing: 0) {
             Image(systemName: "mappin.circle.fill")
                 .font(.title)
-                .foregroundStyle(.white, MapPalette.pulse)
+                .foregroundStyle(MapPalette.onMap, MapPalette.map)
                 .shadow(color: MapPalette.ink.opacity(0.3), radius: 4, y: 2)
             Triangle()
-                .fill(MapPalette.pulse)
+                .fill(MapPalette.map)
                 .frame(width: 10, height: 8)
         }
         .offset(y: dropped ? -4 : -44)
@@ -576,7 +580,7 @@ public struct ActiveRunMapView: View {
                 let remaining = remainderOf(guideLine, fromM: coveredM)
                 if remaining.count > 1 {
                     MapPolyline(coordinates: remaining.map(\.cl))
-                        .stroke(MapPalette.pulse, lineWidth: 4)
+                        .stroke(MapPalette.map, lineWidth: 4)
                 }
                 // The trail of steps actually taken this run — smoothed with
                 // a 3-sample moving average so it reads as a clean stroke,
@@ -610,7 +614,7 @@ public struct ActiveRunMapView: View {
                         ZStack {
                             Image(systemName: "arrowtriangle.up.fill")
                                 .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(MapPalette.pulse)
+                                .foregroundStyle(MapPalette.map)
                                 .shadow(color: MapPalette.ink.opacity(0.4),
                                         radius: 1, y: 1)
                                 .offset(y: -26)
@@ -690,10 +694,10 @@ public struct ActiveRunMapView: View {
                 } label: {
                     Image(systemName: "location.fill")
                         .font(.title3)
-                        .foregroundStyle(MapPalette.pulse)
+                        .foregroundStyle(MapPalette.onMap)
                         .frame(width: 44, height: 44)
-                        .background(.thinMaterial, in: Circle())
-                        .overlay(Circle().stroke(MapPalette.ink.opacity(0.15), lineWidth: 1))
+                        .background(MapPalette.map, in: Circle())
+                        .overlay(Circle().stroke(MapPalette.ink.opacity(0.35), lineWidth: 1))
                         .shadow(color: MapPalette.ink.opacity(0.2), radius: 4, y: 2)
                 }
                 // Below the map's compass (top-trailing) so neither control
