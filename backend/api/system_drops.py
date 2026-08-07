@@ -18,6 +18,7 @@ import logging
 import math
 import random
 import time
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
@@ -131,16 +132,30 @@ class PedestrianNet:
         return best
 
 
+# `ok` is the crucial fourth field: True means Overpass ANSWERED (even if
+# the answer holds zero ways — a genuinely path-less area); False means no
+# answer at all (unreachable, rate-limited, budget spent). The daily
+# rotation only retires yesterday's gems when ok is True — no answer must
+# never empty a previously stocked mile.
+PlacementContext = namedtuple("PlacementContext", "net no_go ways ok")
+
+
 def fetch_placement_context(lat, lng, deadline=None):
     """Everything a placement pass needs about the ground, in ONE Overpass
-    request: `(net, no_go, ways)` — the strict pedestrian network to snap
-    onto, the no-go polygons (private grounds, golf courses, school
-    yards…) to never place inside, and the raw ways for Tier 2 sampling.
-    All empty when Overpass is unreachable — callers fall back to trusted
-    route geometry and the next daily rotation re-places compliant."""
-    ways, rings = walkability.fetch_placement_data(
+    request: `(net, no_go, ways, ok)` — the strict pedestrian network to
+    snap onto, the no-go polygons (private grounds, golf courses, school
+    yards…) to never place inside, the raw ways for Tier 2 sampling, and
+    whether Overpass actually answered. All empty with ok=False when it
+    didn't — callers fall back to trusted route geometry, and the daily
+    rotation postpones rather than expiring gems it can't replace."""
+    data = walkability.fetch_placement_data(
         lat, lng, settings.PRESENCE_RADIUS_M, deadline=deadline)
-    return PedestrianNet(ways), walkability.NoGoZones(rings), ways
+    if data is None:
+        return PlacementContext(PedestrianNet([]), walkability.NoGoZones([]),
+                                [], False)
+    ways, rings = data
+    return PlacementContext(PedestrianNet(ways), walkability.NoGoZones(rings),
+                            ways, True)
 
 
 def drop_gem_on_route(route, rng, net=None, no_go=None, near=None,
@@ -162,8 +177,9 @@ def drop_gem_on_route(route, rng, net=None, no_go=None, near=None,
     if geom.total_length_m <= 0:
         return None
     if net is None:
-        net, no_go, _ = fetch_placement_context(route.lat, route.lng,
-                                                deadline=deadline)
+        context = fetch_placement_context(route.lat, route.lng,
+                                          deadline=deadline)
+        net, no_go = context.net, context.no_go
     for _ in range(ATTEMPTS_PER_ROUTE):
         if _past(deadline):
             return None
@@ -261,7 +277,41 @@ def drop_on_walkable_ways(lat, lng, count, rng, ways=None, no_go=None,
     return created
 
 
-def top_up_area(lat, lng, rng=None, budget_s=None):
+def _dev_scatter(lat, lng, count, rng):
+    """PRESENCE_DEV_SCATTER only — never production. Place the pass's
+    remaining slots at random points within the mile WITHOUT walkability
+    verification, so local development still gets a populated map when
+    Overpass is rate-limiting the machine (or it's offline). Spacing and
+    the per-mile caps still apply; the fail-closed rule is deliberately
+    broken here and nowhere else."""
+    radius = settings.PRESENCE_RADIUS_M
+    k = 111_320.0
+    klng = k * max(0.1, math.cos(math.radians(lat)))
+    created = 0
+    for _ in range(count * ATTEMPTS_PER_ROUTE):
+        if created >= count:
+            break
+        r = radius * math.sqrt(rng.random())
+        theta = rng.uniform(0, math.tau)
+        plat = lat + r * math.cos(theta) / k
+        plng = lng + r * math.sin(theta) / klng
+        if near_existing_drop(plat, plng):
+            continue
+        try:
+            _guarded_create(lat, lng, plat, plng, rng)
+        except CapReached:
+            break
+        created += 1
+    if created:
+        log.warning("DEV SCATTER: placed %d gem(s) near (%.4f, %.4f) with "
+                    "NO walkability verification (PRESENCE_DEV_SCATTER) — "
+                    "dev convenience only, never enable in production",
+                    created, lat, lng)
+    return created
+
+
+def top_up_area(lat, lng, rng=None, budget_s=None, context=None,
+                deadline=None):
     """The per-mile contract, one pass. Count the requester's mile; in the
     FLOOR..HARD_MAX band do nothing (shared world — someone else's gems
     are stock); below FLOOR, fill toward FILL_TARGET, every insert
@@ -269,11 +319,18 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
     gem per popular route (walking-snapped polylines). Tier 2: points on
     real OSM walkable ways. No random scatter — empty beats misplaced, so
     walkability-starved miles legitimately sit below FLOOR and retry on
-    later opens."""
+    later opens. (PRESENCE_DEV_SCATTER, dev only, is the one deliberate
+    exception — see _dev_scatter.)
+
+    `context` is a pre-fetched PlacementContext (rotate_and_top_up fetches
+    once and shares it with the rotation gate); None fetches here.
+    `deadline` (monotonic) overrides budget_s when the caller already
+    started the clock."""
     if not settings.PRESENCE_DROPS:
         return 0
     rng = rng or random.Random()
-    deadline = time.monotonic() + budget_s if budget_s else None
+    if deadline is None:
+        deadline = time.monotonic() + budget_s if budget_s else None
     count = mile_count(lat, lng)
     if count >= settings.PRESENCE_FLOOR:
         return 0
@@ -292,12 +349,14 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
     # is_walkable HTTP calls (faster) and guarantees every gem sits ON a
     # public sidewalk/trail and INSIDE no private grounds. Skipped
     # entirely when neither tier has work to do.
-    strict_ways = []
-    net = PedestrianNet([])
-    no_go = walkability.NoGoZones([])
-    if popular or settings.PRESENCE_BOOTSTRAP:
-        net, no_go, strict_ways = fetch_placement_context(lat, lng,
-                                                          deadline=deadline)
+    if context is None and (popular or settings.PRESENCE_BOOTSTRAP):
+        context = fetch_placement_context(lat, lng, deadline=deadline)
+    if context is not None:
+        net, no_go, strict_ways = context.net, context.no_go, context.ways
+    else:
+        strict_ways = []
+        net = PedestrianNet([])
+        no_go = walkability.NoGoZones([])
     if popular and not net:
         log.info("stocking: strict pedestrian network unavailable near "
                  "(%.4f, %.4f) — route placements fall back to trusted "
@@ -321,6 +380,11 @@ def top_up_area(lat, lng, rng=None, budget_s=None):
     except CapReached:
         log.info("hard cap reached mid-spawn near (%.4f, %.4f) — a "
                  "neighboring mile filled up first; stopping", lat, lng)
+
+    # DEV ONLY: with the flag on, unfilled slots scatter within the mile so
+    # an Overpass-less machine still gets a populated map to develop against.
+    if created < need and settings.PRESENCE_DEV_SCATTER:
+        created += _dev_scatter(lat, lng, need - created, rng)
 
     if created < need:
         if _past(deadline):
@@ -360,19 +424,28 @@ def _cell_key(lat, lng):
     return (round(lat / 0.005), round(lng / 0.005))
 
 
+def stale_system_gems(lat, lng):
+    """Queryset of yesterday's uncollected SYSTEM gems in the mile's bbox —
+    the set the daily rotation retires. One definition, shared by the
+    rotation itself, its geometry gate, and the pending-restock signal."""
+    dlat, dlng = bbox_deltas(lat, settings.PRESENCE_RADIUS_M)
+    today_start = timezone.now().replace(hour=0, minute=0,
+                                         second=0, microsecond=0)
+    return GemDrop.objects.filter(
+        route__isnull=True, active=True, placed_by="system",
+        created_at__lt=today_start,
+        lat__gte=lat - dlat, lat__lte=lat + dlat,
+        lng__gte=lng - dlng, lng__lte=lng + dlng)
+
+
 def expire_stale(lat, lng):
     """Daily rotation: uncollected SYSTEM gems never squat the same spot
     two days running — anything spawned before today frees its slot, and
     the top-up that follows restocks the mile at fresh positions.
-    Player-placed drops are exempt: a runner chose those spots."""
-    dlat, dlng = bbox_deltas(lat, settings.PRESENCE_RADIUS_M)
-    today_start = timezone.now().replace(hour=0, minute=0,
-                                         second=0, microsecond=0)
-    expired = GemDrop.objects.filter(
-        route__isnull=True, active=True, placed_by="system",
-        created_at__lt=today_start,
-        lat__gte=lat - dlat, lat__lte=lat + dlat,
-        lng__gte=lng - dlng, lng__lte=lng + dlng).update(active=False)
+    Player-placed drops are exempt: a runner chose those spots. Callers
+    gate this on having replacement geometry in hand (rotate_and_top_up) —
+    expiring what we can't replace empties the world."""
+    expired = stale_system_gems(lat, lng).update(active=False)
     if expired:
         log.info("daily rotation: expired %d system gem(s) near (%.4f, %.4f)",
                  expired, lat, lng)
@@ -415,9 +488,44 @@ def enforce_hard_max(lat, lng):
 
 
 def rotate_and_top_up(lat, lng, budget_s=None):
-    expire_stale(lat, lng)
+    """One maintenance pass for a mile. The rotation is gated on geometry:
+    yesterday's gems only leave the map once the replacement pass has
+    ground truth in hand (context.ok) — an Overpass outage postpones the
+    rotation to a later open instead of emptying a previously stocked
+    mile. The one Overpass fetch is shared with the top-up that follows.
+
+    Returns True when this mile is still due to change because the fetch
+    failed (rotation postponed, or fill still below floor) — the honest
+    `stocking` signal for inline callers: worth looking again soon."""
+    deadline = time.monotonic() + budget_s if budget_s else None
+    rotation_due = stale_system_gems(lat, lng).exists()
+    # Fetch only when a pass could actually use the geometry — mirrors
+    # top_up_area's own gate, so a bare mile with stocking off (no
+    # bootstrap, no qualifying routes) still never calls Overpass.
+    needs_fill = mile_count(lat, lng) < settings.PRESENCE_FLOOR
+    if needs_fill and not settings.PRESENCE_BOOTSTRAP:
+        dlat, dlng = bbox_deltas(lat, settings.PRESENCE_RADIUS_M)
+        needs_fill = Route.objects.filter(
+            status="published",
+            run_count__gte=settings.PRESENCE_DROP_MIN_RUNS,
+            lat__gte=lat - dlat, lat__lte=lat + dlat,
+            lng__gte=lng - dlng, lng__lte=lng + dlng).exists()
+    context = None
+    if rotation_due or needs_fill:
+        context = fetch_placement_context(lat, lng, deadline=deadline)
+    if rotation_due:
+        if context.ok:
+            expire_stale(lat, lng)
+        else:
+            log.warning("rotation postponed near (%.4f, %.4f): no placement "
+                        "geometry (Overpass unreachable or budget spent) — "
+                        "yesterday's gems stay as stock until a later open",
+                        lat, lng)
     enforce_hard_max(lat, lng)
-    return top_up_area(lat, lng, budget_s=budget_s)
+    top_up_area(lat, lng, context=context, deadline=deadline)
+    if context is None or context.ok:
+        return False
+    return rotation_due or mile_count(lat, lng) < settings.PRESENCE_FLOOR
 
 
 def _background_job(key, lat, lng):
@@ -440,14 +548,7 @@ def has_pending_restock(lat, lng, count):
     few seconds instead of sitting on the thin/stale answer."""
     if count < settings.PRESENCE_FLOOR:
         return True
-    dlat, dlng = bbox_deltas(lat, settings.PRESENCE_RADIUS_M)
-    today_start = timezone.now().replace(hour=0, minute=0,
-                                         second=0, microsecond=0)
-    return GemDrop.objects.filter(
-        route__isnull=True, active=True, placed_by="system",
-        created_at__lt=today_start,
-        lat__gte=lat - dlat, lat__lte=lat + dlat,
-        lng__gte=lng - dlng, lng__lte=lng + dlng).exists()
+    return stale_system_gems(lat, lng).exists()
 
 
 def presence_trigger(lat, lng):
@@ -457,18 +558,20 @@ def presence_trigger(lat, lng):
     forces inline everywhere — tests need it because their in-memory
     SQLite can't be shared across threads.
 
-    Returns True when restocking is still PENDING after this call (a
-    background job is queued/running for a mile that will change); inline
-    paths return False because the answer already reflects the restock."""
+    Returns True when restocking is still PENDING after this call: a
+    background job is queued/running for a mile that will change, or an
+    inline pass came up short because the geometry fetch failed — the
+    client looks again in a few seconds instead of settling on a bare
+    map. An inline answer that reflects the ground truth (including a
+    genuinely path-less area, fail closed) returns False."""
     if not settings.PRESENCE_DROPS:
         return False
     count = mile_count(lat, lng)
     warm = count > 0
     if not warm or not settings.PRESENCE_ASYNC:
-        rotate_and_top_up(lat, lng,
-                          budget_s=settings.PRESENCE_INLINE_BUDGET_S
-                          if settings.PRESENCE_ASYNC else None)
-        return False
+        return rotate_and_top_up(lat, lng,
+                                 budget_s=settings.PRESENCE_INLINE_BUDGET_S
+                                 if settings.PRESENCE_ASYNC else None)
     pending = has_pending_restock(lat, lng, count)
     key = _cell_key(lat, lng)
     with _inflight_lock:

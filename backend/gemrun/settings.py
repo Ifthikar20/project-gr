@@ -99,6 +99,13 @@ PRESENCE_BOOTSTRAP = True
 # A route needs this many runs to count as popular. Env-overridable so local
 # dev can set 0 (run.sh does) and see gems on any published route immediately.
 PRESENCE_DROP_MIN_RUNS = int(os.environ.get("PRESENCE_DROP_MIN_RUNS", 3))
+# DEV ONLY — never in production. When a stocking pass still has unfilled
+# slots (Overpass rate-limiting this machine, offline dev), scatter the
+# remainder at random points within the mile WITHOUT walkability
+# verification (spacing + the per-mile caps still apply). This is the one
+# deliberate breach of the fail-closed placement rule, so it hides behind
+# an env flag that defaults off:  PRESENCE_DEV_SCATTER=1 ./run.sh
+PRESENCE_DEV_SCATTER = os.environ.get("PRESENCE_DEV_SCATTER", "") == "1"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

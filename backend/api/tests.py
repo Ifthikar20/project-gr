@@ -240,6 +240,14 @@ class ApiTests(TestCase):
         self.assertIn("stocking", body)
         self.assertFalse(body["stocking"])
 
+    def test_drops_read_is_never_cacheable(self):
+        """iOS URLSession may heuristically cache header-less GETs; a
+        replayed stale answer is a permanently wrong map, so the read
+        says no-store explicitly."""
+        response = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                 "radius_m": 1000})
+        self.assertEqual(response["Cache-Control"], "no-store")
+
     def test_pending_restock_covers_sub_floor_and_stale_rotation(self):
         with self.settings(PRESENCE_FLOOR=2, PRESENCE_FILL_TARGET=3,
                            PRESENCE_HARD_MAX=5):
@@ -697,6 +705,71 @@ class ApiTests(TestCase):
         self.assertEqual(
             sum(1 for d in refreshed if d["placed_by"] == "system"), 1,
             "rotation should restock the freed slot with a fresh gem")
+
+    def test_rotation_postponed_when_overpass_unreachable(self):
+        """An Overpass outage must never empty a stocked mile: with no
+        placement geometry in hand, yesterday's gems stay on the map (and
+        the answer flags the area as still due to change); the next open
+        WITH an answer rotates them out as usual."""
+        self.seed_popular_route(run_count=5)
+        with self.settings(PRESENCE_FLOOR=1, PRESENCE_FILL_TARGET=1,
+                           PRESENCE_HARD_MAX=1):
+            first = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                  "radius_m": 5000}).json()["drops"]
+            self.assertEqual(len(first), 1)
+            GemDrop.objects.update(created_at=timezone.now() - timedelta(days=1))
+            with mock.patch("api.walkability.fetch_placement_data",
+                            return_value=None):
+                held = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                     "radius_m": 5000}).json()
+            self.assertEqual([d["id"] for d in held["drops"]],
+                             [first[0]["id"]])         # kept, not expired
+            self.assertTrue(held["stocking"])          # still due to change
+            # Overpass answers again (the suite's default fetch): the
+            # postponed rotation runs — slot freed, restocked fresh.
+            refreshed = self.client.get("/v1/drops", {"lat": 37.0, "lng": -122.0,
+                                                      "radius_m": 5000}).json()["drops"]
+            self.assertEqual(len(refreshed), 1)
+            self.assertNotEqual(refreshed[0]["id"], first[0]["id"])
+
+    def test_failed_bootstrap_reports_stocking_true(self):
+        """A cold mile whose bootstrap got NO answer from Overpass says
+        `stocking: true` so the app looks again shortly, instead of
+        settling on "No gems here". An answered-empty area (genuinely no
+        pedestrian ways) stays fail-closed with `stocking: false`."""
+        with self.settings(PRESENCE_BOOTSTRAP=True):
+            with mock.patch("api.walkability.fetch_placement_data",
+                            return_value=None):
+                out = self.client.get("/v1/drops", {"lat": 64.2008,
+                                                    "lng": -149.4937,
+                                                    "radius_m": 5000}).json()
+            self.assertEqual(out["drops"], [])
+            self.assertTrue(out["stocking"])
+            settled = self.client.get("/v1/drops", {"lat": 64.2008,
+                                                    "lng": -149.4937,
+                                                    "radius_m": 5000}).json()
+            self.assertEqual(settled["drops"], [])
+            self.assertFalse(settled["stocking"])
+
+    def test_dev_scatter_unblocks_offline_dev(self):
+        """PRESENCE_DEV_SCATTER (dev only, default off): with Overpass
+        unreachable the pass fills the mile anyway — still spaced, still
+        capped, still within the requester's mile. The default-off
+        fail-closed path is covered by the bootstrap tests above."""
+        lat, lng = 64.2008, -149.4937
+        with self.settings(PRESENCE_BOOTSTRAP=True, PRESENCE_FLOOR=3,
+                           PRESENCE_FILL_TARGET=3, PRESENCE_HARD_MAX=5,
+                           PRESENCE_DEV_SCATTER=True), \
+             mock.patch("api.walkability.fetch_placement_data",
+                        return_value=None):
+            drops = self.client.get("/v1/drops", {"lat": lat, "lng": lng,
+                                                  "radius_m": 5000}).json()["drops"]
+        self.assertEqual(len(drops), 3)
+        for d in drops:                               # inside the mile
+            dist = math.hypot((d["lat"] - lat) * 111_320,
+                              (d["lng"] - lng) * 111_320
+                              * math.cos(math.radians(lat)))
+            self.assertLessEqual(dist, 1609)
 
     # ── Per-mile contract (docs/14 §2.1) ─────────────────────────────────
 

@@ -821,8 +821,13 @@ def drops(request):
         # `stocking`: a background job is restocking/rotating this area
         # right now — the client shows "Stocking gems near you…" and looks
         # again in a few seconds instead of sitting on the thin answer.
-        return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs],
-                             "stocking": stocking})
+        response = JsonResponse({"drops": [drop_json(d, exact=True) for d in qs],
+                                 "stocking": stocking})
+        # Never cacheable: iOS URLSession may heuristically cache GETs that
+        # carry no cache headers, and a replayed stale answer here is a
+        # permanently wrong map (the presence trigger wouldn't even fire).
+        response["Cache-Control"] = "no-store"
+        return response
 
     # POST — give one of your stash gems away as a map drop. The stash row
     # stays (collection record) but is marked dropped and can't be re-spent.
