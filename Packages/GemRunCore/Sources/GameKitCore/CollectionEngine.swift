@@ -4,15 +4,19 @@ import Foundation
 /// Collection + validity constants from docs/04 — the single source of truth
 /// shared by the engine, tests, and (as documented values) the server pipeline.
 public enum CollectionRules {
-    /// Route-gem capture: within 100 ft (~30.5 m), matching standalone
-    /// drops — "close enough to see it" collects, on every run type.
+    /// Route-gem capture: within 200 ft (~61 m), matching standalone
+    /// drops — cross into the capture zone drawn around every gem on the
+    /// map and it's yours, on every run type. This IS the circle the map
+    /// renders (CoreMap's CaptureZone), so what you see is what collects.
     /// Server mirror: rules.COLLECTION_RADIUS_M.
-    public static let collectionRadiusM: Double = 30.5
-    /// Standalone (walk-near) drops capture at the same 100 ft.
+    public static let collectionRadiusM: Double = 61
+    /// Standalone (walk-near) drops capture at the same 200 ft.
     /// Server mirror: rules.DROP_COLLECT_RADIUS_M.
-    public static let dropCollectRadiusM: Double = 30.5
-    public static let hysteresisExitRadiusM: Double = 40
-    public static let hysteresisAdvanceM: Double = 50
+    public static let dropCollectRadiusM: Double = 61
+    /// Hysteresis scales with the capture radius (~1.3× / ~1.6×), so the
+    /// exit ring always sits OUTSIDE the capture zone.
+    public static let hysteresisExitRadiusM: Double = 80
+    public static let hysteresisAdvanceM: Double = 100
 
     public static let maxCrossTrackM: Double = 40
     public static let minOnRouteSampleRatio: Double = 0.90
@@ -25,7 +29,7 @@ public enum CollectionRules {
     public static let walkPaceThresholdSPerKm = 600      // 10:00 — slower is a walk (0.5× XP)
 }
 
-/// Per-sample collection decisions (docs/04): 100 ft threshold + hysteresis +
+/// Per-sample collection decisions (docs/04): 200 ft threshold + hysteresis +
 /// monotonic route progress. Pure and synchronous — ActiveRunEngine feeds it
 /// live samples; tests feed it fixture tracks; the server replays full tracks.
 public struct CollectionEngine: Sendable {

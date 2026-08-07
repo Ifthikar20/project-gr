@@ -281,9 +281,9 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 
 ## 6. Collection closes the loop
 
-- **During a route run**: `CollectionEngine` awards at ≤ 100 ft / 30.5 m
+- **During a route run**: `CollectionEngine` awards at ≤ 200 ft / 61 m
   (`collectionRadiusM`) with progress + hysteresis rules.
-- **During a free run**: pure proximity, the same ≤ 100 ft / 30.5 m
+- **During a free run**: pure proximity, the same ≤ 200 ft / 61 m
   (`dropCollectRadiusM`) — one capture distance everywhere, mirrored by
   the server's `COLLECTION_RADIUS_M` / `DROP_COLLECT_RADIUS_M`.
 - Server side, `POST /v1/drops/collect` (or route completion crossing a

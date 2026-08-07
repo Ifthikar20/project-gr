@@ -103,7 +103,7 @@ Tabs:  Explore  ·  Stash  ·  Compete  ·  Profile        (+ full-screen covers
   across the street from the drawn line still counts), and your actual
   ink-colored breadcrumb takes over as the record of where you went.
   (`CoreMap` ActiveRunMapView: `consumeGuideLine`)
-- **Collection at 100 ft** (30.5 m), mirrored exactly by the server so the
+- **Collection at 200 ft** (61 m), mirrored exactly by the server so the
   client never celebrates a gem the backend would revoke.
 - **Collection ceremony**: rarity-colored burst + haptic → the gem flies
   from mid-map into the **stash chip** (top-left count of this run's haul)

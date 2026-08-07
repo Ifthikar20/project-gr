@@ -387,7 +387,7 @@ Authorization: Bearer 9f3c1a7e…
 
 The server treats `claimed_collections` as **hints, not facts**: it replays the
 whole track through the same geometry/validation rules the phone used
-(30.5 m radius, monotonic route progress, hysteresis, pace and teleport gates)
+(61 m radius, monotonic route progress, hysteresis, pace and teleport gates)
 and awards only what the replay supports.
 
 **RESPONSE — 200, the authoritative verdict**
@@ -463,7 +463,7 @@ Authorization: Bearer 9f3c1a7e…
 ```
 
 Server rules per claimed id, in order: your own drop → refused · track never
-came within 30.5 m (samples with accuracy worse than 50 m are ignored — bad
+came within 61 m (samples with accuracy worse than 50 m are ignored — bad
 GPS can't prove presence) → refused · already taken (row-locked; exactly one
 winner per gem, ever) → refused. **Every attempt is logged** to the
 `ClaimAttempt` audit table, winners and losers alike.

@@ -25,7 +25,7 @@
 
 GemRun turns any running route into a treasure hunt. The **backend stocks real,
 walkable streets with gems** around wherever a runner opens the map; passing
-within **100 ft (30.5 m)** with a live GPS track claims a gem — optimistically on
+within **200 ft (61 m)** with a live GPS track claims a gem — optimistically on
 the phone, authoritatively on the server, **first come, first served in one
 shared world**. On top: route creation with a gem-placement budget, XP and
 levels, daily streaks with shields, leaderboards, and a 26-gem collectible
@@ -34,7 +34,7 @@ catalog.
 ```mermaid
 flowchart LR
     A["🗺️ Open the map<br/>backend stocks gems<br/>around you"]:::pulse
-    B["🏃 Run & collect<br/>pass within 100 ft —<br/>first one there takes it"]:::card
+    B["🏃 Run & collect<br/>pass within 200 ft —<br/>first one there takes it"]:::card
     C["✏️ Create routes<br/>draw, place gems<br/>from a budget, publish"]:::card
     D["💎 Stash & XP<br/>streaks, levels,<br/>tier bonuses"]:::card
     E["🏆 Compete<br/>leaderboards, friends,<br/>first-find crowns"]:::card
@@ -497,7 +497,7 @@ sequenceDiagram
         REC-->>ENG: AsyncStream of TrackSample
         ENG->>ENG: pedometer-first distance (CMPedometer owns distanceM)<br/>auto-pause under 0.5 m/s ×10 s · adaptive distance filter
         ENG->>CE: ingest(sample)
-        CE-->>ENG: [Event] — gates: on-route → monotonic progress<br/>→ ≤30.5 m proximity → hysteresis (exit 40 m / advance 50 m)
+        CE-->>ENG: [Event] — gates: on-route → monotonic progress<br/>→ ≤61 m proximity → hysteresis (exit 80 m / advance 100 m)
         ENG->>BUF: append(sample)  — crash-safe
         ENG-->>ENG: onCollect → burst + haptic + fly-to-chip
     end
@@ -753,7 +753,7 @@ sequenceDiagram
         rect rgb(250, 196, 189)
             note over V,VAL: replay — the client's claims are hints, not facts
             V->>VAL: validate(track, geometry) + replay_collections(...)
-            VAL-->>V: status valid/flagged/invalid + flags<br/>(adherence · coverage · teleport · pace bounds)<br/>+ the drops the track ACTUALLY earned<br/>(30.5 m radius · monotonic progress · hysteresis)
+            VAL-->>V: status valid/flagged/invalid + flags<br/>(adherence · coverage · teleport · pace bounds)<br/>+ the drops the track ACTUALLY earned<br/>(61 m radius · monotonic progress · hysteresis)
         end
         V->>V: award = claimed ∩ replayed ∩ respawn-eligible<br/>everything else → revoked (invalid ⇒ revoke all)
         rect rgb(250, 250, 248)
@@ -769,7 +769,7 @@ sequenceDiagram
 
 Free runs settle through the lighter `POST /v1/drops/collect`: same row-locked
 first-come claim, same audit, but the only proof required is that the track
-passed within 30.5 m — with the crucial gate that **GPS samples with accuracy
+passed within 61 m — with the crucial gate that **GPS samples with accuracy
 worse than 50 m are discarded**, so a 200 m-accuracy fix can't prove presence
 at anything.
 
@@ -815,8 +815,8 @@ and the explicit `CodingKeys` blocks that fix it are treated as load-bearing.
 
 | Rule | Value | Swift | Python |
 |---|---|---|---|
-| Collection radius | **30.5 m (100 ft)** | `collectionRadiusM` | `COLLECTION_RADIUS_M` |
-| Hysteresis | exit 40 m / advance 50 m | `hysteresisExitRadiusM/AdvanceM` | `HYSTERESIS_*` |
+| Collection radius | **61 m (200 ft)** | `collectionRadiusM` | `COLLECTION_RADIUS_M` |
+| Hysteresis | exit 80 m / advance 100 m | `hysteresisExitRadiusM/AdvanceM` | `HYSTERESIS_*` |
 | On-route | ≤ 40 m cross-track, ≥ 90 % samples | `maxCrossTrackM`, `minOnRouteSampleRatio` | `MAX_CROSS_TRACK_M`, `MIN_ON_ROUTE_SAMPLE_RATIO` |
 | Coverage | ≥ 95 % (invalid < 50 %) | `minRouteCoverageRatio` | `MIN_ROUTE_COVERAGE_RATIO` |
 | Teleport | > 8 m/s sustained 5 s | `teleport*` | `TELEPORT_*` |

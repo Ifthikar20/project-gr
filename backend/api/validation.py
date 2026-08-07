@@ -7,7 +7,7 @@ from .geometry import RouteGeometry
 
 
 def replay_collections(geom: RouteGeometry, drops, track):
-    """Replays the CollectionEngine: 25 m threshold + hysteresis + monotonic
+    """Replays the CollectionEngine: 200 ft threshold + hysteresis + monotonic
     route progress. `drops` are dicts with id, lat, lng, position_along_route_m.
     Returns the set of collectable drop ids the track actually supports.
     """

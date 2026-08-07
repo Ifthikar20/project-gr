@@ -1,4 +1,5 @@
 import CoreModels
+import GameKitCore
 import MapKit
 import SwiftUI
 import UIKit
@@ -137,6 +138,27 @@ private enum GemArtProbe {
         let present = UIImage(named: ref) != nil
         verdicts[ref] = present
         return present
+    }
+}
+
+/// The 200 ft capture zone drawn around an uncollected gem — a real
+/// geographic circle at the SAME radius the collection engines award at
+/// (CollectionRules.dropCollectRadiusM), so the glow on the map is a
+/// promise: cross into it and the gem is yours, even ~200 ft out. A soft
+/// map-green fill with a hairline rim; it grows and shrinks with zoom
+/// because it is ground truth, not decoration.
+public struct CaptureZone: MapContent {
+    let center: Coordinate
+
+    public init(center: Coordinate) {
+        self.center = center
+    }
+
+    public var body: some MapContent {
+        MapCircle(center: center.cl,
+                  radius: CollectionRules.dropCollectRadiusM)
+            .foregroundStyle(MapPalette.map.opacity(0.16))
+            .stroke(MapPalette.map.opacity(0.65), lineWidth: 1.5)
     }
 }
 
@@ -282,6 +304,9 @@ public struct ExploreMapView: View {
             // translucent circle on the map. Once we have a live fix (usually
             // within a second of opening), the 🏃 emoji above takes over.
             ForEach(standaloneDrops) { drop in
+                // The gem's capture zone: walk anywhere inside the green
+                // circle and the claim fires — the circle IS the rule.
+                CaptureZone(center: drop.coordinate)
                 Annotation("", coordinate: drop.coordinate.cl) {
                     Button {
                         onSelectDrop?(drop)
@@ -592,6 +617,11 @@ public struct ActiveRunMapView: View {
                                                    lineJoin: .round))
                 }
                 ForEach(drops) { drop in
+                    // Capture zone stays visible until the gem is taken —
+                    // mid-run this is the target ring you're running for.
+                    if !collectedDropIDs.contains(drop.id) {
+                        CaptureZone(center: drop.coordinate)
+                    }
                     Annotation("", coordinate: drop.coordinate.cl) {
                         if sparklingDropIDs.contains(drop.id) {
                             SparkleBurst()

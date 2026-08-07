@@ -187,7 +187,7 @@ as a global backstop sweep. Full pipeline: doc 13.
   Completion is **idempotent** via `idempotency_key` — the same key returns
   the stored verdict, never double-awards.
 - **Free runs:** `POST /v1/drops/collect` claims standalone drops; the server
-  only checks the track passed within 100 ft (30.5 m) of each drop, deactivates it, and
+  only checks the track passed within 200 ft (61 m) of each drop, deactivates it, and
   awards XP + a first-find `StashItem`.
 
 ## 5. Call chains (read before adding any downstream call)
