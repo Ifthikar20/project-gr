@@ -36,13 +36,16 @@ public final class HTTPGemRunAPI: GemRunAPI {
     private struct AuthRequest: Encodable {
         let handle: String
         let externalUserId: String?
+        let identityToken: String?
     }
 
     public func auth(provider: AuthProvider, handle: String,
-                     externalID: String?) async throws -> AuthResponse {
+                     externalID: String?,
+                     identityToken: String?) async throws -> AuthResponse {
         let response: AuthResponse = try await send(
             "POST", "auth/\(provider.rawValue)",
-            body: AuthRequest(handle: handle, externalUserId: externalID))
+            body: AuthRequest(handle: handle, externalUserId: externalID,
+                              identityToken: identityToken))
         token = response.token
         return response
     }

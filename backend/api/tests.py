@@ -38,9 +38,14 @@ def track(speed, length_m=1000):
 # Hermetic: no real Overpass calls from tests; the walkability/bootstrap
 # tests below opt back in with mocked transports. PRESENCE_ASYNC off: the
 # background worker's own DB connection can't see the per-thread in-memory
-# test database, so the trigger must run inline here.
+# test database, so the trigger must run inline here. AUTH_MODE insecure_dev
+# preserves the pre-strict sign-in ergonomics these behavioural tests assume
+# (unauthenticated map reads, id-claimed accounts); the strict path has its
+# own AuthStrictTests below. THROTTLE off so the shared per-process counter
+# doesn't 429 the many sign-ins across the suite — ThrottleTests turns it on.
 @override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
-                   PRESENCE_ASYNC=False)
+                   PRESENCE_ASYNC=False, AUTH_MODE="insecure_dev",
+                   THROTTLE_ENABLED=False)
 class ApiTests(TestCase):
     def setUp(self):
         # Hermetic Overpass: the placement fetches return no geometry by
@@ -169,6 +174,90 @@ class ApiTests(TestCase):
         route = self.publish_route().json()
         verdict = self.complete(route["id"], track(12.0), []).json()
         self.assertNotEqual(verdict["status"], "valid")
+
+    @staticmethod
+    def _teleport_track():
+        """Legit average pace and full route coverage, but a sustained
+        >TELEPORT_SPEED burst — isolates the `teleport` flag from pace and
+        coverage so we can assert teleport ALONE blocks the economy."""
+        speeds = [3.0] * 40 + [10.0] * 6 + [3.0] * 300   # m/s per 1 s step
+        samples, dist, t = [], 0.0, 0.0
+        for sp in speeds:
+            samples.append({"t": t, "lat": 37.0 + dist * DEG_PER_M_LAT,
+                            "lng": -122.0, "horizontal_accuracy": 5, "speed": sp})
+            dist += sp
+            t += 1.0
+            if dist >= 1000:
+                break
+        return samples
+
+    def test_teleport_run_earns_nothing(self):
+        """H2: a sustained-teleport track is invalid — no gems, no XP, no
+        streak — even though its pace and coverage look fine."""
+        gem = self.gem("common", 300)
+        route = self.publish_route(gems=[gem]).json()
+        verdict = self.complete(route["id"], self._teleport_track(),
+                                [gem["id"]]).json()
+        self.assertEqual(verdict["status"], "invalid")
+        self.assertEqual(verdict["awarded_drops"], [])
+        self.assertEqual(verdict["xp_earned"], 0)
+        self.assertFalse(verdict["streak_extended"])
+        self.assertIn(gem["id"], verdict["revoked"])
+
+    def test_flagged_run_awards_gems_but_is_off_the_weekly_board(self):
+        """H2: a coverage-flagged run still awards the gem the track actually
+        reached (proximity is enforced independently), but its XP never ranks
+        on the weekly board."""
+        gem = self.gem("common", 100)                     # early — reachable
+        route = self.publish_route(gems=[gem]).json()
+        # Cover ~80% of the route → coverage flag (≥0.5, so `flagged`).
+        verdict = self.complete(route["id"], track(3.0, length_m=800),
+                                [gem["id"]]).json()
+        self.assertEqual(verdict["status"], "flagged")
+        self.assertEqual([d["id"] for d in verdict["awarded_drops"]], [gem["id"]])
+        self.assertGreater(verdict["xp_earned"], 0)       # earned…
+        board = self.client.get("/v1/leaderboards/local").json()
+        self.assertEqual(board["entries"], [])            # …but unranked
+
+    def test_utc_offset_persists_from_run_payload(self):
+        route = self.publish_route().json()
+        self.post(f"/v1/runs/{route['id']}/complete", {
+            "idempotency_key": str(uuid.uuid4()), "started_at": "2026-07-23T10:00:00Z",
+            "track": track(3.0, length_m=1100), "claimed_collections": [],
+            "utc_offset_minutes": -420}, auth=True)
+        profile = Profile.objects.get(id=self.client.get(
+            "/v1/users/me", HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["id"])
+        self.assertEqual(profile.utc_offset_minutes, -420)
+
+    def test_daily_respawn_uses_the_runners_local_day(self):
+        """M3: the daily respawn boundary is the runner's local midnight, not
+        UTC's. A gem grabbed at 01:00 UTC by a UTC-8 runner (17:00 their
+        previous day) is NOT re-claimable at 09:00 UTC the same day (01:00
+        their time) — both are the same local day."""
+        from .models import Profile as P
+        from . import views
+        prof = P.objects.create(handle="pdt", auth_provider="guest",
+                                external_user_id="x", utc_offset_minutes=-480)
+        drop = GemDrop.objects.create(
+            route=None, gem_id=catalog.gem_of("common")["id"], rarity="common",
+            lat=37.0, lng=-122.0, position_along_route_m=0,
+            respawn_rule="daily", placed_by="system")
+        from datetime import datetime, timezone as tz
+        # Collect at 2026-07-22 20:00 UTC = 12:00 local (local day 07-22).
+        t0 = datetime(2026, 7, 22, 20, 0, tzinfo=tz.utc)
+        self.assertTrue(views.claim_respawn(prof, drop, t0))
+        from .models import StashItem
+        StashItem.objects.create(profile=prof, gem_id=drop.gem_id, gem_drop=drop,
+                                 collected_at=t0, is_first_find=False)
+        # 2026-07-23 02:00 UTC = 18:00 local — a NEW UTC day but the SAME local
+        # day (07-22), so it's still blocked. UTC-date logic would wrongly
+        # allow it; this is the whole point of the local frame.
+        t_same_local = datetime(2026, 7, 23, 2, 0, tzinfo=tz.utc)
+        self.assertFalse(views.claim_respawn(prof, drop, t_same_local))
+        # 2026-07-23 09:00 UTC = 01:00 local — the runner's next local day →
+        # claimable again.
+        t_next_local = datetime(2026, 7, 23, 9, 0, tzinfo=tz.utc)
+        self.assertTrue(views.claim_respawn(prof, drop, t_next_local))
 
     def test_streak_extends_once_per_day(self):
         route = self.publish_route().json()
@@ -1206,3 +1295,92 @@ class ApiTests(TestCase):
                           {"handle": "wanderer", "external_user_id": "device-abc"})
         self.assertEqual(first.json()["profile"]["id"],
                          again.json()["profile"]["id"])
+
+
+def _echo_verifier(provider, token):
+    """Test identity verifier: the client's identity_token IS the verified
+    subject (namespaced by provider). Stands in for real JWKS verification so
+    the strict flow is testable without live Apple/Google keys."""
+    return f"{provider}:{token}"
+
+
+# Strict mode is the production auth posture: apple/google require a verified
+# identity token; guests use a high-entropy secret; unauthenticated calls fail.
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
+                   PRESENCE_ASYNC=False, THROTTLE_ENABLED=False,
+                   AUTH_MODE="strict", IDENTITY_VERIFIER=_echo_verifier)
+class AuthStrictTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+
+    def post(self, path, payload):
+        return self.client.post(path, data=json.dumps(payload),
+                                content_type="application/json")
+
+    def test_apple_requires_a_verified_identity_token(self):
+        # No identity_token → rejected. A client-claimed external_user_id is
+        # NOT accepted as identity in strict mode.
+        denied = self.post("/v1/auth/apple",
+                           {"handle": "x", "external_user_id": "victim-apple-id"})
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(Profile.objects.count(), 0)
+
+    def test_verified_apple_token_signs_in_and_is_stable(self):
+        first = self.post("/v1/auth/apple",
+                          {"handle": "ali", "identity_token": "sub-1"})
+        self.assertEqual(first.status_code, 200)
+        again = self.post("/v1/auth/apple",
+                          {"handle": "ali", "identity_token": "sub-1"})
+        self.assertEqual(first.json()["profile"]["id"],
+                         again.json()["profile"]["id"])
+        self.assertEqual(Profile.objects.count(), 1)
+
+    def test_cannot_adopt_another_account_by_claiming_its_external_id(self):
+        # The real owner signs in with their verified token…
+        owner = self.post("/v1/auth/apple",
+                          {"handle": "owner", "identity_token": "sub-owner"}).json()
+        owner_id = owner["profile"]["id"]
+        # …an attacker who only knows the (hashed) external id but has a
+        # DIFFERENT verified token gets their OWN account, never the owner's.
+        attacker = self.post("/v1/auth/apple",
+                             {"handle": "attacker", "identity_token": "sub-attacker",
+                              "external_user_id": "sub-owner"}).json()
+        self.assertNotEqual(owner_id, attacker["profile"]["id"])
+
+    def test_guest_needs_a_long_secret_and_is_stable(self):
+        secret = "g" * 32
+        short = self.post("/v1/auth/guest", {"external_user_id": "tooshort"})
+        self.assertEqual(short.status_code, 401)
+        a = self.post("/v1/auth/guest", {"external_user_id": secret})
+        b = self.post("/v1/auth/guest", {"external_user_id": secret})
+        self.assertEqual(a.status_code, 200)
+        self.assertEqual(a.json()["profile"]["id"], b.json()["profile"]["id"])
+        other = self.post("/v1/auth/guest", {"external_user_id": "h" * 32})
+        self.assertNotEqual(a.json()["profile"]["id"],
+                            other.json()["profile"]["id"])
+
+    def test_unauthenticated_call_is_rejected_in_strict_mode(self):
+        # No shared dev-fallback profile: protected endpoints actually 401.
+        self.assertEqual(self.client.get("/v1/stash").status_code, 401)
+
+
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
+                   PRESENCE_ASYNC=False, AUTH_MODE="insecure_dev",
+                   THROTTLE_ENABLED=True,
+                   RATE_LIMITS={"auth": (3, 60), "reward": (40, 60),
+                                "enumerate": (30, 60)})
+class ThrottleTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()   # LocMemCache persists across tests in-process
+        self.client = Client()
+
+    def test_auth_endpoint_throttles_after_the_limit(self):
+        ok = [self.client.post("/v1/auth/guest", data="{}",
+                               content_type="application/json").status_code
+              for _ in range(3)]
+        self.assertEqual(ok, [200, 200, 200])
+        blocked = self.client.post("/v1/auth/guest", data="{}",
+                                   content_type="application/json")
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(blocked.json()["code"], "rate_limited")

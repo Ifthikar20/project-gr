@@ -2,3 +2,8 @@ Django>=5.2,<6.0
 # TLS trust store for urllib calls to Overpass — macOS Python installs often
 # ship without linked system certs, silently failing every HTTPS request.
 certifi>=2024.0.0
+# Apple/Google identity-token verification for strict-mode sign-in
+# (api/identity.py). The [crypto] extra pulls in `cryptography` for the
+# RS256/ES256 JWKS signature check. Tests use the settings.IDENTITY_VERIFIER
+# seam and don't import it.
+PyJWT[crypto]>=2.8.0

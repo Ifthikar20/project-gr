@@ -34,9 +34,12 @@ targets:
       path: App/GemRun.entitlements
       properties:
         com.apple.developer.healthkit: true
-        # Sign in with Apple requires a paid Apple Developer Program membership;
-        # personal (free) teams can't provision it. Add back when we go paid:
-        # com.apple.developer.applesignin: [Default]
+        # Sign in with Apple is offered in the UI (and Guideline 4.8 requires a
+        # WORKING SIWA whenever a third-party login like Google is present), so
+        # the entitlement ships. Both this and HealthKit above require a PAID
+        # Apple Developer Program membership to provision — a free personal
+        # team can't sign a build carrying them.
+        com.apple.developer.applesignin: [Default]
     info:
       path: App/Info.plist
       properties:

@@ -93,7 +93,15 @@ def validate(track, geom: RouteGeometry):
     if pace > rules.MAX_VALID_PACE_S_PER_KM:
         flags.append("too_slow")
 
-    if "too_fast" in flags or "too_slow" in flags or coverage_ratio < 0.5:
+    # `invalid` earns nothing (no gems, no XP, no leaderboard). Teleport is a
+    # hard cheat signal — sustained >TELEPORT_SPEED for TELEPORT_SUSTAIN_S is a
+    # vehicle or a spoofed track, not GPS noise — so it gates the economy
+    # alongside impossible pace and near-total non-coverage. `adherence` and
+    # mild `coverage` stay `flagged`: those are commonly legitimate (urban GPS
+    # drift, sidewalk-vs-centerline), so they still award gems the track
+    # physically reached, but are held off leaderboards by the callers.
+    if ("too_fast" in flags or "too_slow" in flags or "teleport" in flags
+            or coverage_ratio < 0.5):
         status = "invalid"
     elif flags:
         status = "flagged"
