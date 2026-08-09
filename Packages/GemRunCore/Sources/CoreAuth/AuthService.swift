@@ -22,21 +22,33 @@ public enum GuestIdentity {
 }
 
 /// Persists the server session token across launches so a relaunch resumes
-/// the SAME authenticated account instead of running unauthenticated.
-/// UserDefaults for now — moving the raw token into the Keychain is the
-/// docs/10 hardening item, and this type is the one place that change lands.
+/// the SAME authenticated account instead of running unauthenticated. The
+/// token lives in the Keychain (encrypted at rest, backup-excluded) — the
+/// docs/10 (G9) hardening item — with a one-time migration off the old
+/// UserDefaults location so existing installs stay signed in.
 struct TokenStore {
     private let key = "gemrun.session.token"
+    private let keychain = KeychainStore(service: "app.gemrun.session",
+                                         account: "session.token")
 
     var token: String? {
-        UserDefaults.standard.string(forKey: key)
+        if let value = keychain.read() { return value }
+        // Legacy installs kept the token in UserDefaults; migrate once, then
+        // scrub the plaintext copy so it never lingers.
+        if let legacy = UserDefaults.standard.string(forKey: key) {
+            keychain.save(legacy)
+            UserDefaults.standard.removeObject(forKey: key)
+            return legacy
+        }
+        return nil
     }
 
     func save(_ token: String) {
-        UserDefaults.standard.set(token, forKey: key)
+        keychain.save(token)
     }
 
     func clear() {
+        keychain.clear()
         UserDefaults.standard.removeObject(forKey: key)
     }
 }
@@ -85,9 +97,10 @@ public struct AuthService {
     }
 
     /// Sign in with Apple. `credential.user` is Apple's stable per-team user
-    /// id — our external id — so the same Apple ID lands on the same account
-    /// on every device and reinstall. Django later verifies
-    /// `credential.identityToken` server-side (docs/10).
+    /// id (kept as a fallback external id); `credential.identityToken` is the
+    /// signed JWT the server VERIFIES in strict mode — the account subject
+    /// comes from the verified token, so a stolen `user` id alone can't adopt
+    /// the account (docs/06 auth exchange).
     public func signIn(apple result: Result<ASAuthorization, Error>,
                        preferredHandle: String) -> Outcome {
         switch result {
@@ -98,8 +111,11 @@ public struct AuthService {
             }
             let name = preferredHandle.isEmpty
                 ? (credential.fullName?.givenName ?? "runner") : preferredHandle
+            let identityToken = credential.identityToken
+                .flatMap { String(data: $0, encoding: .utf8) }
             return complete(provider: .apple, handle: name,
-                            externalID: credential.user)
+                            externalID: credential.user,
+                            identityToken: identityToken)
         case .failure(let error):
             // An accurate button reports its own failure — no silent guest
             // fallthrough (that used to mint a surprise second account).
@@ -152,9 +168,14 @@ public struct AuthService {
         let externalID = profile.externalUserID
             ?? (session.authProvider == .guest ? GuestIdentity.id : nil)
         do {
+            // No identity token on hand at restore (Apple/Google only hand
+            // one out through the sign-in sheet). The stored-token path above
+            // covers the normal relaunch; this tokenless re-register only
+            // succeeds for guests in strict mode — an Apple/Google user whose
+            // token never persisted is asked to sign in again.
             let response = try await API.shared.auth(
                 provider: session.authProvider, handle: profile.handle,
-                externalID: externalID)
+                externalID: externalID, identityToken: nil)
             tokens.save(response.token)
         } catch {
             GemLog.session.error("session restore failed — continuing unauthenticated: \(String(describing: error), privacy: .public)")
@@ -164,14 +185,15 @@ public struct AuthService {
     // MARK: - Shared tail
 
     private func complete(provider: AuthProvider, handle: String,
-                          externalID: String?) -> Outcome {
+                          externalID: String?,
+                          identityToken: String? = nil) -> Outcome {
         guard session.signIn(provider: provider, handle: handle,
                              externalID: externalID) else {
             return .failure("Couldn't save your profile on this device.")
         }
         register(provider: provider,
                  handle: session.profile?.handle ?? handle,
-                 externalID: externalID)
+                 externalID: externalID, identityToken: identityToken)
         return .success
     }
 
@@ -182,11 +204,12 @@ public struct AuthService {
     /// failure is named loudly at its cause and `restoreSession()` retries on
     /// the next launch.
     private func register(provider: AuthProvider, handle: String,
-                          externalID: String?) {
+                          externalID: String?, identityToken: String? = nil) {
         Task {
             do {
                 let response = try await API.shared.auth(
-                    provider: provider, handle: handle, externalID: externalID)
+                    provider: provider, handle: handle, externalID: externalID,
+                    identityToken: identityToken)
                 tokens.save(response.token)
             } catch {
                 GemLog.session.error("auth POST failed — continuing unauthenticated: \(String(describing: error), privacy: .public)")

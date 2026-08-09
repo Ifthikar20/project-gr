@@ -11,16 +11,18 @@ import uuid
 from datetime import datetime, timedelta, timezone as tz
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Count, Prefetch, Sum
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from . import catalog, rules, system_drops, validation, walkability
+from . import catalog, identity, rules, system_drops, validation, walkability
 from .geometry import RouteGeometry, polyline_decode
 from .models import (ClaimAttempt, Friendship, GemDrop, Profile, Route, Run,
                      StashItem, Token)
+from .throttle import throttle
 
 FUZZ_RADIUS_M = 150
 
@@ -105,12 +107,13 @@ def profile_from(request):
                  .select_related("profile").first())
         if token:
             return token.profile
-    if settings.ALLOW_ALL_ACCOUNTS:
-        # Dev flag (mirrors iOS AuthFlags.allowAllAccounts): unauthenticated
-        # calls act as a shared dev profile instead of failing. NOT
-        # get_or_create: the app fires routes+drops concurrently, and two
-        # racing creates once left duplicates that 500'd every request —
-        # always take the oldest, tolerate strays.
+    if settings.AUTH_MODE != "strict":
+        # insecure_dev only (never strict/production): unauthenticated calls
+        # act as a shared dev profile instead of failing, so the iOS mock and
+        # local curl work without a real sign-in. NOT get_or_create: the app
+        # fires routes+drops concurrently, and two racing creates once left
+        # duplicates that 500'd every request — always take the oldest,
+        # tolerate strays.
         profile = (Profile.objects.filter(auth_provider="guest",
                                           external_user_id="dev-fallback")
                    .order_by("created_at").first())
@@ -175,32 +178,33 @@ def route_json(route, viewer=None, collected_ids=None, active_drops=None):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@throttle("auth")
 def auth_provider(request, provider):
-    # "guest" gets the same stable identity mechanics as the real
-    # providers: the client sends a per-install id, stored hashed, so a
-    # guest keeps ONE account across sessions instead of minting a new
-    # profile every sign-in.
     if provider not in ("apple", "google", "guest"):
         return problem(404, "Unknown auth provider")
     data = body_of(request)
     if data is None:
         return problem(400, "Invalid JSON")
-    external_id = data.get("external_user_id")
-    if not settings.ALLOW_ALL_ACCOUNTS:
-        # Token verification (Apple identityToken / Google idToken) lands here.
-        # This 501s EVERY sign-in — if the flag was flipped before
-        # verification shipped, the log is the only place that says so.
-        log.warning("sign-in rejected: ALLOW_ALL_ACCOUNTS is off but token "
-                    "verification is not implemented (auth_strict_mode)")
-        return problem(501, "Identity token verification not yet enabled",
-                       code="auth_strict_mode")
     handle = (data.get("handle") or "runner").strip() or "runner"
-    # Provider IDs are stored hashed (see digest()) — lookups hash first.
-    hashed_external = digest(external_id) if external_id else None
-    profile = None
-    if hashed_external:
-        profile = Profile.objects.filter(auth_provider=provider,
-                                         external_user_id=hashed_external).first()
+
+    # Resolve the account subject. This is THE security boundary: in strict
+    # mode the subject for apple/google comes from a verified identity token,
+    # never from a client-claimed external_user_id, so no one can adopt
+    # another player's account by naming their provider id.
+    try:
+        subject = resolve_auth_subject(provider, data)
+    except identity.IdentityError as exc:
+        log.warning("sign-in rejected (%s): %s", provider, exc)
+        return problem(401, "Could not verify your sign-in", code="auth_failed")
+    if subject is None:
+        # insecure_dev with no id supplied — mint a throwaway account.
+        subject = secrets.token_hex(16)
+
+    # Subjects (verified provider ids or guest secrets) are stored ONLY as
+    # digests — a leaked DB holds no usable Apple id or guest credential.
+    hashed_external = digest(subject)
+    profile = Profile.objects.filter(auth_provider=provider,
+                                      external_user_id=hashed_external).first()
     if profile is None:
         profile = Profile.objects.create(handle=handle, auth_provider=provider,
                                          external_user_id=hashed_external)
@@ -212,6 +216,33 @@ def auth_provider(request, provider):
     raw_token = secrets.token_hex(24)
     Token.objects.create(key=digest(raw_token), profile=profile)
     return JsonResponse({"token": raw_token, "profile": profile_json(profile)})
+
+
+def resolve_auth_subject(provider, data):
+    """The account subject to bind this sign-in to, or None to mint a fresh
+    throwaway (insecure_dev only). Raises identity.IdentityError on a failed
+    verification. Strict mode is the production path:
+
+      * apple/google — verify the provider's signed `identity_token` and take
+        the subject from it; a missing/invalid token is rejected.
+      * guest        — the client's high-entropy `external_user_id` is a
+        bearer capability (knowing it owns that guest account); required and
+        must be long enough to be unguessable.
+
+    insecure_dev (local/mock only) trusts the client-claimed id verbatim.
+    """
+    if settings.AUTH_MODE == "strict":
+        if provider in ("apple", "google"):
+            return identity.verify_identity_token(provider,
+                                                  data.get("identity_token"))
+        secret = (data.get("external_user_id") or "").strip()
+        if len(secret) < 16:
+            raise identity.IdentityError(
+                "guest sign-in requires a client-generated secret")
+        return secret
+    # insecure_dev: whatever the client claims (or None → throwaway account).
+    claimed = (data.get("external_user_id") or "").strip()
+    return claimed or None
 
 
 @csrf_exempt
@@ -242,6 +273,7 @@ def me(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@throttle("enumerate")
 def handle_check(request):
     """Live availability for the Settings username editor: is this handle
     free for the CALLER to take? (Your own current handle counts as free.)"""
@@ -442,6 +474,7 @@ def start_run(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@throttle("reward")
 @transaction.atomic
 def complete_run(request, route_id):
     profile = profile_from(request)
@@ -470,6 +503,9 @@ def complete_run(request, route_id):
                     profile.id, exc)
         return problem(400, "Malformed completion payload", code="malformed",
                        detail=repr(exc))
+
+    # Refresh the runner's local frame before streak/daily-respawn decisions.
+    apply_offset(profile, data)
 
     geom = RouteGeometry(polyline_decode(route.polyline))
     verdict_v = validation.validate(track, geom)
@@ -585,11 +621,40 @@ def log_claim(profile, drop, source, outcome, closest_m):
                                 outcome=outcome, closest_m=closest_m)
 
 
+def local_day(profile, now):
+    """The calendar date at the runner's stored UTC offset — the frame streaks
+    and the daily respawn use, so day boundaries fall at the runner's local
+    midnight, not UTC's."""
+    return (now + timedelta(minutes=profile.utc_offset_minutes)).date()
+
+
+def apply_offset(profile, data):
+    """Refresh the profile's UTC offset from a run/collect payload, if it
+    carried one. Clamped to ±14 h (the real range of world offsets); a bad or
+    absent value leaves the stored offset untouched."""
+    raw = (data or {}).get("utc_offset_minutes")
+    if raw is None:
+        return
+    try:
+        offset = int(raw)
+    except (TypeError, ValueError):
+        return
+    offset = max(-14 * 60, min(14 * 60, offset))
+    if offset != profile.utc_offset_minutes:
+        profile.utc_offset_minutes = offset
+        profile.save(update_fields=["utc_offset_minutes"])
+
+
 def claim_respawn(profile, drop, now):
     """Respawn rules as queries (docs/02, docs/05 uniqueness semantics)."""
     qs = StashItem.objects.filter(gem_drop=drop)
     if drop.respawn_rule == "daily":
-        return not qs.filter(profile=profile, collected_at__date=now.date()).exists()
+        # "once per local day" — a gem you grabbed at 11pm is claimable again
+        # after your local midnight, not UTC's.
+        today = local_day(profile, now)
+        same_day = [s for s in qs.filter(profile=profile)
+                    if local_day(profile, s.collected_at) == today]
+        return not same_day
     if drop.respawn_rule == "once_per_user":
         return not qs.filter(profile=profile).exists()
     return not qs.filter(profile=profile).exists()   # one_time: once each; first gets the crown
@@ -600,7 +665,7 @@ def update_streak(profile, verdict_v):
     if verdict_v["status"] == "invalid" \
             or verdict_v["distance_m"] < rules.MIN_VALID_RUN_DISTANCE_M:
         return False
-    today = datetime.now(tz.utc).date()
+    today = local_day(profile, datetime.now(tz.utc))
     last = profile.streak_last_date
     if last is not None:
         gap = (today - last).days
@@ -645,7 +710,8 @@ def stash(request):
 def route_leaderboard(request, route_id):
     window = request.GET.get("window", "all")
     viewer = profile_from(request)
-    qs = Run.objects.filter(route_id=route_id, status="valid", is_walk=False)
+    qs = (Run.objects.using(settings.READ_DB)
+          .filter(route_id=route_id, status="valid", is_walk=False))
     if window == "month":
         qs = qs.filter(started_at__gte=datetime.now(tz.utc) - timedelta(days=31))
     best = {}
@@ -665,18 +731,21 @@ def route_leaderboard(request, route_id):
 @require_http_methods(["GET"])
 def local_leaderboard(request):
     viewer = profile_from(request)
-    now = datetime.now(tz.utc)
-    week_start = now - timedelta(days=now.weekday(), hours=now.hour,
-                                 minutes=now.minute, seconds=now.second)
-    totals = {}
-    for run in Run.objects.filter(started_at__gte=week_start).select_related("profile"):
-        totals.setdefault(run.profile, 0)
-        totals[run.profile] += run.xp_earned
-    rows = sorted(totals.items(), key=lambda kv: -kv[1])
+    week_start = _week_start()
+    # Sum in the database, not by loading a week of runs into Python — one
+    # grouped query returns a row per active player. Only valid runs rank:
+    # flagged/invalid XP is earned-but-unranked. Reads route to the replica
+    # (READ_DB) when one is configured.
+    rows = (Run.objects.using(settings.READ_DB)
+            .filter(started_at__gte=week_start, status="valid")
+            .values("profile_id", "profile__handle", "profile__level")
+            .annotate(xp=Sum("xp_earned"))
+            .order_by("-xp"))
     return JsonResponse({"entries": [
-        {"rank": i + 1, "handle": p.handle, "level": p.level, "best_time_s": xp,
-         "is_me": viewer is not None and p.id == viewer.id}
-        for i, (p, xp) in enumerate(rows)]})
+        {"rank": i + 1, "handle": r["profile__handle"], "level": r["profile__level"],
+         "best_time_s": r["xp"],
+         "is_me": viewer is not None and r["profile_id"] == viewer.id}
+        for i, r in enumerate(rows)]})
 
 
 # ------------------------------------------------- my runs, players, friends
@@ -696,7 +765,7 @@ def my_runs(request):
     profile = profile_from(request)
     if profile is None:
         return problem(401, "Sign in required")
-    rows = (Run.objects.filter(profile=profile)
+    rows = (Run.objects.using(settings.READ_DB).filter(profile=profile)
             .select_related("route").order_by("-started_at")[:50])
     return JsonResponse({"runs": [
         {"id": str(r.id), "route_id": str(r.route_id),
@@ -709,6 +778,7 @@ def my_runs(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@throttle("enumerate")
 def players(request):
     """Username search for the friends board. Case-insensitive substring
     on handle, excluding yourself; capped at 20."""
@@ -716,7 +786,7 @@ def players(request):
     query = (request.GET.get("search") or "").strip()
     if len(query) < 2:
         return JsonResponse({"players": []})
-    qs = Profile.objects.filter(handle__icontains=query)
+    qs = Profile.objects.using(settings.READ_DB).filter(handle__icontains=query)
     if profile is not None:
         qs = qs.exclude(id=profile.id)
     return JsonResponse({"players": [
@@ -752,12 +822,20 @@ def friends(request):
                            profile.friendships.select_related("friend")
                            .order_by("created_at")]
     weekly = {m.id: {"xp": 0, "distance_m": 0, "runs": 0} for m in members}
-    for run in Run.objects.filter(profile_id__in=weekly.keys(),
-                                  started_at__gte=week_start):
-        row = weekly[run.profile_id]
-        row["xp"] += run.xp_earned
-        row["distance_m"] += run.distance_m
-        row["runs"] += 1
+    # Aggregate in the database (one grouped query over the member set), not
+    # by summing runs in Python. Valid runs only — same fairness rule as the
+    # local board.
+    agg = (Run.objects.using(settings.READ_DB)
+           .filter(profile_id__in=weekly.keys(),
+                   started_at__gte=week_start, status="valid")
+           .values("profile_id")
+           .annotate(xp=Sum("xp_earned"), distance_m=Sum("distance_m"),
+                     runs=Count("id")))
+    for row in agg:
+        w = weekly[row["profile_id"]]
+        w["xp"] = row["xp"] or 0
+        w["distance_m"] = row["distance_m"] or 0
+        w["runs"] = row["runs"]
     members.sort(key=lambda m: -weekly[m.id]["xp"])
     return JsonResponse({"friends": [
         {"id": str(m.id), "handle": m.handle, "level": m.level,
@@ -812,17 +890,37 @@ def drops(request):
                           "serving the map read without restocking",
                           lat, lng)
             stocking = False
-        dlat = radius / 111_320
-        dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
-        qs = GemDrop.objects.filter(route__isnull=True, active=True,
-                                    lat__gte=lat - dlat, lat__lte=lat + dlat,
-                                    lng__gte=lng - dlng, lng__lte=lng + dlng
-                                    ).order_by("-created_at")[:200]
+        # Map read: the hottest DB query. Cache the serialized drop list for a
+        # few seconds, keyed on the ~110 m grid cell + radius, so a burst of
+        # opens in one area shares one query. The presence trigger above still
+        # runs every time (stocking stays live), and the `stocking` flag below
+        # is always fresh — only the world-state drop list (same for every
+        # viewer here) is cached, and TTL-bounded staleness is fine because the
+        # client already refetches. Drops are exact here (not per-viewer).
+        drops_list = None
+        cache_key = None
+        if settings.READ_CACHE_ENABLED and settings.CACHE_TTL_DROPS:
+            cache_key = "drops:v1:%.3f:%.3f:%d" % (round(lat, 3), round(lng, 3), radius)
+            drops_list = cache.get(cache_key)
+        if drops_list is None:
+            dlat = radius / 111_320
+            dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
+            qs = GemDrop.objects.filter(route__isnull=True, active=True,
+                                        lat__gte=lat - dlat, lat__lte=lat + dlat,
+                                        lng__gte=lng - dlng, lng__lte=lng + dlng
+                                        ).order_by("-created_at")[:200]
+            drops_list = [drop_json(d, exact=True) for d in qs]
+            if cache_key:
+                cache.set(cache_key, drops_list, settings.CACHE_TTL_DROPS)
         # `stocking`: a background job is restocking/rotating this area
         # right now — the client shows "Stocking gems near you…" and looks
         # again in a few seconds instead of sitting on the thin answer.
-        return JsonResponse({"drops": [drop_json(d, exact=True) for d in qs],
-                             "stocking": stocking})
+        response = JsonResponse({"drops": drops_list, "stocking": stocking})
+        # Never cacheable: iOS URLSession may heuristically cache GETs that
+        # carry no cache headers, and a replayed stale answer here is a
+        # permanently wrong map (the presence trigger wouldn't even fire).
+        response["Cache-Control"] = "no-store"
+        return response
 
     # POST — give one of your stash gems away as a map drop. The stash row
     # stays (collection record) but is marked dropped and can't be re-spent.
@@ -887,6 +985,7 @@ def drops(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@throttle("reward")
 @transaction.atomic
 def collect_drops(request):
     """Free-run collection of standalone drops: the track must pass within
@@ -904,6 +1003,7 @@ def collect_drops(request):
                     profile.id, exc)
         return problem(400, "Malformed collect payload", code="malformed",
                        detail=repr(exc))
+    apply_offset(profile, data)
     now = datetime.now(tz.utc)
     awarded = []
     for drop_id in claimed:
@@ -962,10 +1062,26 @@ def track_passes_near(track, lat, lng):
     return d is not None and d <= rules.DROP_COLLECT_RADIUS_M
 
 
+CATALOG_CACHE_KEY = "catalog:v1"
+
+
+def _catalog_payload():
+    return {"gems": [
+        {"id": str(e["id"]), "name": e["name"], "rarity": e["rarity"],
+         "set_id": str(e["set_id"]), "icon_ref": e["icon_ref"]}
+        for e in catalog.ENTRIES]}
+
+
 @csrf_exempt
 @require_http_methods(["GET"])
 def gem_catalog(request):
-    return JsonResponse({"gems": [
-        {"id": str(e["id"]), "name": e["name"], "rarity": e["rarity"],
-         "set_id": str(e["set_id"]), "icon_ref": e["icon_ref"]}
-        for e in catalog.ENTRIES]})
+    # The catalog is static per deploy — cache the whole payload so this
+    # endpoint stops re-serializing the full gem list on every launch.
+    if settings.READ_CACHE_ENABLED:
+        payload = cache.get(CATALOG_CACHE_KEY)
+        if payload is None:
+            payload = _catalog_payload()
+            cache.set(CATALOG_CACHE_KEY, payload, settings.CACHE_TTL_CATALOG)
+    else:
+        payload = _catalog_payload()
+    return JsonResponse(payload)

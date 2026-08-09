@@ -25,7 +25,7 @@
 
 GemRun turns any running route into a treasure hunt. The **backend stocks real,
 walkable streets with gems** around wherever a runner opens the map; passing
-within **100 ft (30.5 m)** with a live GPS track claims a gem — optimistically on
+within **200 ft (61 m)** with a live GPS track claims a gem — optimistically on
 the phone, authoritatively on the server, **first come, first served in one
 shared world**. On top: route creation with a gem-placement budget, XP and
 levels, daily streaks with shields, leaderboards, and a 26-gem collectible
@@ -34,14 +34,14 @@ catalog.
 ```mermaid
 flowchart LR
     A["🗺️ Open the map<br/>backend stocks gems<br/>around you"]:::pulse
-    B["🏃 Run & collect<br/>pass within 100 ft —<br/>first one there takes it"]:::card
+    B["🏃 Run & collect<br/>pass within 200 ft —<br/>first one there takes it"]:::card
     C["✏️ Create routes<br/>draw, place gems<br/>from a budget, publish"]:::card
     D["💎 Stash & XP<br/>streaks, levels,<br/>tier bonuses"]:::card
     E["🏆 Compete<br/>leaderboards, friends,<br/>first-find crowns"]:::card
     A --> B --> D --> E --> A
     C --> B
     E --> C
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
 ```
 
@@ -120,7 +120,7 @@ flowchart TB
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef ext fill:#E3E4E5,stroke:#7F8083,color:#16181D
     style IOS fill:#FAFAF8,stroke:#16181D,color:#16181D
     style FEAT fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
@@ -207,11 +207,13 @@ nothing else is allowed on screen.
 flowchart LR
     SNOW["<b>Snow</b><br/>#FAFAF8<br/>app background<br/>+ #FFFFFF cards"]:::snow
     INK["<b>Ink</b><br/>#16181D<br/>text · 55% secondary<br/>· 12% hairlines"]:::ink
-    PULSE["<b>Pulse</b><br/>#EF3B23<br/>the single accent:<br/>actions, pace, rarity"]:::pulse
-    SNOW ~~~ INK ~~~ PULSE
+    MAPC["<b>Map</b><br/>#61FF00<br/>map & game graphics:<br/>routes, pins, markers"]:::mapc
+    PULSE["<b>Pulse</b><br/>#5F40BF<br/>the chrome accent:<br/>actions, pace, rarity"]:::pulse
+    SNOW ~~~ INK ~~~ MAPC ~~~ PULSE
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef mapc fill:#61FF00,stroke:#16181D,color:#16181D
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
 ```
 
 **Rarity is an accent ramp, not new colors** — pulse at rising opacity,
@@ -230,7 +232,7 @@ flowchart LR
     classDef u fill:#F79D91,stroke:#16181D,color:#16181D
     classDef r fill:#F47665,stroke:#16181D,color:#16181D
     classDef e fill:#F1533D,stroke:#16181D,color:#FFFFFF
-    classDef l fill:#EF3B23,stroke:#16181D,color:#FFFFFF
+    classDef l fill:#5F40BF,stroke:#16181D,color:#FFFFFF
 ```
 
 | Layer | Tokens |
@@ -267,7 +269,7 @@ flowchart LR
     CRASH(["Crash recovery:<br/>RunBuffer.pending() < 30 min<br/>→ 'Resume your run?'"]):::ext -.-> RUN
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef ext fill:#E3E4E5,stroke:#7F8083,color:#16181D
     style TABS fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
@@ -294,7 +296,7 @@ flowchart TB
     classDef snow fill:#FAFAF8,stroke:#7F8083,color:#16181D
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
     classDef map fill:#FAC4BD,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     style EXPLORE fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -331,7 +333,7 @@ flowchart TB
     end
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
     classDef map fill:#F79D91,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     style DETAIL fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -369,7 +371,7 @@ flowchart LR
     S1 --> S2 --> S3
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
     classDef map fill:#F47665,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     style S1 fill:#FAFAF8,stroke:#16181D,color:#16181D
     style S2 fill:#FAFAF8,stroke:#16181D,color:#16181D
     style S3 fill:#FAFAF8,stroke:#16181D,color:#16181D
@@ -395,7 +397,7 @@ flowchart TB
     end
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
     classDef map fill:#F1533D,stroke:#E3E4E5,color:#FFFFFF
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     style RUN fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
@@ -427,7 +429,7 @@ flowchart TB
     end
     classDef card fill:#FFFFFF,stroke:#E3E4E5,color:#16181D
     classDef map fill:#F79D91,stroke:#E3E4E5,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     style SUM fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -495,7 +497,7 @@ sequenceDiagram
         REC-->>ENG: AsyncStream of TrackSample
         ENG->>ENG: pedometer-first distance (CMPedometer owns distanceM)<br/>auto-pause under 0.5 m/s ×10 s · adaptive distance filter
         ENG->>CE: ingest(sample)
-        CE-->>ENG: [Event] — gates: on-route → monotonic progress<br/>→ ≤30.5 m proximity → hysteresis (exit 40 m / advance 50 m)
+        CE-->>ENG: [Event] — gates: on-route → monotonic progress<br/>→ ≤61 m proximity → hysteresis (exit 80 m / advance 100 m)
         ENG->>BUF: append(sample)  — crash-safe
         ENG-->>ENG: onCollect → burst + haptic + fly-to-chip
     end
@@ -554,7 +556,7 @@ flowchart TB
     CN --> CM
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     style FEATURES fill:#FAFAF8,stroke:#16181D,color:#16181D
 ```
 
@@ -710,7 +712,7 @@ flowchart TB
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef t1 fill:#F1533D,stroke:#16181D,color:#FFFFFF
     classDef t2 fill:#F79D91,stroke:#16181D,color:#16181D
 ```
@@ -751,7 +753,7 @@ sequenceDiagram
         rect rgb(250, 196, 189)
             note over V,VAL: replay — the client's claims are hints, not facts
             V->>VAL: validate(track, geometry) + replay_collections(...)
-            VAL-->>V: status valid/flagged/invalid + flags<br/>(adherence · coverage · teleport · pace bounds)<br/>+ the drops the track ACTUALLY earned<br/>(30.5 m radius · monotonic progress · hysteresis)
+            VAL-->>V: status valid/flagged/invalid + flags<br/>(adherence · coverage · teleport · pace bounds)<br/>+ the drops the track ACTUALLY earned<br/>(61 m radius · monotonic progress · hysteresis)
         end
         V->>V: award = claimed ∩ replayed ∩ respawn-eligible<br/>everything else → revoked (invalid ⇒ revoke all)
         rect rgb(250, 250, 248)
@@ -767,7 +769,7 @@ sequenceDiagram
 
 Free runs settle through the lighter `POST /v1/drops/collect`: same row-locked
 first-come claim, same audit, but the only proof required is that the track
-passed within 30.5 m — with the crucial gate that **GPS samples with accuracy
+passed within 61 m — with the crucial gate that **GPS samples with accuracy
 worse than 50 m are discarded**, so a 200 m-accuracy fix can't prove presence
 at anything.
 
@@ -813,8 +815,8 @@ and the explicit `CodingKeys` blocks that fix it are treated as load-bearing.
 
 | Rule | Value | Swift | Python |
 |---|---|---|---|
-| Collection radius | **30.5 m (100 ft)** | `collectionRadiusM` | `COLLECTION_RADIUS_M` |
-| Hysteresis | exit 40 m / advance 50 m | `hysteresisExitRadiusM/AdvanceM` | `HYSTERESIS_*` |
+| Collection radius | **61 m (200 ft)** | `collectionRadiusM` | `COLLECTION_RADIUS_M` |
+| Hysteresis | exit 80 m / advance 100 m | `hysteresisExitRadiusM/AdvanceM` | `HYSTERESIS_*` |
 | On-route | ≤ 40 m cross-track, ≥ 90 % samples | `maxCrossTrackM`, `minOnRouteSampleRatio` | `MAX_CROSS_TRACK_M`, `MIN_ON_ROUTE_SAMPLE_RATIO` |
 | Coverage | ≥ 95 % (invalid < 50 %) | `minRouteCoverageRatio` | `MIN_ROUTE_COVERAGE_RATIO` |
 | Teleport | > 8 m/s sustained 5 s | `teleport*` | `TELEPORT_*` |
@@ -943,7 +945,7 @@ flowchart TB
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef ext fill:#E3E4E5,stroke:#7F8083,color:#16181D
     style PODS fill:#FAFAF8,stroke:#16181D,color:#16181D
     style PG fill:#FAFAF8,stroke:#16181D,color:#16181D

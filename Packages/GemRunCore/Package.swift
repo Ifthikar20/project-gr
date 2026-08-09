@@ -30,7 +30,7 @@ let package = Package(
         .target(name: "CoreAuth",
                 dependencies: ["CoreModels", "CoreNetworking", "CorePersistence"]),
         .target(name: "CoreLocationKit", dependencies: ["CoreModels", "GameKitCore"]),
-        .target(name: "CoreMap", dependencies: ["CoreModels"]),
+        .target(name: "CoreMap", dependencies: ["CoreModels", "GameKitCore"]),
         // Pure game logic — no UI/IO. The most heavily tested module.
         .target(name: "GameKitCore", dependencies: ["CoreModels"]),
         .testTarget(name: "GameKitCoreTests",

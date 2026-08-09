@@ -2,3 +2,17 @@ Django>=5.2,<6.0
 # TLS trust store for urllib calls to Overpass — macOS Python installs often
 # ship without linked system certs, silently failing every HTTPS request.
 certifi>=2024.0.0
+# Apple/Google identity-token verification for strict-mode sign-in
+# (api/identity.py). The [crypto] extra pulls in `cryptography` for the
+# RS256/ES256 JWKS signature check. Tests use the settings.IDENTITY_VERIFIER
+# seam and don't import it.
+PyJWT[crypto]>=2.8.0
+# Production stack (dev/CI stay on SQLite + runserver and don't need these):
+#   gunicorn — the WSGI server that runs multiple worker processes.
+#   psycopg  — the PostgreSQL driver, used when GEMRUN_DB_HOST is set.
+#   celery   — background stocking queue, used only when
+#              GEMRUN_STOCKING_BACKEND=celery (the web process never imports
+#              it in the default "thread" mode).
+gunicorn>=22.0.0
+psycopg[binary]>=3.1.0
+celery[redis]>=5.3.0

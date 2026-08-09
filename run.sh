@@ -67,6 +67,8 @@ start_backend() {
     echo "-- Git:     $(git log --oneline -1 2>/dev/null || echo 'unknown')"
     echo "-- Config:  WALKABILITY_MODE=${WALKABILITY_MODE:-overpass}" \
          "PRESENCE_DROP_MIN_RUNS=${PRESENCE_DROP_MIN_RUNS:-0}" \
+         "PRESENCE_DEV_SCATTER=${PRESENCE_DEV_SCATTER:-0}" \
+         "GEMRUN_AUTH_MODE=${GEMRUN_AUTH_MODE:-insecure_dev}" \
          "SEED_DEMO=${SEED_DEMO:-1}" \
          "GEMRUN_LOG_LEVEL=${GEMRUN_LOG_LEVEL}"
     python - <<'PYEOF'

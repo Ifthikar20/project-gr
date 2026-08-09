@@ -8,7 +8,7 @@
 > built from verified gaps. Sign-in and relaunch mechanics live in docs/18
 > §3–4 and are not repeated here.
 
-Palette key, same as docs/16–18 — <span>🟥</span> pulse `#EF3B23` (actions &
+Palette key, same as docs/16–18 — <span>🟪</span> pulse `#5F40BF` (actions &
 identity flow) · ⬛ ink `#16181D` (data at rest) · ⬜ snow `#FAFAF8` / white
 cards (client surfaces).
 
@@ -47,9 +47,10 @@ Where each lives server-side (all in `backend/api/`, routed by `urls.py`):
 Errors are always `application/problem+json` (`{"title", "detail",
 "code"}`) — the client branches on `code`, never on prose.
 
-> **Dev-posture callout:** none of these endpoints are rate limited — the
-> availability check and player search fire on every (debounced) keystroke
-> by design. Fine for now, a real gap before launch — see **G3** in §7.
+> **Rate limiting (G3 addressed):** sign-in, the availability check, and
+> player search now carry fixed-window throttles (`api/throttle.py`,
+> `RATE_LIMITS`), keyed by client IP. Enumeration and account-minting are no
+> longer unbounded.
 
 ---
 
@@ -77,7 +78,7 @@ flowchart TB
     DB --> SURFACE
     DB --> FREED
 
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
@@ -380,9 +381,12 @@ sequenceDiagram
     Note over A,D: relaunch = adopt the stored token (docs/18 §4) —<br/>restorePreviousSignIn is never called
 ```
 
-> **Honesty note:** until step 5 ships (G8), the server accepts the
-> external id **unverified** under `ALLOW_ALL_ACCOUNTS` — accounts are
-> unique, but the id isn't yet *proven*. Same posture as Apple today.
+> **Honesty note (G8 addressed):** in `AUTH_MODE=strict` the server no
+> longer trusts a client-claimed external id — apple/google subjects come
+> from the verified provider identity token (`api/identity.py`), and guests
+> present a high-entropy secret. `insecure_dev` keeps the old unverified
+> posture for local/mock use only, and the boot guard forbids it when
+> `DEBUG` is off.
 
 ---
 
@@ -395,13 +399,13 @@ this doc describes (earlier sections reference these by number).
 |---|---|---|---|
 | G1 | Handle uniqueness enforced **only on rename** — sign-in sets it unchecked; no DB unique constraint or index | `auth_provider` · `Profile.handle` | duplicate handles at sign-up; `runner` collides freely |
 | G2 | No handle format rules — charset/emoji/spaces all accepted; empty rename silently ignored | `handle_check` · `me` PATCH | unsearchable or impersonation-prone names |
-| G3 | No rate limiting anywhere — auth, per-keystroke check, search | all views | trivially scriptable enumeration & spam |
+| G3 | ~~No rate limiting anywhere~~ **ADDRESSED** — fixed-window throttles on auth, availability check, search | `api/throttle.py` · `RATE_LIMITS` | closed: enumeration & minting are bounded per IP |
 | G4 | Search is unindexed `icontains`, hard cap 20, no pagination | `players` · `Profile.handle` | table scans + invisible results at scale |
 | G5 | No reserved/blocked handle list, no profanity moderation | nowhere | `admin`, `gemrun`, slurs are all claimable |
 | G6 | Tokens never expire; no server-side sign-out or revocation; every sign-in adds an eternal `Token` row | `Token` model | a leaked token works forever |
 | G7 | No account linking — a guest can't upgrade to Apple/Google keeping stash/XP | `auth_provider` | progress loss on the natural upgrade path |
-| G8 | Identity-token verification unbuilt; `ALLOW_ALL_ACCOUNTS` on | `auth_provider` · `AuthFlags` | external ids are claims, not proofs (docs/10) |
-| G9 | Session token in UserDefaults, not Keychain | `TokenStore` (CoreAuth) | weaker at-rest protection (docs/10) |
+| G8 | ~~Identity-token verification unbuilt~~ **ADDRESSED** — `AUTH_MODE=strict` verifies apple/google tokens; guests use a secret | `api/identity.py` · `auth_provider` | closed: external ids are proven, not claimed (real JWKS via `PyJWT[crypto]`) |
+| G9 | ~~Session token in UserDefaults~~ **ADDRESSED** — token moved to the Keychain (backup-excluded), one-time migration off UserDefaults | `TokenStore` · `KeychainStore` (CoreAuth) | closed: encrypted at rest |
 | G10 | `avatar_url` always null — no avatars | `profile_json` | text-only identity |
 | G11 | Follow failures logged-only (button can't un-flip); no blocked-users or discoverability controls | `PlayerSearchSheet` · `players` | anyone can find & follow anyone, silently |
 

@@ -34,8 +34,14 @@ targets:
       path: App/GemRun.entitlements
       properties:
         com.apple.developer.healthkit: true
-        # Sign in with Apple requires a paid Apple Developer Program membership;
-        # personal (free) teams can't provision it. Add back when we go paid:
+        # Sign in with Apple ships in the UI, but the entitlement is kept
+        # DISABLED here: a free personal team can't provision it, so enabling
+        # it fails `./run.sh device` ("provisioning profile doesn't support
+        # the Sign in with Apple capability"). Re-enable the line below when
+        # you enrol in the paid Apple Developer Program — that's also when you
+        # can actually submit, and when App Store Guideline 4.8's working-SIWA
+        # requirement kicks in. Xcode Automatic signing adds it to the profile
+        # once the paid team qualifies. Until then, use guest sign-in in dev.
         # com.apple.developer.applesignin: [Default]
     info:
       path: App/Info.plist

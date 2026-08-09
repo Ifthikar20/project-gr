@@ -576,7 +576,7 @@ public struct ExploreRootView: View {
     /// The gem card's CTA: snap a walking path from the user to the tapped
     /// gem and start a run along it. Deliberately a FREE run, not a route
     /// run — free runs are the mode that collects standalone drops by
-    /// proximity (≤ ~30 m, ActiveRunEngine), so arriving at the pin awards
+    /// proximity (≤ ~61 m, ActiveRunEngine), so arriving at the pin awards
     /// the gem; every other nearby gem stays collectable on the way.
     private func runToGem(_ drop: GemDrop) async {
         let here: Coordinate
@@ -939,7 +939,7 @@ struct DropGemSheet: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             } else {
-                Text("From your stash. First runner to pass within 100 ft takes it.")
+                Text("From your stash. First runner to pass within 200 ft takes it.")
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
                 ScrollView(.horizontal, showsIndicators: false) {

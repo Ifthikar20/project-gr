@@ -3,9 +3,10 @@ The Swift fixture tests in Packages/GemRunCore/Tests double as test vectors.
 """
 
 # Collection / validity (Swift: CollectionRules)
-COLLECTION_RADIUS_M = 30.5   # ~100 ft — mirrors Swift CollectionRules
-HYSTERESIS_EXIT_RADIUS_M = 40.0
-HYSTERESIS_ADVANCE_M = 50.0
+COLLECTION_RADIUS_M = 61.0   # ~200 ft — mirrors Swift CollectionRules; the
+                             # capture-zone circle the app draws around gems
+HYSTERESIS_EXIT_RADIUS_M = 80.0    # scales with the radius: exit ring stays
+HYSTERESIS_ADVANCE_M = 100.0       # outside the capture zone
 
 MAX_CROSS_TRACK_M = 40.0
 MIN_ON_ROUTE_SAMPLE_RATIO = 0.90
@@ -37,9 +38,9 @@ def streak_multiplier(days: int) -> float:
     return min(1.5, 1.0 + 0.1 * (max(0, days) // 7))
 
 
-# Standalone drop capture: within 100 ft while walking/running past
+# Standalone drop capture: within 200 ft while walking/running past
 # (Swift mirror: CollectionRules.dropCollectRadiusM).
-DROP_COLLECT_RADIUS_M = 30.5
+DROP_COLLECT_RADIUS_M = 61.0
 # GPS samples worse than this are ignored when matching a track to a drop —
 # a 200 m-accuracy fix can't prove you were within collection range of
 # anything.

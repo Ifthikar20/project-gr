@@ -6,7 +6,7 @@
 > **`/v1/auth/*`** — running inside this backend **for now**, with the
 > extraction line for a dedicated auth service already drawn (§7).
 
-Palette key, same as docs/16–17 — <span>🟥</span> pulse `#EF3B23` (actions &
+Palette key, same as docs/16–17 — <span>🟪</span> pulse `#5F40BF` (actions &
 identity flow) · ⬛ ink `#16181D` (data that must be protected) · ⬜ snow
 `#FAFAF8` / white cards (client surfaces).
 
@@ -54,7 +54,7 @@ flowchart TB
     EP --> PROF
     EP --> TOK
 
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
@@ -245,7 +245,7 @@ flowchart LR
 
     NOW ==>|"config change for the client:<br/>auth base URL ≠ game base URL"| LATER
 
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
 ```

@@ -48,7 +48,8 @@ public actor MockGemRunAPI: GemRunAPI {
     // MARK: - Auth & user
 
     public func auth(provider: AuthProvider, handle: String,
-                     externalID: String?) async throws -> AuthResponse {
+                     externalID: String?,
+                     identityToken: String?) async throws -> AuthResponse {
         await call("POST /v1/auth/\(provider.rawValue)  (handle: \(handle))")
         profile.handle = handle
         return AuthResponse(token: "mock-jwt-\(UUID().uuidString.prefix(8))", profile: profile)

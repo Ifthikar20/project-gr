@@ -7,7 +7,7 @@ from .geometry import RouteGeometry
 
 
 def replay_collections(geom: RouteGeometry, drops, track):
-    """Replays the CollectionEngine: 25 m threshold + hysteresis + monotonic
+    """Replays the CollectionEngine: 200 ft threshold + hysteresis + monotonic
     route progress. `drops` are dicts with id, lat, lng, position_along_route_m.
     Returns the set of collectable drop ids the track actually supports.
     """
@@ -93,7 +93,15 @@ def validate(track, geom: RouteGeometry):
     if pace > rules.MAX_VALID_PACE_S_PER_KM:
         flags.append("too_slow")
 
-    if "too_fast" in flags or "too_slow" in flags or coverage_ratio < 0.5:
+    # `invalid` earns nothing (no gems, no XP, no leaderboard). Teleport is a
+    # hard cheat signal — sustained >TELEPORT_SPEED for TELEPORT_SUSTAIN_S is a
+    # vehicle or a spoofed track, not GPS noise — so it gates the economy
+    # alongside impossible pace and near-total non-coverage. `adherence` and
+    # mild `coverage` stay `flagged`: those are commonly legitimate (urban GPS
+    # drift, sidewalk-vs-centerline), so they still award gems the track
+    # physically reached, but are held off leaderboards by the callers.
+    if ("too_fast" in flags or "too_slow" in flags or "teleport" in flags
+            or coverage_ratio < 0.5):
         status = "invalid"
     elif flags:
         status = "flagged"

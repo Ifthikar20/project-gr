@@ -37,7 +37,7 @@ flowchart LR
     M2 -.->|"free run instead"| M6
     M5 --> M7 & M8 & M9 & M10
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
 ```
 
@@ -387,7 +387,7 @@ Authorization: Bearer 9f3c1a7e…
 
 The server treats `claimed_collections` as **hints, not facts**: it replays the
 whole track through the same geometry/validation rules the phone used
-(30.5 m radius, monotonic route progress, hysteresis, pace and teleport gates)
+(61 m radius, monotonic route progress, hysteresis, pace and teleport gates)
 and awards only what the replay supports.
 
 **RESPONSE — 200, the authoritative verdict**
@@ -463,7 +463,7 @@ Authorization: Bearer 9f3c1a7e…
 ```
 
 Server rules per claimed id, in order: your own drop → refused · track never
-came within 30.5 m (samples with accuracy worse than 50 m are ignored — bad
+came within 61 m (samples with accuracy worse than 50 m are ignored — bad
 GPS can't prove presence) → refused · already taken (row-locked; exactly one
 winner per gem, ever) → refused. **Every attempt is logged** to the
 `ClaimAttempt` audit table, winners and losers alike.
@@ -662,7 +662,7 @@ flowchart TB
     COMPLETE --> VERDICT --> LOCAL
     SEARCH -->|"profile_id"| ADD
     CHECK -->|"available"| PATCHME
-    classDef pulse fill:#EF3B23,stroke:#EF3B23,color:#FFFFFF
+    classDef pulse fill:#5F40BF,stroke:#5F40BF,color:#FFFFFF
     classDef card fill:#FFFFFF,stroke:#16181D,color:#16181D
     classDef ink fill:#16181D,stroke:#16181D,color:#FAFAF8
     classDef snow fill:#FAFAF8,stroke:#16181D,color:#16181D

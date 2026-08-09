@@ -51,6 +51,12 @@ in-memory SQLite is per-thread). Consequences:
   follows restocks the area at fresh positions — the world never repeats
   yesterday's layout. Player-placed drops are exempt: a runner chose
   those spots. `GemDrop.created_at` (migration 0004) is the input.
+  **Geometry gate** (`rotate_and_top_up`): yesterday's gems only leave the
+  map once the replacement pass has ground truth in hand — Overpass must
+  actually ANSWER the placement fetch (`PlacementContext.ok`; an answered
+  zero-way payload counts, no answer does not). An outage or rate-limit
+  postpones the rotation to a later open instead of emptying a previously
+  stocked mile, and the one fetch is shared with the top-up that follows.
 
 ## 2. Placement algorithm (`backend/api/system_drops.py → top_up_area`)
 
@@ -195,13 +201,19 @@ Map drops are sent `exact=True`. (Route-detail payloads use the fuzzed
 variant — deterministic ≤75 m jitter — but the standalone map list does
 not; you run to the true point.)
 
-`stocking` is true when a warm answer shipped while a background job is
-still restocking/rotating this mile (`presence_trigger` returns pending =
-sub-floor count OR yesterday's gems still active). The client shows
-"Stocking gems near you…" and automatically refetches (~4 s, once more at
-~6 s if still flagged, then stops — so a geometry-poor mile that can never
-reach the floor doesn't loop). Inline paths always send false: their
-answer already reflects the restock.
+`stocking` is true when the world within this mile is still due to
+change: a warm answer shipped while a background job is restocking or
+rotating it (`presence_trigger` pending = sub-floor count OR yesterday's
+gems still active), or an **inline pass came up short because the
+geometry fetch failed** (rotation postponed / bootstrap starved by an
+Overpass outage). The client shows "Stocking gems near you…" and
+automatically refetches (~4 s, once more at ~6 s if still flagged, then
+stops — so a geometry-poor mile that can never reach the floor doesn't
+loop). An inline answer that reflects the actual ground truth — including
+a genuinely path-less area, fail closed — sends false. The response also
+carries `Cache-Control: no-store`: iOS URLSession may heuristically cache
+header-less GETs, and a replayed stale map read would skip the presence
+trigger entirely.
 
 ## 4. iOS: fetch → state (`FeatureExplore/ExploreRootView.swift`)
 
@@ -269,9 +281,9 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 
 ## 6. Collection closes the loop
 
-- **During a route run**: `CollectionEngine` awards at ≤ 100 ft / 30.5 m
+- **During a route run**: `CollectionEngine` awards at ≤ 200 ft / 61 m
   (`collectionRadiusM`) with progress + hysteresis rules.
-- **During a free run**: pure proximity, the same ≤ 100 ft / 30.5 m
+- **During a free run**: pure proximity, the same ≤ 200 ft / 61 m
   (`dropCollectRadiusM`) — one capture distance everywhere, mirrored by
   the server's `COLLECTION_RADIUS_M` / `DROP_COLLECT_RADIUS_M`.
 - Server side, `POST /v1/drops/collect` (or route completion crossing a
@@ -286,7 +298,8 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 | Failure | Behavior |
 |---|---|
 | Overpass mirror down | next mirror; all down → 120 s circuit breaker |
-| No walkable ways answer | Tier 2 spawns **nothing** (fail closed) |
+| No walkable ways answer | Tier 2 spawns **nothing** (fail closed; `PRESENCE_DEV_SCATTER=1` overrides for local dev only) |
+| Overpass unreachable while rotation is due | rotation **postponed** — yesterday's gems stay as stock; inline answers flag `stocking: true` so the client looks again |
 | Background top-up job raises | logged; slot for that cell frees; next map open retries |
 | Walkability check `None` on a route point | accepted (polyline is trusted) |
 | top_up_area raises | swallowed; map read still answers |
@@ -313,6 +326,7 @@ diff plays **`SparkleBurst`** at its coordinate (six ✨ fly outward over
 | Rarity mix | `system_drops.WEIGHTS` / `HIGH_TRAFFIC_WEIGHTS` | 40/30/20/10 (sidewalk fills) · 15/45/27/13 (popular routes) |
 | Distance bias | `drop_on_walkable_ways` | (250/(250+d))² |
 | Route popularity gate | `PRESENCE_DROP_MIN_RUNS` | 3 (0 in dev) |
+| Dev scatter fallback | `PRESENCE_DEV_SCATTER` | off (env `PRESENCE_DEV_SCATTER=1`, dev only) |
 | Client fetch radius | `ExploreRootView.loadNearby` | 8 000 m |
 
 ## 9. Known limitations (why this isn't the final design)

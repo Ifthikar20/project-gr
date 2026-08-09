@@ -30,9 +30,10 @@ public enum AuthProvider: String, Codable, Sendable {
 
 /// Auth rollout switches.
 public enum AuthFlags {
-    /// TEMPORARY (dev): accept every sign-in — Apple/Google failures and guest
-    /// logins all produce a working local account, and no identity token is
-    /// verified. Flip to false when the Django backend verifies tokens
-    /// (docs/06 auth exchange); unverified sign-ins are then rejected.
-    public static let allowAllAccounts = true
+    /// Off: the client no longer advertises a permissive dev mode, matching
+    /// the server's strict default (apple/google sign-ins are verified against
+    /// the provider identity token; guests use a stable per-install secret).
+    /// Every real sign-in path supplies an external id, so the local
+    /// sign-in guard is satisfied without this. (docs/06 auth exchange.)
+    public static let allowAllAccounts = false
 }

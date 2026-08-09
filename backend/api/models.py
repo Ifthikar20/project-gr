@@ -14,6 +14,11 @@ class Profile(models.Model):
     streak_count = models.IntegerField(default=0)
     streak_shields = models.IntegerField(default=0)
     streak_last_date = models.DateField(null=True, blank=True)
+    # The runner's UTC offset in minutes (e.g. -420 for PDT), refreshed from
+    # each run/collect payload. Streak "today" and the daily gem respawn are
+    # computed in this local frame so an evening run doesn't roll into
+    # tomorrow for anyone west of UTC (docs/02 streak rules).
+    utc_offset_minutes = models.IntegerField(default=0)
     completed_sets = models.JSONField(default=list)
     created_at = models.DateTimeField(auto_now_add=True)
 

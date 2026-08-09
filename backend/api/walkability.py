@@ -266,7 +266,17 @@ def fetch_placement_data(lat, lng, radius_m, deadline=None):
     polygons to never place INSIDE (a mapped footpath through a golf
     course or gated grounds is real geometry, but not gem territory).
     Multipolygon relations are not resolved in v1; closed ways cover the
-    common private grounds. `([], [])` when Overpass is unreachable."""
+    common private grounds. `None` when Overpass is unreachable (or the
+    caller's deadline is spent) — distinct from an answered `([], [])`,
+    which means the area genuinely has no strict pedestrian ways. The
+    daily rotation keys off that difference: no answer must never read
+    as "no paths here"."""
+    # Data-source seam (docs/20): a locally imported OSM extract in PostGIS
+    # replaces the public Overpass dependency at scale. Config-only switch —
+    # the caller (fetch_placement_context) is unchanged.
+    if settings.WALKABILITY_SOURCE == "postgis":
+        from . import walkability_pg
+        return walkability_pg.fetch_placement_data_pg(lat, lng, radius_m)
     query = PLACEMENT_DATA_QUERY_TEMPLATE.format(
         timeout=int(settings.WALKABILITY_TIMEOUT_S) * 2, radius=int(radius_m),
         lat=lat, lng=lng, highways=PEDESTRIAN_PLACEMENT_HIGHWAYS)
@@ -274,7 +284,7 @@ def fetch_placement_data(lat, lng, radius_m, deadline=None):
         query, timeout=settings.WALKABILITY_TIMEOUT_S * 2, deadline=deadline,
         purpose=f"placement-data ({lat:.4f},{lng:.4f}) r={int(radius_m)}m")
     if payload is None:
-        return [], []
+        return None
     network_kinds = set(PEDESTRIAN_PLACEMENT_HIGHWAYS.split("|"))
     ways, rings = [], []
     for el in payload.get("elements", []):

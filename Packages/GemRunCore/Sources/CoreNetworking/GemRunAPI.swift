@@ -86,10 +86,15 @@ public struct RunCompletionRequest: Codable, Sendable {
     public let clientFlags: [String]
     /// Mock-only convenience: the real backend owns streak state itself.
     public let clientStreakDays: Int
+    /// The runner's current UTC offset in minutes, so the server computes the
+    /// streak day and the daily gem respawn at the runner's local midnight,
+    /// not UTC's (an evening run shouldn't roll into tomorrow west of UTC).
+    public let utcOffsetMinutes: Int
 
     public init(idempotencyKey: String, startedAt: Date, endedAt: Date,
                 track: [TrackSample], claimedCollections: [UUID],
-                clientFlags: [String], clientStreakDays: Int) {
+                clientFlags: [String], clientStreakDays: Int,
+                utcOffsetMinutes: Int = TimeZone.current.secondsFromGMT() / 60) {
         self.idempotencyKey = idempotencyKey
         self.startedAt = startedAt
         self.endedAt = endedAt
@@ -97,6 +102,7 @@ public struct RunCompletionRequest: Codable, Sendable {
         self.claimedCollections = claimedCollections
         self.clientFlags = clientFlags
         self.clientStreakDays = clientStreakDays
+        self.utcOffsetMinutes = utcOffsetMinutes
     }
 }
 
@@ -232,12 +238,13 @@ public protocol GemRunAPI: Sendable {
     func checkHandle(_ handle: String) async throws -> Bool
 
     // Auth & user — POST /v1/auth/{provider}, GET/PATCH/DELETE /v1/users/me
-    /// Register/recognize an account. `externalID` is the provider's stable
-    /// user id (Apple credential.user, Google id, or the per-install guest
-    /// id) — the server stores only its hash and uses it to return the SAME
-    /// account on every sign-in.
-    func auth(provider: AuthProvider, handle: String,
-              externalID: String?) async throws -> AuthResponse
+    /// Register/recognize an account. In strict server mode the account
+    /// identity comes from `identityToken` (Apple's `identityToken` / Google's
+    /// `idToken`), which the server verifies — `externalID` is then only the
+    /// guest bearer secret (the per-install guest id). The server stores only
+    /// hashes and returns the SAME account on every sign-in.
+    func auth(provider: AuthProvider, handle: String, externalID: String?,
+              identityToken: String?) async throws -> AuthResponse
     /// Adopt a previously issued session token (app relaunch): all later
     /// calls carry it. nil clears the session (sign-out).
     func adopt(sessionToken: String?) async

@@ -46,14 +46,14 @@ Since the app already receives continuous location updates during a run, per-sam
 ### Algorithm
 For each new smoothed position:
 1. Consider only **upcoming** gems: those whose `position_along_route_m` is within a window ahead of the runner's current route progress (see adherence below). This makes checks O(few) regardless of gem count.
-2. **Collect** when horizontal distance to the gem's coordinate ≤ **25 m**.
-3. **Hysteresis:** after a collection, no other gem within 40 m of that point can trigger until the runner has either exited a 40 m radius or advanced ≥ 50 m along the route — prevents double-fires at gem clusters and switchback overlaps.
+2. **Collect** when horizontal distance to the gem's coordinate ≤ **61 m (200 ft)** — the capture zone the map draws around every gem, so the rule and the visual are the same number.
+3. **Hysteresis:** after a collection, no other gem can trigger until the runner has either exited an 80 m radius around that point or advanced ≥ 100 m along the route (both ~1.3–1.6× the 61 m capture radius, so the exit ring sits outside the capture zone) — prevents double-fires at gem clusters and switchback overlaps.
 4. Fire UI/haptic celebration (doc 03), append to the run's claimed-collections list.
 
 ### Route adherence (what makes a run "valid")
 - Each sample is **projected onto the route polyline** → cross-track distance + along-route progress.
 - **Valid run:** cross-track ≤ 40 m for ≥ 90% of samples, and total route coverage ≥ 95% (start-to-finish progress, direction-agnostic loops handled by monotonic progress in either direction).
-- **Per-gem rule:** a gem only awards if the runner's along-route progress passes **through** the gem's `position_along_route_m` monotonically — being 25 m away across a switchback without route progress through that point does *not* collect. This closes the "graze the parallel path" hole.
+- **Per-gem rule:** a gem only awards if the runner's along-route progress passes **through** the gem's `position_along_route_m` monotonically — being 61 m away across a switchback without route progress through that point does *not* collect. This closes the "graze the parallel path" hole.
 - Going off-route is not punished mid-run (gentle chip per doc 03); it just risks the validity threshold. GPS noise in urban canyons is why the thresholds are generous.
 
 ## Client-side sanity checks (advisory)
