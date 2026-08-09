@@ -17,6 +17,45 @@ python manage.py runserver 0.0.0.0:8000
 python manage.py test                                  # 28 tests
 ```
 
+## Production stack (Postgres + gunicorn + Redis)
+
+Dev/CI run on SQLite + `runserver` with zero config. Real traffic needs the
+three swaps below — the code is already backend-agnostic, so they're all
+env-driven (no code changes):
+
+```sh
+# One command brings up Postgres + Redis + the multi-worker API locally:
+GEMRUN_SECRET_KEY=$(python -c 'import secrets;print(secrets.token_hex(32))') \
+  docker compose up --build          # → http://localhost:8000/v1  (strict auth)
+```
+
+Or wire it to your own infra with env vars:
+
+| Env var | Effect |
+|---|---|
+| `GEMRUN_DB_HOST` (+ `_NAME/_USER/_PASSWORD/_PORT`) | switch from SQLite to **Postgres** |
+| `GEMRUN_REDIS_URL` | shared cache + **shared rate-limit counter** across all workers |
+| `GEMRUN_DEBUG=0`, `GEMRUN_SECRET_KEY`, `GEMRUN_ALLOWED_HOSTS`, `GEMRUN_AUTH_MODE=strict` | production posture (a boot guard refuses to start without these) |
+| `GUNICORN_WORKERS` | override the worker count (default `(2 × cores) + 1`) |
+
+Then run the server with **gunicorn**, not `runserver`:
+
+```sh
+gunicorn -c gunicorn.conf.py gemrun.wsgi:application
+```
+
+`gunicorn.conf.py` computes the worker count and documents the sizing math.
+A worker is a full process with its own pooled DB connection; scale **out**
+by adding boxes behind a load balancer, not by piling workers onto one box.
+
+**Still needed beyond ~10k users** (not yet built): self-host OpenStreetMap
+in PostGIS so gem placement stops depending on the public Overpass API
+(which rate-limits a shared egress IP), move background stocking from the
+in-process `ThreadPoolExecutor` to a Celery queue, and add Postgres read
+replicas + PgBouncer. The gem-cap guard is already Postgres-safe: on Postgres
+it takes a per-mile advisory lock, and `enforce_hard_max` remains the
+read-time correctness backstop regardless of engine.
+
 ## Point the iOS app at it
 
 Nothing to hardcode — `AppConfig.apiBaseURL` resolves at launch:

@@ -18,12 +18,13 @@ import logging
 import math
 import random
 import time
+import zlib
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 from django.conf import settings
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
 log = logging.getLogger("api.system_drops")
@@ -93,14 +94,35 @@ def near_existing_drop(lat, lng):
     return False
 
 
+def _serialize_mile(open_lat, open_lng):
+    """Serialize concurrent stocking of this mile so overlapping top-ups
+    don't both race past the cap. On SQLite, BEGIN IMMEDIATE already takes a
+    single global write lock, so this is a no-op. On Postgres (MVCC, no write
+    lock on read), take a TRANSACTION-scoped advisory lock keyed on the
+    open-point's ~mile grid cell: same-mile passes serialize, different miles
+    run fully parallel. This is a CONTENTION optimization, not the cap's
+    correctness guarantee — that remains `enforce_hard_max`, the read-time
+    trim on every map open. Called inside an open transaction."""
+    if connection.vendor != "postgresql":
+        return
+    # Deterministic 32-bit key from a ~1 km grid cell (crc32 is stable across
+    # processes; Python's hash() is not). Fits pg_advisory_xact_lock(bigint).
+    cell = f"gemmile:{round(open_lat, 2)}:{round(open_lng, 2)}"
+    key = zlib.crc32(cell.encode())
+    with connection.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+
+
 def _guarded_create(open_lat, open_lng, lat, lng, rng, weights=None):
-    """The only way a presence gem is born. BEGIN IMMEDIATE (settings
-    OPTIONS) takes SQLite's single write lock at block entry, so between
-    the fresh counts and the INSERT no other writer — thread or process —
-    can commit: the hard cap holds under concurrent overlapping top-ups.
-    Both the requester's mile and the candidate's own mile are checked, so
-    a gem is never born into ANY mile already holding PRESENCE_HARD_MAX."""
+    """The only way a presence gem is born. Inside a serialized-per-mile
+    transaction (SQLite: global BEGIN IMMEDIATE; Postgres: per-mile advisory
+    lock — see _serialize_mile) the fresh counts and the INSERT can't
+    interleave with another same-mile writer, so the hard cap holds under
+    concurrent overlapping top-ups. Both the requester's mile and the
+    candidate's own mile are checked, so a gem is never born into ANY mile
+    already holding PRESENCE_HARD_MAX."""
     with transaction.atomic():
+        _serialize_mile(open_lat, open_lng)
         if mile_count(open_lat, open_lng) >= settings.PRESENCE_HARD_MAX:
             raise CapReached
         if (lat, lng) != (open_lat, open_lng) \

@@ -1,0 +1,55 @@
+# The production stack, runnable locally: Postgres + Redis + the API under
+# gunicorn (multi-worker). This is both a way to validate the real stack on
+# your Mac and the template for a real deployment.
+#
+#   GEMRUN_SECRET_KEY=$(python -c 'import secrets;print(secrets.token_hex(32))') \
+#     docker compose up --build
+#
+# Then the API is at http://localhost:8000/v1  (strict auth: guest sign-in
+# works locally; apple/google need real provider tokens).
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gemrun
+      POSTGRES_USER: gemrun
+      POSTGRES_PASSWORD: ${GEMRUN_DB_PASSWORD:-devpassword}
+    volumes:
+      - gemrun-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gemrun"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+
+  web:
+    build: .
+    # Apply migrations, then start the multi-worker server.
+    command: sh -c "python manage.py migrate && gunicorn -c gunicorn.conf.py gemrun.wsgi:application"
+    environment:
+      GEMRUN_DEBUG: "0"
+      # MUST be overridden with a real secret; the boot guard rejects the dev
+      # sentinel, and you should not ship this placeholder either.
+      GEMRUN_SECRET_KEY: ${GEMRUN_SECRET_KEY:-change-me-before-real-deploy}
+      GEMRUN_ALLOWED_HOSTS: ${GEMRUN_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      GEMRUN_AUTH_MODE: strict
+      GEMRUN_DB_HOST: db
+      GEMRUN_DB_NAME: gemrun
+      GEMRUN_DB_USER: gemrun
+      GEMRUN_DB_PASSWORD: ${GEMRUN_DB_PASSWORD:-devpassword}
+      GEMRUN_REDIS_URL: redis://redis:6379/0
+      # Worker count for local testing; production computes (2×cores)+1.
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  gemrun-db:

@@ -7,3 +7,8 @@ certifi>=2024.0.0
 # RS256/ES256 JWKS signature check. Tests use the settings.IDENTITY_VERIFIER
 # seam and don't import it.
 PyJWT[crypto]>=2.8.0
+# Production stack (dev/CI stay on SQLite + runserver and don't need these):
+#   gunicorn — the WSGI server that runs multiple worker processes.
+#   psycopg  — the PostgreSQL driver, used when GEMRUN_DB_HOST is set.
+gunicorn>=22.0.0
+psycopg[binary]>=3.1.0

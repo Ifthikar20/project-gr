@@ -45,12 +45,24 @@ RATE_LIMITS = {
     "reward": (40, 60),      # run completion + drop collection
     "enumerate": (30, 60),   # handle + player search
 }
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "gemrun-throttle",
+# LocMemCache is per-process — fine for dev/CI and a single worker, but each
+# gunicorn worker would then keep its own throttle counter (effective limit
+# = workers × RATE_LIMITS). Set GEMRUN_REDIS_URL in production so all workers
+# and boxes share one counter (and one cache).
+if os.environ.get("GEMRUN_REDIS_URL"):
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": os.environ["GEMRUN_REDIS_URL"],
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "gemrun-throttle",
+        }
+    }
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
@@ -74,17 +86,41 @@ MIDDLEWARE = [
 ROOT_URLCONF = "gemrun.urls"
 WSGI_APPLICATION = "gemrun.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-        # BEGIN IMMEDIATE: transaction.atomic() takes SQLite's single write
-        # lock at block entry, so the gem-cap guard's COUNT→INSERT can never
-        # interleave with another writer (thread or process). 10 s busy
-        # timeout queues concurrent writers instead of erroring.
-        "OPTIONS": {"transaction_mode": "IMMEDIATE", "timeout": 10},
+# Database: SQLite by default (zero-config dev/CI); Postgres when the
+# GEMRUN_DB_* env vars are set — the required swap before real traffic
+# (SQLite's single writer is the throughput ceiling; docs/16). The app is
+# backend-agnostic: the gem-cap guard's correctness comes from the read-time
+# `enforce_hard_max` trim, not the storage engine — SQLite serializes writes
+# globally via BEGIN IMMEDIATE, Postgres uses a per-mile advisory lock
+# (api/system_drops._guarded_create) to serialize only same-mile stocking.
+if os.environ.get("GEMRUN_DB_HOST"):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("GEMRUN_DB_NAME", "gemrun"),
+            "USER": os.environ.get("GEMRUN_DB_USER", "gemrun"),
+            "PASSWORD": os.environ.get("GEMRUN_DB_PASSWORD", ""),
+            "HOST": os.environ["GEMRUN_DB_HOST"],
+            "PORT": os.environ.get("GEMRUN_DB_PORT", "5432"),
+            # Persistent connections: reuse a pooled connection across
+            # requests instead of reconnecting each time (essential under
+            # gunicorn — a fresh TCP+auth per request would dominate latency).
+            "CONN_MAX_AGE": int(os.environ.get("GEMRUN_DB_CONN_MAX_AGE", "60")),
+            "CONN_HEALTH_CHECKS": True,
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+            # BEGIN IMMEDIATE: transaction.atomic() takes SQLite's single
+            # write lock at block entry, so the gem-cap guard's COUNT→INSERT
+            # can never interleave with another writer (thread or process).
+            # 10 s busy timeout queues concurrent writers instead of erroring.
+            "OPTIONS": {"transaction_mode": "IMMEDIATE", "timeout": 10},
+        }
+    }
 
 TIME_ZONE = "UTC"
 USE_TZ = True
