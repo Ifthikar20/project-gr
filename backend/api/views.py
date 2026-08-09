@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone as tz
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Count, Prefetch, Sum
 from django.http import JsonResponse
@@ -889,17 +890,32 @@ def drops(request):
                           "serving the map read without restocking",
                           lat, lng)
             stocking = False
-        dlat = radius / 111_320
-        dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
-        qs = GemDrop.objects.filter(route__isnull=True, active=True,
-                                    lat__gte=lat - dlat, lat__lte=lat + dlat,
-                                    lng__gte=lng - dlng, lng__lte=lng + dlng
-                                    ).order_by("-created_at")[:200]
+        # Map read: the hottest DB query. Cache the serialized drop list for a
+        # few seconds, keyed on the ~110 m grid cell + radius, so a burst of
+        # opens in one area shares one query. The presence trigger above still
+        # runs every time (stocking stays live), and the `stocking` flag below
+        # is always fresh — only the world-state drop list (same for every
+        # viewer here) is cached, and TTL-bounded staleness is fine because the
+        # client already refetches. Drops are exact here (not per-viewer).
+        drops_list = None
+        cache_key = None
+        if settings.READ_CACHE_ENABLED and settings.CACHE_TTL_DROPS:
+            cache_key = "drops:v1:%.3f:%.3f:%d" % (round(lat, 3), round(lng, 3), radius)
+            drops_list = cache.get(cache_key)
+        if drops_list is None:
+            dlat = radius / 111_320
+            dlng = radius / (111_320 * max(0.1, math.cos(math.radians(lat))))
+            qs = GemDrop.objects.filter(route__isnull=True, active=True,
+                                        lat__gte=lat - dlat, lat__lte=lat + dlat,
+                                        lng__gte=lng - dlng, lng__lte=lng + dlng
+                                        ).order_by("-created_at")[:200]
+            drops_list = [drop_json(d, exact=True) for d in qs]
+            if cache_key:
+                cache.set(cache_key, drops_list, settings.CACHE_TTL_DROPS)
         # `stocking`: a background job is restocking/rotating this area
         # right now — the client shows "Stocking gems near you…" and looks
         # again in a few seconds instead of sitting on the thin answer.
-        response = JsonResponse({"drops": [drop_json(d, exact=True) for d in qs],
-                                 "stocking": stocking})
+        response = JsonResponse({"drops": drops_list, "stocking": stocking})
         # Never cacheable: iOS URLSession may heuristically cache GETs that
         # carry no cache headers, and a replayed stale answer here is a
         # permanently wrong map (the presence trigger wouldn't even fire).
@@ -1046,10 +1062,26 @@ def track_passes_near(track, lat, lng):
     return d is not None and d <= rules.DROP_COLLECT_RADIUS_M
 
 
+CATALOG_CACHE_KEY = "catalog:v1"
+
+
+def _catalog_payload():
+    return {"gems": [
+        {"id": str(e["id"]), "name": e["name"], "rarity": e["rarity"],
+         "set_id": str(e["set_id"]), "icon_ref": e["icon_ref"]}
+        for e in catalog.ENTRIES]}
+
+
 @csrf_exempt
 @require_http_methods(["GET"])
 def gem_catalog(request):
-    return JsonResponse({"gems": [
-        {"id": str(e["id"]), "name": e["name"], "rarity": e["rarity"],
-         "set_id": str(e["set_id"]), "icon_ref": e["icon_ref"]}
-        for e in catalog.ENTRIES]})
+    # The catalog is static per deploy — cache the whole payload so this
+    # endpoint stops re-serializing the full gem list on every launch.
+    if settings.READ_CACHE_ENABLED:
+        payload = cache.get(CATALOG_CACHE_KEY)
+        if payload is None:
+            payload = _catalog_payload()
+            cache.set(CATALOG_CACHE_KEY, payload, settings.CACHE_TTL_CATALOG)
+    else:
+        payload = _catalog_payload()
+    return JsonResponse(payload)

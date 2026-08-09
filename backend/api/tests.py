@@ -45,7 +45,7 @@ def track(speed, length_m=1000):
 # doesn't 429 the many sign-ins across the suite — ThrottleTests turns it on.
 @override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
                    PRESENCE_ASYNC=False, AUTH_MODE="insecure_dev",
-                   THROTTLE_ENABLED=False)
+                   THROTTLE_ENABLED=False, READ_CACHE_ENABLED=False)
 class ApiTests(TestCase):
     def setUp(self):
         # Hermetic Overpass: the placement fetches return no geometry by
@@ -1384,3 +1384,38 @@ class ThrottleTests(TestCase):
                                    content_type="application/json")
         self.assertEqual(blocked.status_code, 429)
         self.assertEqual(blocked.json()["code"], "rate_limited")
+
+
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
+                   PRESENCE_ASYNC=False, AUTH_MODE="insecure_dev",
+                   THROTTLE_ENABLED=False, READ_CACHE_ENABLED=True,
+                   CACHE_TTL_CATALOG=30, CACHE_TTL_DROPS=30, CACHE_TTL_MILE=30)
+class CacheTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()   # LocMemCache persists across tests in-process
+        self.client = Client()
+
+    def test_catalog_endpoint_serves(self):
+        body = self.client.get("/v1/gems/catalog").json()
+        self.assertIn("gems", body)
+        self.assertGreater(len(body["gems"]), 0)
+
+    def test_map_read_is_served_from_cache_within_ttl(self):
+        # A system gem exists; the first map read caches the world-state list.
+        GemDrop.objects.create(
+            route=None, gem_id=catalog.gem_of("common")["id"], rarity="common",
+            lat=40.0, lng=-100.0, position_along_route_m=0,
+            respawn_rule="one_time", placed_by="system")
+        first = self.client.get("/v1/drops", {"lat": 40.0, "lng": -100.0,
+                                              "radius_m": 3000}).json()["drops"]
+        self.assertEqual(len(first), 1)
+        # A second gem lands in the DB, but within the TTL the cached read
+        # still returns the original set — proof the cache is serving.
+        GemDrop.objects.create(
+            route=None, gem_id=catalog.gem_of("common")["id"], rarity="common",
+            lat=40.0005, lng=-100.0, position_along_route_m=0,
+            respawn_rule="one_time", placed_by="system")
+        cached = self.client.get("/v1/drops", {"lat": 40.0, "lng": -100.0,
+                                               "radius_m": 3000}).json()["drops"]
+        self.assertEqual([d["id"] for d in cached], [d["id"] for d in first])

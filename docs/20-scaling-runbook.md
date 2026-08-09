@@ -44,6 +44,11 @@ GEMRUN_REDIS_URL=redis://…:6379/0
 
 - Postgres selected automatically when `GEMRUN_DB_HOST` is set.
 - Redis makes the rate-limit counter shared across gunicorn workers.
+- Redis also backs the **read-through cache** (on by default): the static gem
+  catalog (1 h), the map-read drop list (~5 s), and the advisory mile-count
+  (~5 s) are served from cache, offloading the hottest reads from the DB. The
+  cap-guard's own count is never cached. Tunable via `GEMRUN_CACHE_TTL_*` /
+  `GEMRUN_READ_CACHE=0`.
 - One 2-vCPU app box (≈5 workers) still carries the load.
 - `docker compose up --build` brings up this exact stack locally to validate.
 

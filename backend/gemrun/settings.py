@@ -64,6 +64,17 @@ else:
         }
     }
 
+# Read-through caching for the hottest read paths (docs/20): the static gem
+# catalog, the map-read drop list, and the advisory mile-count. Backed by the
+# cache above — Redis in production (shared across workers), LocMem in dev.
+# Master switch defaults on; the test suite disables it (stale reads would
+# fight its read-mutate-read assertions) and one CacheTests re-enables it.
+# The correctness-critical mile_count inside the gem-cap guard is NEVER cached.
+READ_CACHE_ENABLED = os.environ.get("GEMRUN_READ_CACHE", "1") == "1"
+CACHE_TTL_CATALOG = int(os.environ.get("GEMRUN_CACHE_TTL_CATALOG", 3600))  # static/deploy
+CACHE_TTL_DROPS = int(os.environ.get("GEMRUN_CACHE_TTL_DROPS", 5))         # map read
+CACHE_TTL_MILE = int(os.environ.get("GEMRUN_CACHE_TTL_MILE", 5))          # advisory count
+
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",

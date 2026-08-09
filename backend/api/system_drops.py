@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
@@ -74,6 +75,23 @@ def mile_count(lat, lng):
     klng = k * max(0.1, math.cos(math.radians(lat)))
     return sum(1 for rlat, rlng in rows
                if math.hypot((rlat - lat) * k, (rlng - lng) * klng) <= radius)
+
+
+def mile_count_cached(lat, lng):
+    """Short-TTL cached mile_count for the ADVISORY read path only — the
+    warm/cold + pending decision in presence_trigger, where a few seconds of
+    staleness just means a self-correcting warm/cold guess. NEVER call this in
+    the cap guard (_guarded_create) or enforce_hard_max: a stale count there
+    could over-stock a mile. Keyed on the same ~550 m cell grid as the
+    background dedupe so hot cells share one entry."""
+    if not (settings.READ_CACHE_ENABLED and settings.CACHE_TTL_MILE):
+        return mile_count(lat, lng)
+    key = "mile:v1:%d:%d" % (round(lat / 0.005), round(lng / 0.005))
+    val = cache.get(key)
+    if val is None:
+        val = mile_count(lat, lng)
+        cache.set(key, val, settings.CACHE_TTL_MILE)
+    return val
 
 
 def near_existing_drop(lat, lng):
@@ -588,7 +606,9 @@ def presence_trigger(lat, lng):
     genuinely path-less area, fail closed) returns False."""
     if not settings.PRESENCE_DROPS:
         return False
-    count = mile_count(lat, lng)
+    # Advisory count only (warm/cold + pending flag) — cacheable. The cap
+    # guard downstream re-counts uncached inside its serialized transaction.
+    count = mile_count_cached(lat, lng)
     warm = count > 0
     if not warm or not settings.PRESENCE_ASYNC:
         return rotate_and_top_up(lat, lng,
