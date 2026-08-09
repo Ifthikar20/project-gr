@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone as tz
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Count, Prefetch, Sum
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -709,7 +709,8 @@ def stash(request):
 def route_leaderboard(request, route_id):
     window = request.GET.get("window", "all")
     viewer = profile_from(request)
-    qs = Run.objects.filter(route_id=route_id, status="valid", is_walk=False)
+    qs = (Run.objects.using(settings.READ_DB)
+          .filter(route_id=route_id, status="valid", is_walk=False))
     if window == "month":
         qs = qs.filter(started_at__gte=datetime.now(tz.utc) - timedelta(days=31))
     best = {}
@@ -729,21 +730,21 @@ def route_leaderboard(request, route_id):
 @require_http_methods(["GET"])
 def local_leaderboard(request):
     viewer = profile_from(request)
-    now = datetime.now(tz.utc)
-    week_start = now - timedelta(days=now.weekday(), hours=now.hour,
-                                 minutes=now.minute, seconds=now.second)
-    totals = {}
-    # Only valid runs rank: flagged/invalid XP is earned-but-unranked, so a
-    # teleport- or adherence-flagged run can't buy leaderboard position.
-    for run in (Run.objects.filter(started_at__gte=week_start, status="valid")
-                .select_related("profile")):
-        totals.setdefault(run.profile, 0)
-        totals[run.profile] += run.xp_earned
-    rows = sorted(totals.items(), key=lambda kv: -kv[1])
+    week_start = _week_start()
+    # Sum in the database, not by loading a week of runs into Python — one
+    # grouped query returns a row per active player. Only valid runs rank:
+    # flagged/invalid XP is earned-but-unranked. Reads route to the replica
+    # (READ_DB) when one is configured.
+    rows = (Run.objects.using(settings.READ_DB)
+            .filter(started_at__gte=week_start, status="valid")
+            .values("profile_id", "profile__handle", "profile__level")
+            .annotate(xp=Sum("xp_earned"))
+            .order_by("-xp"))
     return JsonResponse({"entries": [
-        {"rank": i + 1, "handle": p.handle, "level": p.level, "best_time_s": xp,
-         "is_me": viewer is not None and p.id == viewer.id}
-        for i, (p, xp) in enumerate(rows)]})
+        {"rank": i + 1, "handle": r["profile__handle"], "level": r["profile__level"],
+         "best_time_s": r["xp"],
+         "is_me": viewer is not None and r["profile_id"] == viewer.id}
+        for i, r in enumerate(rows)]})
 
 
 # ------------------------------------------------- my runs, players, friends
@@ -763,7 +764,7 @@ def my_runs(request):
     profile = profile_from(request)
     if profile is None:
         return problem(401, "Sign in required")
-    rows = (Run.objects.filter(profile=profile)
+    rows = (Run.objects.using(settings.READ_DB).filter(profile=profile)
             .select_related("route").order_by("-started_at")[:50])
     return JsonResponse({"runs": [
         {"id": str(r.id), "route_id": str(r.route_id),
@@ -784,7 +785,7 @@ def players(request):
     query = (request.GET.get("search") or "").strip()
     if len(query) < 2:
         return JsonResponse({"players": []})
-    qs = Profile.objects.filter(handle__icontains=query)
+    qs = Profile.objects.using(settings.READ_DB).filter(handle__icontains=query)
     if profile is not None:
         qs = qs.exclude(id=profile.id)
     return JsonResponse({"players": [
@@ -820,14 +821,20 @@ def friends(request):
                            profile.friendships.select_related("friend")
                            .order_by("created_at")]
     weekly = {m.id: {"xp": 0, "distance_m": 0, "runs": 0} for m in members}
-    # Valid runs only — same fairness rule as the local board: flagged/invalid
-    # runs don't count toward the weekly friends ranking.
-    for run in Run.objects.filter(profile_id__in=weekly.keys(),
-                                  started_at__gte=week_start, status="valid"):
-        row = weekly[run.profile_id]
-        row["xp"] += run.xp_earned
-        row["distance_m"] += run.distance_m
-        row["runs"] += 1
+    # Aggregate in the database (one grouped query over the member set), not
+    # by summing runs in Python. Valid runs only — same fairness rule as the
+    # local board.
+    agg = (Run.objects.using(settings.READ_DB)
+           .filter(profile_id__in=weekly.keys(),
+                   started_at__gte=week_start, status="valid")
+           .values("profile_id")
+           .annotate(xp=Sum("xp_earned"), distance_m=Sum("distance_m"),
+                     runs=Count("id")))
+    for row in agg:
+        w = weekly[row["profile_id"]]
+        w["xp"] = row["xp"] or 0
+        w["distance_m"] = row["distance_m"] or 0
+        w["runs"] = row["runs"]
     members.sort(key=lambda m: -weekly[m.id]["xp"])
     return JsonResponse({"friends": [
         {"id": str(m.id), "handle": m.handle, "level": m.level,

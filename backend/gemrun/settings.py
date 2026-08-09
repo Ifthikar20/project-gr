@@ -122,6 +122,32 @@ else:
         }
     }
 
+# Read-replica seam (tier 12k+). Set GEMRUN_DB_REPLICA_HOST to route the heavy
+# read-only queries — leaderboards, search, run history — to a Postgres read
+# replica via `.using(settings.READ_DB)`. With no replica configured READ_DB is
+# "default", so it's a no-op; writes and read-after-write paths (auth, run
+# settlement, gem claims) always stay on "default". Flipping this on is a
+# config change, not a code change.
+READ_DB = "default"
+if os.environ.get("GEMRUN_DB_REPLICA_HOST") and os.environ.get("GEMRUN_DB_HOST"):
+    DATABASES["replica"] = {
+        **DATABASES["default"],
+        "HOST": os.environ["GEMRUN_DB_REPLICA_HOST"],
+        "PORT": os.environ.get("GEMRUN_DB_REPLICA_PORT",
+                               DATABASES["default"].get("PORT", "5432")),
+        # The test runner treats the replica as a mirror of default rather
+        # than building a second test DB.
+        "TEST": {"MIRROR": "default"},
+    }
+    READ_DB = "replica"
+
+# Background gem-stocking backend (tier 12k+). "thread" (default) runs restock
+# in the in-process pool; "celery" enqueues it to a shared Celery queue so
+# multiple app boxes don't each duplicate the Overpass fetch + placement.
+# The switch is config-only (see api/tasks.py, gemrun/celery_app.py).
+STOCKING_BACKEND = os.environ.get("GEMRUN_STOCKING_BACKEND", "thread")
+CELERY_BROKER_URL = os.environ.get("GEMRUN_CELERY_BROKER", "")
+
 TIME_ZONE = "UTC"
 USE_TZ = True
 
@@ -133,6 +159,12 @@ USE_TZ = True
 #                route polylines, which are snapped to walking directions).
 # Env-overridable so offline dev/CI can flip it without a code change.
 WALKABILITY_MODE = os.environ.get("WALKABILITY_MODE", "overpass")
+# Where the walkable-geometry for gem placement comes from (tier 12k+):
+#   "overpass" (default) — the public Overpass API (rate-limits a shared IP).
+#   "postgis"            — a locally imported OSM extract queried in PostGIS
+#                          (no external dependency; see api/walkability_pg.py).
+# Switching is config-only once the extract is imported.
+WALKABILITY_SOURCE = os.environ.get("GEMRUN_WALKABILITY_SOURCE", "overpass")
 # Tried in order until one answers — the main instance rate-limits hard.
 OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",

@@ -51,5 +51,23 @@ services:
       redis:
         condition: service_started
 
+  # Tier 12k+: background gem-stocking worker. Uncomment AND set
+  # GEMRUN_STOCKING_BACKEND=celery on the `web` service to move restock off
+  # the in-process thread pool onto this shared queue.
+  # worker:
+  #   build: .
+  #   command: celery -A gemrun.celery_app worker -l info
+  #   environment:
+  #     GEMRUN_STOCKING_BACKEND: celery
+  #     GEMRUN_CELERY_BROKER: redis://redis:6379/1
+  #     GEMRUN_DB_HOST: db
+  #     GEMRUN_DB_NAME: gemrun
+  #     GEMRUN_DB_USER: gemrun
+  #     GEMRUN_DB_PASSWORD: ${GEMRUN_DB_PASSWORD:-devpassword}
+  #     GEMRUN_REDIS_URL: redis://redis:6379/0
+  #   depends_on:
+  #     db: { condition: service_healthy }
+  #     redis: { condition: service_started }
+
 volumes:
   gemrun-db:

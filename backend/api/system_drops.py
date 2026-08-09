@@ -601,14 +601,32 @@ def presence_trigger(lat, lng):
             return pending               # this cell is already being stocked
         _inflight.add(key)
     try:
-        _executor.submit(_background_job, key, lat, lng)
+        _dispatch_topup(key, lat, lng)
     except Exception:
-        # submit() itself can raise (interpreter shutdown, thread-spawn
-        # failure under fd/memory pressure). The worker's own finally is
-        # the only code that discards the key — if it never runs, the key
-        # leaks and this cell silently never restocks again for the life
-        # of the process.
+        # Dispatch can raise (thread-spawn failure under fd/memory pressure,
+        # or a Celery broker that's down). The thread worker's own finally is
+        # normally what discards the key — if dispatch never got that far,
+        # discard here so the cell isn't leaked (never restocked again).
         with _inflight_lock:
             _inflight.discard(key)
         log.exception("could not queue top-up for cell %s", (key,))
     return pending
+
+
+def _dispatch_topup(key, lat, lng):
+    """Route the background restock to the configured backend (docs/20):
+
+      * "thread" (default) — the in-process pool, with the in-flight cell
+        dedupe. Correct for one box.
+      * "celery"           — enqueue a shared task so N app boxes don't each
+        run the same pass. The per-mile advisory lock + enforce_hard_max keep
+        it correct; the in-process cell key is released immediately (it can't
+        dedupe across processes anyway). Flipping backends is config-only.
+    """
+    if settings.STOCKING_BACKEND == "celery":
+        from .tasks import rotate_and_top_up_task     # lazy: no celery import in thread mode
+        rotate_and_top_up_task.delay(lat, lng)
+        with _inflight_lock:
+            _inflight.discard(key)
+        return
+    _executor.submit(_background_job, key, lat, lng)
