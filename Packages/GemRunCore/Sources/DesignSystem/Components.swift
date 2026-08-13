@@ -1,15 +1,20 @@
 import CoreModels
 import SwiftUI
 
-// Airbnb card grammar (docs/03 "Daybreak Pulse"): white surfaces, soft 16pt
-// corners, one diffuse shadow, hairline dividers, pill CTAs.
+// Card grammar (docs/03, Paper & Volt): white surfaces on the website's
+// bevel-soft recipe — 20pt corners, hairline border, one diffuse
+// low-hanging shadow, pill CTAs.
 
 public extension View {
-    /// The standard card: white, 16pt radius, soft shadow.
+    /// The standard card: the website's card, in Swift — white, 20pt
+    /// continuous corners, hairline border, soft pop shadow.
     func airbnbCard(padding: CGFloat = 16) -> some View {
         self.padding(padding)
-            .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 16))
-            .shadow(color: DS.Colors.ink.opacity(0.08), radius: 12, y: 2)
+            .background(DS.Colors.snowCard,
+                        in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(DS.Colors.hairline, lineWidth: 1))
+            .shadow(color: DS.Colors.ink.opacity(0.08), radius: 15, y: 8)
     }
 
     /// Pin-drop entrance: the view falls onto the map with a spring bounce.

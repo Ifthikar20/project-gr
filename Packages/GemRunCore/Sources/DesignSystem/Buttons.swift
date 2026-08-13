@@ -32,12 +32,14 @@ public struct PressableStyle: ButtonStyle {
 /// The two CTA skins as label-only modifiers, so non-Button hosts
 /// (ShareLink, NavigationLink) can wear the exact same chrome.
 public extension View {
-    /// Hero CTA: pulse capsule, snow label, soft lift.
+    /// Hero CTA: the website's primary button, verbatim — ink capsule,
+    /// snow label, a small volt dot leading in, bevel highlight, soft pop.
     func pulseCTALabel(fullWidth: Bool = true) -> some View {
         modifier(CTALabelChrome(skin: .pulse, fullWidth: fullWidth))
     }
 
-    /// Quiet sibling: snow-card capsule, ink label, hairline stroke.
+    /// Quiet sibling: the website's ghost button — snow-card capsule, ink
+    /// label, hairline stroke, whisper of shadow.
     func ghostCTALabel(fullWidth: Bool = true) -> some View {
         modifier(CTALabelChrome(skin: .ghost, fullWidth: fullWidth))
     }
@@ -49,18 +51,29 @@ struct CTALabelChrome: ViewModifier {
     let fullWidth: Bool
 
     func body(content: Content) -> some View {
-        content
-            .font(DS.Typography.heading)
-            .foregroundStyle(skin == .pulse ? DS.Colors.snowCard : DS.Colors.ink)
-            .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.horizontal, 24)
-            .frame(height: 52)
-            .background(skin == .pulse ? DS.Colors.pulse : DS.Colors.snowCard,
-                        in: Capsule())
-            .overlay(Capsule().stroke(
-                skin == .pulse ? Color.clear : DS.Colors.hairline, lineWidth: 1))
-            .shadow(color: DS.Colors.ink.opacity(skin == .pulse ? 0.18 : 0),
-                    radius: 8, y: 3)
+        HStack(spacing: 8) {
+            if skin == .pulse {
+                // The site's btn--volt signature: a 7 px volt dot before
+                // the label on the ink capsule.
+                Circle()
+                    .fill(DS.Colors.map)
+                    .frame(width: 7, height: 7)
+            }
+            content
+        }
+        .font(DS.Typography.heading)
+        .foregroundStyle(skin == .pulse ? DS.Colors.snowCard : DS.Colors.ink)
+        .frame(maxWidth: fullWidth ? .infinity : nil)
+        .padding(.horizontal, 24)
+        .frame(height: 52)
+        .background(skin == .pulse ? DS.Colors.ink : DS.Colors.snowCard,
+                    in: Capsule())
+        // Bevel: a faint top-light on ink, the hairline on ghost.
+        .overlay(Capsule().stroke(
+            skin == .pulse ? Color.white.opacity(0.14) : DS.Colors.hairline,
+            lineWidth: 1))
+        .shadow(color: DS.Colors.ink.opacity(skin == .pulse ? 0.22 : 0.06),
+                radius: skin == .pulse ? 12 : 8, y: skin == .pulse ? 5 : 3)
     }
 }
 
