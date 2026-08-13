@@ -28,6 +28,11 @@ public struct ActiveRunView: View {
     /// Quiet receipt: a small "+1" drifts up beside the stash chip right
     /// as it catches the flying gem, then fades.
     @State private var stashedFloat: CollectionEngine.Event?
+    /// Runner Cards: a zone kilometre completed mid-run plays the card
+    /// ceremony over this map (the reveal waits in the binder — no sheet
+    /// interrupts a run).
+    @Environment(ZoneMintEngine.self) private var zoneEngine
+    @State private var mintCeremony: RunnerCard?
 
     public init(route: Route?) {
         self.route = route
@@ -44,6 +49,14 @@ public struct ActiveRunView: View {
             } else {
                 runningUI
             }
+        }
+        .onChange(of: zoneEngine.lastMint) { _, card in
+            // This cover is frontmost, so run-time mints celebrate here;
+            // Explore (observing beneath) skips while a run is up.
+            guard let card, summary == nil else { return }
+            zoneEngine.lastMint = nil
+            notifyCardIfPocketed(card)
+            withAnimation { mintCeremony = card }
         }
         .onAppear {
             // Pocket mode: the run keeps tracking and collecting with the
@@ -109,6 +122,13 @@ public struct ActiveRunView: View {
                                  traveledPath: engine.traveledPath)
                 if let event = burst {
                     CollectionBurst(rarity: event.drop.rarity)
+                }
+                // The card twin of the gem ceremony below — same corner,
+                // same timings, its own payload.
+                if let mintCard = mintCeremony {
+                    MintCeremonyOverlay(card: mintCard) {
+                        mintCeremony = nil
+                    }
                 }
                 // Stash chip: this run's haul, top-leading (the map's
                 // recenter control owns top-trailing). Hidden until the
@@ -271,6 +291,21 @@ public struct ActiveRunView: View {
             content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
         GemLog.run.debug("local notification posted for pocketed collection (\(name, privacy: .public))")
+    }
+
+    /// Same pocket-mode receipt for a card: the kilometre completed with
+    /// the screen off still deserves its moment.
+    private func notifyCardIfPocketed(_ card: RunnerCard) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Card minted!"
+        content.body = "\(card.name) — \(card.rarity.rawValue.capitalized) \(card.type.displayName) from \(card.zoneName). It's in your binder."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "card-mint-\(card.id.uuidString)",
+            content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+        GemLog.run.debug("local notification posted for pocketed mint (\(card.name, privacy: .public))")
     }
 
     private func finish() {
