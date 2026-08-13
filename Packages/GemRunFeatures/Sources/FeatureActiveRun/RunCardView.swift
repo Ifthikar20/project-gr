@@ -14,9 +14,10 @@ extension RunCompletionSummary {
     }
 }
 
-/// The shape of the run: the completed path drawn as a clean pulse stroke,
-/// normalized into whatever frame it's given (planar-scaled so it isn't
-/// squashed, start dot in ink, finish dot in pulse). Pure Path drawing, so
+/// The shape of the run: the completed path drawn as a clean route-ink
+/// stroke (deep violet — the light-surface path color), normalized into
+/// whatever frame it's given (planar-scaled so it isn't squashed, start
+/// dot in ink, finish dot in route ink). Pure Path drawing, so
 /// ImageRenderer exports it identically on the share card.
 struct RouteShapeView: View {
     let coords: [Coordinate]
@@ -29,7 +30,7 @@ struct RouteShapeView: View {
                     p.move(to: pts[0])
                     for pt in pts.dropFirst() { p.addLine(to: pt) }
                 }
-                .stroke(DS.Colors.pulse,
+                .stroke(DS.Colors.routeInk,
                         style: StrokeStyle(lineWidth: 3, lineCap: .round,
                                            lineJoin: .round))
                 Circle()
@@ -37,7 +38,7 @@ struct RouteShapeView: View {
                     .frame(width: 7, height: 7)
                     .position(pts[0])
                 Circle()
-                    .fill(DS.Colors.pulse)
+                    .fill(DS.Colors.routeInk)
                     .overlay(Circle().stroke(DS.Colors.snowCard, lineWidth: 1.5))
                     .frame(width: 9, height: 9)
                     .position(pts[pts.count - 1])
@@ -69,8 +70,9 @@ struct RouteShapeView: View {
 }
 
 /// The run drawn on a real, muted street map — the card's hero. Static:
-/// no interaction, no controls; just streets for context, the pulse route
-/// line, an ink start dot and a pulse finish dot.
+/// no interaction, no controls; just streets for context, the deep-violet
+/// route line (light surface → route ink), an ink start dot and a
+/// route-ink finish dot.
 struct RunRouteMap: View {
     let coords: [Coordinate]
 
@@ -79,7 +81,7 @@ struct RunRouteMap: View {
             MapPolyline(coordinates: coords.map {
                 CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng)
             })
-            .stroke(DS.Colors.pulse,
+            .stroke(DS.Colors.routeInk,
                     style: StrokeStyle(lineWidth: 4, lineCap: .round,
                                        lineJoin: .round))
             if let first = coords.first {
@@ -95,7 +97,7 @@ struct RunRouteMap: View {
                 Annotation("", coordinate: CLLocationCoordinate2D(
                     latitude: last.lat, longitude: last.lng)) {
                     Circle()
-                        .fill(DS.Colors.pulse)
+                        .fill(DS.Colors.routeInk)
                         .frame(width: 11, height: 11)
                         .overlay(Circle().stroke(DS.Colors.snowCard, lineWidth: 2))
                 }

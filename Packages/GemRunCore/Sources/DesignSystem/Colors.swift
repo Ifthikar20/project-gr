@@ -30,6 +30,12 @@ public enum DS {
         public static let map = Color(red: 0.380, green: 1.0, blue: 0.0)        // #61FF00
         public static let onMap = ink
 
+        // 5 — Route ink: walking/running paths on LIGHT map surfaces
+        // (card heroes, previews, share exports) — deep violet, strong on
+        // paper where volt washes out. Volt owns the dark live maps.
+        // Mirrored as MapPalette.routeInk (CoreMap can't import us).
+        public static let routeInk = Color(red: 0.271, green: 0.153, blue: 0.627) // #4527A0
+
         /// Rarity speaks the card system's edge colors (CardPalette) — the
         /// same five hues the landing page prints, on gems and cards alike.
         public static func rarity(_ rarity: Rarity) -> Color {

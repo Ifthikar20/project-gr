@@ -23,6 +23,11 @@ public enum MapPalette {
     public static let ink = Color(red: 0.086, green: 0.094, blue: 0.114)     // #16181D
     /// Glyphs/text on a solid map-green background.
     public static let onMap = ink
+    /// Walking/running paths on LIGHT map surfaces (route previews, the
+    /// creation editor, card heroes, share snapshots): a deep violet that
+    /// carries a 3–4pt stroke on paper. Volt owns the dark live maps.
+    /// Mirrored as DS.Colors.routeInk (dependency rule, see above).
+    public static let routeInk = Color(red: 0.271, green: 0.153, blue: 0.627) // #4527A0
 
     public static func rarity(_ r: Rarity) -> Color {
         let step: Double = switch r {
@@ -477,8 +482,9 @@ public struct RoutePreviewMap: View {
     public var body: some View {
         let coords = PolylineCodec.decode(route.polyline)
         Map(initialPosition: .region(region(for: coords))) {
+            // Light preview map → the path speaks route ink, not volt.
             MapPolyline(coordinates: coords.map(\.cl))
-                .stroke(MapPalette.map, lineWidth: 4)
+                .stroke(MapPalette.routeInk, lineWidth: 4)
             ForEach(route.gemDrops) { drop in
                 Annotation("", coordinate: drop.coordinate.cl) {
                     if collectedDropIDs.contains(drop.id) {
@@ -517,8 +523,9 @@ public struct DrawingMapView: View {
         MapReader { proxy in
             Map(initialPosition: .userLocation(fallback: .automatic)) {
                 if pathCoords.count > 1 {
+                    // Light editor map → route ink for the drawn path.
                     MapPolyline(coordinates: pathCoords.map(\.cl))
-                        .stroke(MapPalette.map, lineWidth: 4)
+                        .stroke(MapPalette.routeInk, lineWidth: 4)
                 }
                 ForEach(Array(waypoints.enumerated()), id: \.offset) { i, wp in
                     Annotation("", coordinate: wp.cl) {
