@@ -5,16 +5,21 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// The collection (docs/03 §9), Airbnb wishlist-grid style: white tiles on
-/// snow, grouped by rarity tier (Common → Legendary) so the buckets read
-/// plainly; ink-tint silhouettes for the missing.
+/// The Binder (docs/03 §9): minted Runner Cards up top — the wall of minis
+/// the landing page promises — and the gem sets living on below, Airbnb
+/// wishlist-grid style: white tiles on snow, grouped by rarity tier
+/// (Common → Legendary); ink-tint silhouettes for the missing.
 @MainActor
 public struct StashRootView: View {
     @Environment(SessionStore.self) private var session
     @Query(sort: \StoredStashItem.collectedAt, order: .reverse) private var items: [StoredStashItem]
+    @Query(sort: \StoredRunnerCard.mintedAt, order: .reverse) private var cards: [StoredRunnerCard]
     @State private var detail: StoredStashItem?
+    @State private var cardDetail: StoredRunnerCard?
 
     public init() {}
+
+    private var cardsOn: Bool { FeatureFlags.shared.isEnabled(.runnerCards) }
 
     /// Commonest first — the natural reading order for a collection.
     private static let tiers: [Rarity] = [.common, .uncommon, .rare, .epic, .legendary]
@@ -37,6 +42,9 @@ public struct StashRootView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header
+                    if cardsOn {
+                        cardWall
+                    }
                     ForEach(tierSections, id: \.tier) { section in
                         tierSection(section.tier, section.entries)
                     }
@@ -45,17 +53,36 @@ public struct StashRootView: View {
             }
             .refreshable { await session.refreshStash() }
             .background(DS.Colors.snow)
-            .navigationTitle("Stash")
+            .navigationTitle("Binder")
             .task { await session.refreshStash() }
             .sheet(item: $detail) { item in
                 GemDetailSheet(item: item)
                     .presentationDetents([.medium])
+            }
+            .sheet(item: $cardDetail) { stored in
+                ScrollView {
+                    RunnerCardView(card: stored.toRunnerCard(),
+                                   art: cardArt(stored))
+                        .padding(20)
+                }
+                .background(DS.Colors.snow)
+                .presentationDetents([.large])
             }
         }
     }
 
     private var header: some View {
         HStack(spacing: 24) {
+            if cardsOn {
+                VStack(alignment: .leading) {
+                    Text("\(cards.count)")
+                        .font(DS.Typography.statMedium)
+                        .foregroundStyle(DS.Colors.ink)
+                    Text("cards minted")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+            }
             VStack(alignment: .leading) {
                 Text("\(items.count)")
                     .font(DS.Typography.statMedium)
@@ -75,6 +102,55 @@ public struct StashRootView: View {
             Spacer()
         }
         .airbnbCard()
+    }
+
+    /// Real gem artwork on gem-backed faces; nil keeps the type glyph.
+    private func cardArt(_ stored: StoredRunnerCard) -> AnyView? {
+        guard let face = RunnerCardCatalog.entry(forCardID: stored.cardID),
+              let gemID = face.gemID else { return nil }
+        return AnyView(GemIcon(gemID: gemID, size: 84))
+    }
+
+    /// The wall of minis: every minted card, newest first. Tap for the
+    /// full nine-part card.
+    private var cardWall: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.portrait.on.rectangle.portrait.fill")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(DS.Colors.pulse)
+                Text("Runner Cards")
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                if !cards.isEmpty {
+                    Text("\(cards.count)")
+                        .font(.caption.bold())
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+            }
+            if cards.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No cards yet")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(DS.Colors.ink)
+                    Text("Walk 1 km inside a zone on the map to mint your first card.")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .airbnbCard(padding: 14)
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12),
+                                         count: 3),
+                          spacing: 12) {
+                    ForEach(cards) { stored in
+                        MiniCardTile(stored: stored)
+                            .onTapGesture { cardDetail = stored }
+                    }
+                }
+            }
+        }
     }
 
     private func tierSection(_ tier: Rarity, _ entries: [GemCatalog.Entry]) -> some View {
@@ -120,6 +196,41 @@ public struct StashRootView: View {
                 }
             }
         }
+    }
+}
+
+/// One minted card as a wall mini: edge-framed tile, type art, name, XP —
+/// the landing page's binder-wall unit.
+@MainActor
+struct MiniCardTile: View {
+    let stored: StoredRunnerCard
+
+    var body: some View {
+        let edge = CardPalette.edge(stored.rarity)
+        VStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(CardPalette.wash(stored.type))
+                Image(systemName: CardPalette.glyph(stored.type))
+                    .font(.system(size: 22))
+                    .foregroundStyle(edge)
+            }
+            .frame(height: 54)
+            Text(stored.name)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(DS.Colors.ink)
+                .lineLimit(1)
+            Text("\(stored.rarity.rawValue.capitalized) · \(stored.stats.xpEarned) XP")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DS.Colors.inkSecondary)
+                .lineLimit(1)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity)
+        .background(DS.Colors.snowCard, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14)
+            .stroke(edge.opacity(0.5), lineWidth: 1.5))
+        .shadow(color: DS.Colors.ink.opacity(0.06), radius: 8, y: 2)
     }
 }
 
