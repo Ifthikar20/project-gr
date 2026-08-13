@@ -162,6 +162,60 @@ public struct CaptureZone: MapContent {
     }
 }
 
+/// One of the day's Runner Card zones: the CaptureZone recipe grown to
+/// zone scale. Softer than the 61 m gem circle on purpose — a 400 m disc
+/// at gem opacity would shout — and, like CaptureZone, it is ground
+/// truth: every metre walked inside the rim counts toward the mint.
+public struct ZoneCircle: MapContent {
+    let zone: RunnerZone
+
+    public init(zone: RunnerZone) {
+        self.zone = zone
+    }
+
+    public var body: some MapContent {
+        MapCircle(center: zone.center.cl, radius: zone.radiusM)
+            .foregroundStyle(MapPalette.map.opacity(0.10))
+            .stroke(MapPalette.map.opacity(0.5), lineWidth: 1.5)
+    }
+}
+
+/// The tappable chip at a zone's center: name + a thin progress ring of
+/// the kilometre. MapCircle takes no taps, so this chip (plus the map-tap
+/// hit-test in ExploreMapView) is how a zone opens its sheet.
+struct ZoneChip: View {
+    let zone: RunnerZone
+    let progress: Double
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .stroke(MapPalette.ink.opacity(0.15), lineWidth: 3)
+                    Circle()
+                        .trim(from: 0, to: min(max(progress, 0), 1))
+                        .stroke(MapPalette.map, style: StrokeStyle(
+                            lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 16, height: 16)
+                Text(zone.name)
+                    .font(.caption.bold())
+                    .lineLimit(1)
+            }
+            .foregroundStyle(MapPalette.ink)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.white.opacity(0.94), in: Capsule())
+            .overlay(Capsule().stroke(MapPalette.map.opacity(0.7), lineWidth: 1.5))
+            .shadow(color: MapPalette.ink.opacity(0.2), radius: 4, y: 1)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// A gem pin that falls onto the map with a spring (the pin-drop animation).
 /// Renders the gem's artwork (GemIcon) when given a gemID; otherwise falls
 /// back to a rarity-tier emoji.
@@ -233,6 +287,12 @@ struct SparkleBurst: View {
 public struct ExploreMapView: View {
     let routes: [Route]
     let standaloneDrops: [GemDrop]
+    /// The day's Runner Card zones — big green circles with a center chip.
+    let zones: [RunnerZone]
+    /// Metres walked per zone id, for the chips' progress rings.
+    let zoneProgress: [UUID: Double]
+    /// The kilometre (or the dev override) the rings fill toward.
+    let zoneTargetM: Double
     let selectedID: UUID?
     /// Snapped preview polyline (destination mode: user → dropped pin).
     let previewPath: [Coordinate]
@@ -245,6 +305,9 @@ public struct ExploreMapView: View {
     let onTapCoordinate: ((Coordinate) -> Void)?
     /// Tap on a gem pin — the caller shows the gem-info card.
     let onSelectDrop: ((GemDrop) -> Void)?
+    /// Tap on a zone (its chip, or anywhere inside its circle when the
+    /// caller isn't using raw taps for a mode of its own).
+    let onSelectZone: ((RunnerZone) -> Void)?
     /// Bump to snap the camera back to the user (the location capsule's
     /// tap). A counter instead of a bool so repeat taps keep working.
     let recenterTick: Int
@@ -253,15 +316,22 @@ public struct ExploreMapView: View {
         .userLocation(fallback: .automatic)
 
     public init(routes: [Route], standaloneDrops: [GemDrop] = [], selectedID: UUID?,
+                zones: [RunnerZone] = [],
+                zoneProgress: [UUID: Double] = [:],
+                zoneTargetM: Double = 1_000,
                 previewPath: [Coordinate] = [],
                 destinationPin: Coordinate? = nil,
                 userCoordinate: Coordinate? = nil,
                 onSelect: @escaping (Route) -> Void,
                 onTapCoordinate: ((Coordinate) -> Void)? = nil,
                 onSelectDrop: ((GemDrop) -> Void)? = nil,
+                onSelectZone: ((RunnerZone) -> Void)? = nil,
                 recenterTick: Int = 0) {
         self.routes = routes
         self.standaloneDrops = standaloneDrops
+        self.zones = zones
+        self.zoneProgress = zoneProgress
+        self.zoneTargetM = zoneTargetM
         self.selectedID = selectedID
         self.previewPath = previewPath
         self.destinationPin = destinationPin
@@ -269,6 +339,7 @@ public struct ExploreMapView: View {
         self.onSelect = onSelect
         self.onTapCoordinate = onTapCoordinate
         self.onSelectDrop = onSelectDrop
+        self.onSelectZone = onSelectZone
         self.recenterTick = recenterTick
     }
 
@@ -276,9 +347,21 @@ public struct ExploreMapView: View {
         MapReader { proxy in
             mapContent
                 .onTapGesture(coordinateSpace: .local) { screenPoint in
-                    guard let onTapCoordinate,
-                          let coord = proxy.convert(screenPoint, from: .local) else { return }
-                    onTapCoordinate(Coordinate(lat: coord.latitude, lng: coord.longitude))
+                    guard let coord = proxy.convert(screenPoint, from: .local) else { return }
+                    let tapped = Coordinate(lat: coord.latitude, lng: coord.longitude)
+                    // Raw-tap modes (drop a pin, pick a destination) keep
+                    // priority; otherwise a tap inside a zone circle opens
+                    // it — MapCircle itself takes no taps.
+                    if let onTapCoordinate {
+                        onTapCoordinate(tapped)
+                    } else if let onSelectZone,
+                              let hit = zones
+                                  .map({ ($0, RouteGeometry.planarDistance(
+                                      from: $0.center, to: tapped)) })
+                                  .filter({ $0.1 <= $0.0.radiusM })
+                                  .min(by: { $0.1 < $1.1 })?.0 {
+                        onSelectZone(hit)
+                    }
                 }
                 .onChange(of: recenterTick) { _, _ in
                     guard let here = userCoordinate else { return }
@@ -303,6 +386,16 @@ public struct ExploreMapView: View {
             // No UserAnnotation fallback: its accuracy halo reads as a big
             // translucent circle on the map. Once we have a live fix (usually
             // within a second of opening), the 🏃 emoji above takes over.
+            ForEach(zones) { zone in
+                ZoneCircle(zone: zone)
+                Annotation("", coordinate: zone.center.cl) {
+                    ZoneChip(zone: zone,
+                             progress: (zoneProgress[zone.id] ?? 0)
+                                 / max(zoneTargetM, 1)) {
+                        onSelectZone?(zone)
+                    }
+                }
+            }
             ForEach(standaloneDrops) { drop in
                 // The gem's capture zone: walk anywhere inside the green
                 // circle and the claim fires — the circle IS the rule.
