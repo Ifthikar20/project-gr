@@ -243,6 +243,19 @@ public final class SessionStore {
         isOnboarded = false
     }
 
+    /// Optimistic XP for a minted Runner Card — client-authoritative while
+    /// minting itself is client-side; when the API takes over minting, its
+    /// verdict replaces this the way run settlement already works.
+    public func recordCardMint(xp: Int) {
+        guard let context, profile != nil else { return }
+        profile?.xp += xp
+        while let p = profile, p.xp >= XPRules.xpToAdvance(from: p.level) {
+            p.xp -= XPRules.xpToAdvance(from: p.level)
+            p.level += 1
+        }
+        GemLog.attempt(GemLog.persist, "save card-mint XP") { try context.save() }
+    }
+
     public var authProvider: AuthProvider {
         AuthProvider(rawValue: profile?.authProviderRaw ?? "guest") ?? .guest
     }

@@ -140,6 +140,48 @@ public final class StoredStashItem {
 }
 
 @Model
+public final class StoredRunnerCard {
+    @Attribute(.unique) public var id: UUID
+    public var cardID: UUID
+    public var name: String
+    public var typeRaw: String
+    public var rarityRaw: String
+    public var zoneID: UUID
+    public var zoneName: String
+    public var mintedAt: Date
+    public var serial: Int
+    /// MintStats as a JSON blob — the StoredRoute pattern for values the
+    /// binder never queries by.
+    public var statsData: Data
+
+    public init(from card: RunnerCard) {
+        self.id = card.id
+        self.cardID = card.cardID
+        self.name = card.name
+        self.typeRaw = card.type.rawValue
+        self.rarityRaw = card.rarity.rawValue
+        self.zoneID = card.zoneID
+        self.zoneName = card.zoneName
+        self.mintedAt = card.mintedAt
+        self.serial = card.serial
+        self.statsData = (try? JSONEncoder().encode(card.stats)) ?? Data()
+    }
+
+    public var rarity: Rarity { Rarity(rawValue: rarityRaw) ?? .common }
+    public var type: CardType { CardType(rawValue: typeRaw) ?? .gem }
+    public var stats: MintStats {
+        (try? JSONDecoder().decode(MintStats.self, from: statsData))
+            ?? MintStats(distanceM: 0, steps: 0, xpEarned: 0)
+    }
+
+    public func toRunnerCard() -> RunnerCard {
+        RunnerCard(id: id, cardID: cardID, name: name, type: type,
+                   rarity: rarity, zoneID: zoneID, zoneName: zoneName,
+                   mintedAt: mintedAt, serial: serial, stats: stats)
+    }
+}
+
+@Model
 public final class StoredProfile {
     @Attribute(.unique) public var id: UUID
     public var handle: String
@@ -177,5 +219,6 @@ public final class StoredProfile {
 public enum Persistence {
     public static let models: [any PersistentModel.Type] = [
         StoredRoute.self, StoredRun.self, StoredStashItem.self, StoredProfile.self,
+        StoredRunnerCard.self,
     ]
 }
