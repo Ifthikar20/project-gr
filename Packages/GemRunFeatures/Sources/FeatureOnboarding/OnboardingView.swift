@@ -32,11 +32,14 @@ public struct OnboardingView: View {
             // extending the TabView itself is what lets the sign-in photo
             // run truly full-bleed under the page dots.
             TabView(selection: $page) {
+                // The landing moment: wordmark centered, runner photos
+                // expanding out around it — before any explaining happens.
+                WelcomeHeroView().tag(0)
                 ForEach(0..<Self.pages.count, id: \.self) { i in
-                    pageView(Self.pages[i]).tag(i)
+                    pageView(Self.pages[i]).tag(i + 1)
                 }
-                locationPriming.tag(Self.pages.count)
-                SignInView().tag(Self.pages.count + 1)
+                locationPriming.tag(Self.pages.count + 1)
+                SignInView().tag(Self.pages.count + 2)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
