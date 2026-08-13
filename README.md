@@ -1,19 +1,21 @@
-# GemRun
+# RunnerCard
 
-> **GemRun turns any running route into a treasure hunt.**
+> **RunnerCard turns walking into a collection.** (runnercard.app)
 >
-> The system drops gems on real streets near you. Run past within 100 ft — first one there takes it.
+> Every day, a few large zones land on parks and trails near you. Walk 1 km inside one and a collectible Runner Card mints — stamped with the walk that earned it.
 
 ## What it is
 
-Open the map and there are gems waiting — placed by the system on real, walkable streets near wherever you are. Run or walk within 100 ft of one and it's yours, first come, first served. Create routes, place your own gems on them, share them; other runners collect as they pass, GPS-confirmed. You're not just logging miles: there's always something out there to go get.
+Open the app and you're on the map, with the day's zones glowing around you: big circles anchored on public parks and walkable trails, picked fresh daily, never on private or government land. Cover a kilometre inside one — browsing the map or mid-run — and a Runner Card mints with a tiny top-left ceremony: a TCG-style card carrying your distance, steps and XP, holding one of five collectible kinds (Gem, Gear, Creature, Artifact, Fact) across five rarities at published odds. The binder keeps every card forever. You're not just logging miles: there's always a card out there to go earn.
 
 **The core loop:**
-1. **Open the map** — the backend stocks gems around your location automatically
-2. **Run and collect** — pass within 100 ft; optimistic on the client, server-verified, one winner per gem
-3. **Create routes** — draw a path snapped to real streets, place gems from your budget, publish
-4. **Earn and drop** — lifetime kilometers mint wallet gems you can drop anywhere walkable
-5. **Compete** — leaderboards, streaks, rare-gem hunts, first-find crowns
+1. **Open the map** — 2–4 large walkable zones resolve around you (OpenStreetMap-anchored, client-side for now, `ZoneProviding` is the server seam)
+2. **Walk the kilometre** — accuracy-, pace- and teleport-gated metres inside the zone; map-open or in-run both count
+3. **Mint the card** — rarity roll at the published odds (1 in 900 legendary), the walk's stats stamped on, into the binder
+4. **Collect the kinds** — gems, gear, creatures, artifacts, facts; 500-print runs, serials and all
+5. **Compete** — leaderboards, streaks, XP and levels carry on
+
+The pivot is documented in `docs/21-runnercard-pivot.md`. The gem mechanics below remain accurate for the legacy mode behind the `runner_cards` feature flag (default ON; switching it OFF in Settings › Features restores the gem map) and for the backend, which is untouched this round.
 
 ## Feature tour
 
