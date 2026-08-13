@@ -5,10 +5,11 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// The Collection (docs/03 §9): minted Runner Cards up top — the wall of
-/// minis the landing page promises — and the gem sets living on below,
-/// Airbnb wishlist-grid style: white tiles on snow, grouped by rarity tier
-/// (Common → Legendary); ink-tint silhouettes for the missing.
+/// The Collection (docs/03 §9): your minted Runner Cards, and nothing
+/// else — the wall of minis the landing page promises, newest first, tap
+/// for the full card. Gems appear only AS cards now (the gem card type);
+/// the old tiered gem grid renders solely in legacy mode (runner_cards
+/// flag OFF), where this screen is still the gem stash.
 @MainActor
 public struct StashRootView: View {
     @Environment(SessionStore.self) private var session
@@ -44,9 +45,10 @@ public struct StashRootView: View {
                     header
                     if cardsOn {
                         cardWall
-                    }
-                    ForEach(tierSections, id: \.tier) { section in
-                        tierSection(section.tier, section.entries)
+                    } else {
+                        ForEach(tierSections, id: \.tier) { section in
+                            tierSection(section.tier, section.entries)
+                        }
                     }
                 }
                 .padding(16)
@@ -74,6 +76,8 @@ public struct StashRootView: View {
     private var header: some View {
         HStack(spacing: 24) {
             if cardsOn {
+                // Cards are the whole collection now — gems only appear
+                // AS cards, so the header speaks cards alone.
                 VStack(alignment: .leading) {
                     Text("\(cards.count)")
                         .font(DS.Typography.statMedium)
@@ -82,22 +86,31 @@ public struct StashRootView: View {
                         .font(.caption)
                         .foregroundStyle(DS.Colors.inkSecondary)
                 }
-            }
-            VStack(alignment: .leading) {
-                Text("\(items.count)")
-                    .font(DS.Typography.statMedium)
-                    .foregroundStyle(DS.Colors.ink)
-                Text("gems collected")
-                    .font(.caption)
-                    .foregroundStyle(DS.Colors.inkSecondary)
-            }
-            VStack(alignment: .leading) {
-                Text("\(Set(items.map(\.gemID)).count)/\(GemCatalog.entries.count)")
-                    .font(DS.Typography.statMedium)
-                    .foregroundStyle(DS.Colors.ink)
-                Text("unique found")
-                    .font(.caption)
-                    .foregroundStyle(DS.Colors.inkSecondary)
+                VStack(alignment: .leading) {
+                    Text("\(Set(cards.map(\.cardID)).count)/\(RunnerCardCatalog.entries.count)")
+                        .font(DS.Typography.statMedium)
+                        .foregroundStyle(DS.Colors.ink)
+                    Text("faces found")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+            } else {
+                VStack(alignment: .leading) {
+                    Text("\(items.count)")
+                        .font(DS.Typography.statMedium)
+                        .foregroundStyle(DS.Colors.ink)
+                    Text("gems collected")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+                VStack(alignment: .leading) {
+                    Text("\(Set(items.map(\.gemID)).count)/\(GemCatalog.entries.count)")
+                        .font(DS.Typography.statMedium)
+                        .foregroundStyle(DS.Colors.ink)
+                    Text("unique found")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
             }
             Spacer()
         }
@@ -112,23 +125,10 @@ public struct StashRootView: View {
     }
 
     /// The wall of minis: every minted card, newest first. Tap for the
-    /// full nine-part card.
+    /// full nine-part card. The screen title carries the name — the wall
+    /// needs no header of its own.
     private var cardWall: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "rectangle.portrait.on.rectangle.portrait.fill")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(DS.Colors.pulse)
-                Text("Runner Cards")
-                    .font(DS.Typography.heading)
-                    .foregroundStyle(DS.Colors.ink)
-                Spacer()
-                if !cards.isEmpty {
-                    Text("\(cards.count)")
-                        .font(.caption.bold())
-                        .foregroundStyle(DS.Colors.inkSecondary)
-                }
-            }
+        Group {
             if cards.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No cards yet")
