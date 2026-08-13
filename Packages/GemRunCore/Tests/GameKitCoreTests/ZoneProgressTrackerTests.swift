@@ -148,6 +148,48 @@ final class ZoneProgressTrackerTests: XCTestCase {
         XCTAssertEqual(tracker.progressM[z.id] ?? 0, 10, accuracy: 0.5)
     }
 
+    // MARK: - Polygon zones
+
+    /// The L-shape from PolygonTests: a 200 m-wide bottom strip (y 0–100)
+    /// plus the left column (x 0–100, y 100–200); the top-right quadrant
+    /// is the notch — outside the zone.
+    private func polygonZone(day: Int = 20_500) -> RunnerZone {
+        let ring = [coord(0, 0), coord(200, 0), coord(200, 100),
+                    coord(100, 100), coord(100, 200), coord(0, 200),
+                    coord(0, 0)]
+        let center = coord(66, 66)
+        return RunnerZone(id: ZoneSelector.stableZoneID(day: day, center: center),
+                          name: "L Park", lat: center.lat, lng: center.lng,
+                          radiusM: 500, ring: ring, day: day, sourceRaw: "test")
+    }
+
+    func testPolygonZoneCreditsInsideTheRingOnly() {
+        let z = polygonZone()
+        var tracker = ZoneProgressTracker(zones: [z])
+        // Inside the bottom arm: full credit. (The 500 m radiusM would
+        // credit the notch too — the ring must win.)
+        _ = tracker.ingest(fix(20, 20, t: 1_000), source: .map)
+        var events = tracker.ingest(fix(80, 20, t: 1_040), source: .map)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(tracker.progressM[z.id] ?? 0, 60, accuracy: 1)
+        // Relocate into the notch across a chain-breaking gap, then walk
+        // through it: entirely outside the L → nothing accrues.
+        _ = tracker.ingest(fix(150, 150, t: 1_300), source: .map)
+        events = tracker.ingest(fix(180, 150, t: 1_320), source: .map)
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(tracker.progressM[z.id] ?? 0, 60, accuracy: 1)
+    }
+
+    func testPolygonRimStraddleCreditsHalf() {
+        let z = polygonZone()
+        var tracker = ZoneProgressTracker(zones: [z])
+        // Left column → into the notch: one endpoint in, one out → half.
+        _ = tracker.ingest(fix(80, 150, t: 1_000), source: .map)
+        let events = tracker.ingest(fix(120, 150, t: 1_020), source: .map)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(tracker.progressM[z.id] ?? 0, 20, accuracy: 0.5)
+    }
+
     func testDailyMintCapSilencesTheZone() {
         let z = zone()
         var tracker = ZoneProgressTracker(zones: [z],

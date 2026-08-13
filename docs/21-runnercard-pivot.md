@@ -10,10 +10,15 @@ the legacy mode behind the flag.
 
 ## The mechanic
 
-1. Launch lands on the map (Explore). 2–4 **zones** resolve around the user: circles of
-   350–500 m radius anchored on parks/green polygons, scored by area + strict-pedestrian
-   trail metres inside, picked by a seeded weighted draw — random across days, identical
-   within one (seed = day × ~500 m cell, `StableSeed.daily`).
+1. Launch lands on the map (Explore). 2–4 **zones** resolve around the user, anchored on
+   parks/green polygons, scored by area + strict-pedestrian trail metres inside, picked by
+   a seeded weighted draw — random across days, identical within one (seed = day ×
+   ~500 m cell, `StableSeed.daily`). **Zones are odd-shaped**: the zone's boundary is the
+   park's real OSM ring, scaled outward about its centroid
+   (`k = clamp(√(targetArea/ringArea), 1, 3)`, target = the 350 m circle's footprint) so a
+   small park grows into a park-shaped neighborhood, decimated to ≤160 vertices; the
+   equivalent-circle `radiusM` (350–500 m) survives for separation/scoring, and the
+   MKLocalSearch fallback ships plain circles (its rings are synthetic squares).
 2. **Never on private or government land.** Candidate anchors are vetoed fail-closed
    (centroid + 8 perimeter probes at 0.8×radius) against closed no-go polygons: the
    backend's `NO_GO_AREA_FILTERS` ported — `access=private|no`, golf courses,

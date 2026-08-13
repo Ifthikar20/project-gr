@@ -41,7 +41,9 @@ public struct NoGoPolygons: Sendable {
     }
 
     /// Ray casting over a closed ring of vertices (walkability._point_in_ring).
-    static func pointInRing(lat: Double, lng: Double, ring: [Coordinate]) -> Bool {
+    /// Public: zone containment and the map tap hit-test use it on zone
+    /// rings, not just no-go vetoes.
+    public static func pointInRing(lat: Double, lng: Double, ring: [Coordinate]) -> Bool {
         var inside = false
         var j = ring.count - 1
         for i in 0..<ring.count {
@@ -93,5 +95,39 @@ public enum RingMath {
         let lat = points.map(\.lat).reduce(0, +) / Double(points.count)
         let lng = points.map(\.lng).reduce(0, +) / Double(points.count)
         return Coordinate(lat: lat, lng: lng)
+    }
+
+    /// The ring scaled about a point — shape-preserving growth, so a small
+    /// park becomes a park-shaped neighborhood. k = 1 returns the ring
+    /// untouched.
+    public static func scaled(_ ring: [Coordinate], about center: Coordinate,
+                              by k: Double) -> [Coordinate] {
+        guard k != 1 else { return ring }
+        return ring.map { p in
+            Coordinate(lat: center.lat + (p.lat - center.lat) * k,
+                       lng: center.lng + (p.lng - center.lng) * k)
+        }
+    }
+
+    /// Uniform-stride decimation to at most `maxVertices`, preserving the
+    /// repeated-first-vertex closure when present. Big traced parks can
+    /// carry hundreds of nodes; zones don't need them all.
+    public static func decimated(_ ring: [Coordinate],
+                                 maxVertices: Int) -> [Coordinate] {
+        guard maxVertices >= 4, ring.count > maxVertices else { return ring }
+        var open = ring
+        let isClosed = ring.count > 1
+            && abs(ring[0].lat - ring[ring.count - 1].lat) < 1e-9
+            && abs(ring[0].lng - ring[ring.count - 1].lng) < 1e-9
+        if isClosed { open.removeLast() }
+        let target = maxVertices - (isClosed ? 1 : 0)
+        guard open.count > target else { return ring }
+        var out: [Coordinate] = []
+        out.reserveCapacity(maxVertices)
+        for i in 0..<target {
+            out.append(open[i * open.count / target])
+        }
+        if isClosed { out.append(out[0]) }
+        return out
     }
 }

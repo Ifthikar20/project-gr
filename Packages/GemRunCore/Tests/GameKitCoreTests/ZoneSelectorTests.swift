@@ -70,10 +70,11 @@ final class ZoneSelectorTests: XCTestCase {
 
     func testNoGoRingAtPerimeterVetoesTheAnchor() {
         var data = parkWithTrail()
-        // The park alone yields radius ≈ min(max(√(640000/π)·1.1, 350), 500)
-        // ≈ 496 m; probes sit at 0.8 × r ≈ 397 m. A golf course square over
-        // the eastern probe must drop the candidate — fail closed.
-        data.noGoRings = [squareRing(cx: 397, cy: 0, half: 60)]
+        // Polygon zones probe their ring vertices pulled to 90% toward the
+        // centroid: the 800 m square park's corners sit at (±400, ±400), so
+        // probes land at (±360, ±360). A golf course over one of them must
+        // drop the candidate — fail closed.
+        data.noGoRings = [squareRing(cx: 360, cy: 360, half: 60)]
         XCTAssertEqual(ZoneSelector.select(data: data, around: user,
                                            day: 20_500, source: "test"), [])
     }
@@ -141,6 +142,61 @@ final class ZoneSelectorTests: XCTestCase {
         XCTAssertEqual(ZoneSelector.select(data: ZonePlacementData(),
                                            around: user, day: 20_500,
                                            source: "test"), [])
+    }
+
+    // MARK: - Polygon zones
+
+    func testBigParkShipsItsRingVerbatim() {
+        // 640k m² ≥ the ~385k target → scale k = 1: the zone IS the park.
+        let zones = ZoneSelector.select(data: parkWithTrail(), around: user,
+                                        day: 20_500, source: "test")
+        XCTAssertEqual(zones.first?.ring,
+                       squareRing(cx: 0, cy: 0, half: 400))
+        XCTAssertEqual(zones.first?.isPolygon, true)
+    }
+
+    func testSmallParkRingScalesUpToTheTargetFootprint() {
+        // 200 × 200 m park (40k m²) → k caps at 3 → ring area ≈ 360k m²:
+        // odd shape, large area.
+        let data = ZonePlacementData(
+            parks: [.init(name: "Pocket Park",
+                          ring: squareRing(cx: 0, cy: 0, half: 100))],
+            trails: [[coord(-300, 10), coord(300, 10)]])
+        let zones = ZoneSelector.select(data: data, around: user,
+                                        day: 20_500, source: "test")
+        let ring = try! XCTUnwrap(zones.first?.ring)
+        XCTAssertEqual(RingMath.areaM2(ring), 360_000,
+                       accuracy: 360_000 * 0.05)
+        // Shape preserved: still the 5-vertex closed square, just bigger.
+        XCTAssertEqual(ring.count, 5)
+    }
+
+    func testHugeRingIsDecimated() {
+        // A 400-vertex traced boundary comes back capped at the budget.
+        var ring: [Coordinate] = []
+        for i in 0..<400 {
+            let theta = Double(i) / 400 * 2 * .pi
+            ring.append(coord(400 * cos(theta), 400 * sin(theta)))
+        }
+        ring.append(ring[0])
+        let data = ZonePlacementData(parks: [.init(name: "Traced", ring: ring)])
+        let zones = ZoneSelector.select(data: data, around: user,
+                                        day: 20_500, source: "test")
+        let stored = try! XCTUnwrap(zones.first?.ring)
+        XCTAssertLessThanOrEqual(stored.count, ZoneRules.maxRingVertices)
+        XCTAssertGreaterThanOrEqual(stored.count, 100)
+    }
+
+    func testLocalSearchZonesStayCircular() {
+        // The fallback's rings are synthetic squares — never shipped as
+        // polygons; those zones stay honest circles.
+        let data = ZonePlacementData(
+            parks: [.init(name: "Apple Park",
+                          ring: squareRing(cx: 0, cy: 0, half: 400))])
+        let zones = ZoneSelector.select(data: data, around: user,
+                                        day: 20_500, source: "localsearch")
+        XCTAssertEqual(zones.first?.ring, nil)
+        XCTAssertEqual(zones.first?.isPolygon, false)
     }
 }
 

@@ -14,6 +14,15 @@ public enum ZoneRules {
     public static let maxZoneRadiusM: Double = 500
     /// A park must be at least this big (m²) to anchor a zone.
     public static let minParkAreaM2: Double = 8_000
+    /// Polygon zones grow to at least this footprint (the min-radius
+    /// circle's area): a small park's ring is scaled outward — odd shape,
+    /// large area — capped at maxRingScale so a pocket park can't project
+    /// a district.
+    public static let targetZoneAreaM2: Double = .pi * 350 * 350
+    public static let maxRingScale: Double = 3.0
+    /// Vertex budget per stored zone ring (big traced parks carry
+    /// hundreds; rendering and point-in-ring don't need them).
+    public static let maxRingVertices = 160
     /// "Plenty of walkable trails": metres of strict pedestrian way that
     /// must run inside the circle when trail data is available.
     public static let minTrailLengthM: Double = 200

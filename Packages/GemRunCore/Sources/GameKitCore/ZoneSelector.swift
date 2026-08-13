@@ -38,6 +38,9 @@ public enum ZoneSelector {
     struct Candidate {
         let center: Coordinate
         let radiusM: Double
+        /// The zone's actual boundary — the park ring scaled to zone size —
+        /// or nil for circle zones (the fallback source).
+        let ring: [Coordinate]?
         let name: String?
         let score: Double
     }
@@ -51,6 +54,9 @@ public enum ZoneSelector {
         // none at all, park pedigree carries the walkability argument and
         // the trail gate would only zero every candidate.
         let trailsKnown = !data.trails.isEmpty
+        // The fallback's park "rings" are synthetic squares — those zones
+        // stay honest circles; only real OSM geometry ships as a polygon.
+        let useRings = source != "localsearch"
 
         var candidates: [Candidate] = []
         for park in data.parks {
@@ -62,14 +68,27 @@ public enum ZoneSelector {
             let radius = min(max((area / .pi).squareRoot() * 1.1,
                                  ZoneRules.minZoneRadiusM),
                              ZoneRules.maxZoneRadiusM)
-            guard !vetoed(center: center, radiusM: radius, noGo: noGo) else { continue }
+            // Odd shape, large area: a small park's ring grows about its
+            // centroid until the zone reaches the target footprint; a big
+            // park is already the zone, verbatim.
+            var zoneRing: [Coordinate]?
+            if useRings {
+                let k = min(max((ZoneRules.targetZoneAreaM2 / area).squareRoot(), 1),
+                            ZoneRules.maxRingScale)
+                zoneRing = RingMath.decimated(
+                    RingMath.scaled(park.ring, about: center, by: k),
+                    maxVertices: ZoneRules.maxRingVertices)
+            }
+            guard !vetoed(center: center, radiusM: radius, ring: zoneRing,
+                          noGo: noGo) else { continue }
             let trailM = trailLength(within: radius, of: center, trails: data.trails)
             if trailsKnown && trailM < ZoneRules.minTrailLengthM { continue }
             let areaScore = min(area, 300_000) / 300_000
             let trailScore = min(trailM, 5_000) / 5_000
             let score = trailsKnown ? 0.5 * areaScore + 0.5 * trailScore : areaScore
             candidates.append(Candidate(center: center, radiusM: radius,
-                                        name: park.name, score: max(score, 0.01)))
+                                        ring: zoneRing, name: park.name,
+                                        score: max(score, 0.01)))
         }
         guard !candidates.isEmpty else { return [] }
 
@@ -110,17 +129,28 @@ public enum ZoneSelector {
             RunnerZone(id: stableZoneID(day: day, center: candidate.center),
                        name: candidate.name ?? "Green Zone",
                        lat: candidate.center.lat, lng: candidate.center.lng,
-                       radiusM: candidate.radiusM, day: day, sourceRaw: source)
+                       radiusM: candidate.radiusM, ring: candidate.ring,
+                       day: day, sourceRaw: source)
         }
     }
 
-    /// Fail-closed no-go veto: the anchor or ANY of eight probes at 80% of
-    /// the radius sitting inside private/government land drops the
-    /// candidate entirely.
+    /// Fail-closed no-go veto: the anchor, or ANY of eight probes near the
+    /// zone's edge — evenly strided ring vertices pulled to 90% toward the
+    /// centroid for polygon zones, the 0.8·radius circle points otherwise —
+    /// sitting inside private/government land drops the candidate entirely.
     static func vetoed(center: Coordinate, radiusM: Double,
-                       noGo: NoGoPolygons) -> Bool {
+                       ring: [Coordinate]?, noGo: NoGoPolygons) -> Bool {
         guard !noGo.isEmpty else { return false }
         if noGo.contains(lat: center.lat, lng: center.lng) { return true }
+        if let ring, ring.count >= 4 {
+            for k in 0..<8 {
+                let vertex = ring[k * ring.count / 8]
+                let lat = center.lat + (vertex.lat - center.lat) * 0.9
+                let lng = center.lng + (vertex.lng - center.lng) * 0.9
+                if noGo.contains(lat: lat, lng: lng) { return true }
+            }
+            return false
+        }
         let mPerDegLat = 111_320.0
         let mPerDegLng = mPerDegLat * cos(center.lat * .pi / 180)
         for k in 0..<8 {

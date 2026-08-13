@@ -168,9 +168,11 @@ public struct CaptureZone: MapContent {
 }
 
 /// One of the day's Runner Card zones: the CaptureZone recipe grown to
-/// zone scale. Softer than the 61 m gem circle on purpose — a 400 m disc
+/// zone scale. Softer than the 61 m gem circle on purpose — a 400 m fill
 /// at gem opacity would shout — and, like CaptureZone, it is ground
-/// truth: every metre walked inside the rim counts toward the mint.
+/// truth: every metre walked inside the boundary counts toward the mint.
+/// Polygon zones draw their real (scaled) park ring; fallback zones stay
+/// circles.
 public struct ZoneCircle: MapContent {
     let zone: RunnerZone
 
@@ -179,9 +181,15 @@ public struct ZoneCircle: MapContent {
     }
 
     public var body: some MapContent {
-        MapCircle(center: zone.center.cl, radius: zone.radiusM)
-            .foregroundStyle(MapPalette.map.opacity(0.10))
-            .stroke(MapPalette.map.opacity(0.5), lineWidth: 1.5)
+        if let ring = zone.ring, ring.count >= 4 {
+            MapPolygon(coordinates: ring.map(\.cl))
+                .foregroundStyle(MapPalette.map.opacity(0.10))
+                .stroke(MapPalette.map.opacity(0.5), lineWidth: 1.5)
+        } else {
+            MapCircle(center: zone.center.cl, radius: zone.radiusM)
+                .foregroundStyle(MapPalette.map.opacity(0.10))
+                .stroke(MapPalette.map.opacity(0.5), lineWidth: 1.5)
+        }
     }
 }
 
@@ -359,13 +367,28 @@ public struct ExploreMapView: View {
                     // it — MapCircle itself takes no taps.
                     if let onTapCoordinate {
                         onTapCoordinate(tapped)
-                    } else if let onSelectZone,
-                              let hit = zones
-                                  .map({ ($0, RouteGeometry.planarDistance(
-                                      from: $0.center, to: tapped)) })
-                                  .filter({ $0.1 <= $0.0.radiusM })
-                                  .min(by: { $0.1 < $1.1 })?.0 {
-                        onSelectZone(hit)
+                    } else if let onSelectZone {
+                        // Containment first (real ring or radius), nearest
+                        // center breaks overlaps.
+                        let hit = zones
+                            .filter { zone in
+                                if let ring = zone.ring, ring.count >= 4 {
+                                    NoGoPolygons.pointInRing(
+                                        lat: tapped.lat, lng: tapped.lng,
+                                        ring: ring)
+                                } else {
+                                    RouteGeometry.planarDistance(
+                                        from: zone.center, to: tapped)
+                                        <= zone.radiusM
+                                }
+                            }
+                            .min(by: {
+                                RouteGeometry.planarDistance(from: $0.center,
+                                                             to: tapped)
+                                    < RouteGeometry.planarDistance(
+                                        from: $1.center, to: tapped)
+                            })
+                        if let hit { onSelectZone(hit) }
                     }
                 }
                 .onChange(of: recenterTick) { _, _ in

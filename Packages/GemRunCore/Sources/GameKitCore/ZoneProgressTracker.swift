@@ -123,8 +123,12 @@ public struct ZoneProgressTracker: Sendable {
     }
 
     static func inside(_ zone: RunnerZone, lat: Double, lng: Double) -> Bool {
-        RouteGeometry.planarDistance(from: zone.center,
-                                     to: Coordinate(lat: lat, lng: lng))
+        // Polygon zones test the real boundary; circles keep the radius.
+        if let ring = zone.ring, ring.count >= 4 {
+            return NoGoPolygons.pointInRing(lat: lat, lng: lng, ring: ring)
+        }
+        return RouteGeometry.planarDistance(from: zone.center,
+                                            to: Coordinate(lat: lat, lng: lng))
             <= zone.radiusM
     }
 }
