@@ -302,7 +302,7 @@ public struct ExploreRootView: View {
                 // the demo city). Re-fetch once a real fix arrives far from
                 // the last query center, or after a big move.
                 guard let fix else { return }
-                // Map-open fixes feed the kilometre — before the fetch
+                // Map-open fixes feed the mile — before the fetch
                 // debounce below, which returns early on small moves.
                 if cardsOn, scenePhase == .active {
                     zoneEngine.ingest(lat: fix.lat, lng: fix.lng,
@@ -447,7 +447,7 @@ public struct ExploreRootView: View {
     }
 
     /// The primary "just go run" action. Always tappable — free runs work
-    /// with or without nearby drops, so a runner who just wants to log km
+    /// with or without nearby drops, so a runner who just wants to log miles
     /// isn't blocked by an empty map.
     private var startRunButton: some View {
         PulseButton("Start Run", icon: "figure.run") {
@@ -506,7 +506,7 @@ public struct ExploreRootView: View {
     }
 
     /// Destination banner: prompts "tap the map", live-summarizes the snapped
-    /// path (km), surfaces planning errors, and offers Clear.
+    /// path (miles), surfaces planning errors, and offers Clear.
     private var destinationBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "mappin.and.ellipse")

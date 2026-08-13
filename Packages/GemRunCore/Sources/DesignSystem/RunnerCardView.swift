@@ -138,8 +138,9 @@ public struct RunnerCardView: View {
 
     private var statTiles: some View {
         HStack(spacing: 8) {
-            statTile(value: String(format: "%.1f", Double(card.stats.distanceM) / 1_000),
-                     label: "km walked")
+            statTile(value: UnitFormat.milesText(fromMeters: Double(card.stats.distanceM),
+                                                 decimals: 1),
+                     label: "mi walked")
             statTile(value: card.stats.steps > 0 ? "\(card.stats.steps)" : "—",
                      label: "steps")
             statTile(value: "+\(card.stats.xpEarned)", label: "xp gained",

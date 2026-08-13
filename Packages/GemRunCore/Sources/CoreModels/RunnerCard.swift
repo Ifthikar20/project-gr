@@ -36,7 +36,7 @@ public struct MintStats: Codable, Equatable, Sendable {
 }
 
 /// One minted Runner Card: a catalog face (`cardID`) stamped with the zone,
-/// the date, and the kilometre that earned it. Client-only for now — when
+/// the date, and the mile that earned it. Client-only for now — when
 /// the API takes over minting, this type gains snake_case CodingKeys the
 /// way the gem DTOs did, not before.
 public struct RunnerCard: Codable, Identifiable, Equatable, Sendable {

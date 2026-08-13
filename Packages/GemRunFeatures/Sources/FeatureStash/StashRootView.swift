@@ -134,7 +134,7 @@ public struct StashRootView: View {
                     Text("No cards yet")
                         .font(.subheadline.bold())
                         .foregroundStyle(DS.Colors.ink)
-                    Text("Walk 1 km inside a zone on the map to mint your first card.")
+                    Text("Walk a mile inside a zone on the map to mint your first card.")
                         .font(.caption)
                         .foregroundStyle(DS.Colors.inkSecondary)
                 }

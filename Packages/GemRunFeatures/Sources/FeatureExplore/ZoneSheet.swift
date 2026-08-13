@@ -3,7 +3,7 @@ import DesignSystem
 import GameKitCore
 import SwiftUI
 
-/// The zone's own card: how far along the kilometre you are, what can mint
+/// The zone's own card: how far along the mile you are, what can mint
 /// here, and the rules in one honest line. Presented from a tap on the
 /// zone's chip or anywhere inside its circle.
 @MainActor
@@ -27,7 +27,7 @@ struct ZoneSheet: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("\(Int(progressM)) m")
+                    Text(UnitFormat.milesLabel(fromMeters: progressM, decimals: 2))
                         .font(DS.Typography.display(22))
                         .monospacedDigit()
                         .foregroundStyle(DS.Colors.ink)
@@ -93,7 +93,7 @@ struct ZoneSheet: View {
     }
 
     private var targetLabel: String {
-        targetM == 1_000 ? "1 km"
+        abs(targetM - UnitFormat.metersPerMile) < 1 ? "1 mile"
             : "\(Int(targetM)) m"
     }
 }

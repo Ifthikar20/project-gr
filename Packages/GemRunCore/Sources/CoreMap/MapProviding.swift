@@ -194,7 +194,7 @@ public struct ZoneCircle: MapContent {
 }
 
 /// The tappable chip at a zone's center: name + a thin progress ring of
-/// the kilometre. MapCircle takes no taps, so this chip (plus the map-tap
+/// the mile. MapCircle takes no taps, so this chip (plus the map-tap
 /// hit-test in ExploreMapView) is how a zone opens its sheet.
 struct ZoneChip: View {
     let zone: RunnerZone
@@ -304,7 +304,7 @@ public struct ExploreMapView: View {
     let zones: [RunnerZone]
     /// Metres walked per zone id, for the chips' progress rings.
     let zoneProgress: [UUID: Double]
-    /// The kilometre (or the dev override) the rings fill toward.
+    /// The mile (or the dev override) the rings fill toward.
     let zoneTargetM: Double
     let selectedID: UUID?
     /// Snapped preview polyline (destination mode: user → dropped pin).

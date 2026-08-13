@@ -43,7 +43,7 @@ final class ZoneProgressTrackerTests: XCTestCase {
         events.filter { if case .minted = $0 { true } else { false } }.count
     }
 
-    func testStraightKilometreMintsExactlyOnce() {
+    func testCrossingTheMintThresholdMintsExactlyOnce() {
         var tracker = ZoneProgressTracker(zones: [zone()], mintDistanceM: 950)
         let events = walkThrough(&tracker)
         XCTAssertEqual(mintCount(events), 1)

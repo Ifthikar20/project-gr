@@ -20,7 +20,7 @@ public enum MintOdds {
     }
 }
 
-/// Turns a completed kilometre into a Runner Card: seeded rarity roll at
+/// Turns a completed mile into a Runner Card: seeded rarity roll at
 /// the published odds, uniform type roll, uniform face pick within the
 /// combo, and the walk's stats stamped on. Pure — the same seed always
 /// mints the same card, which is what makes the odds testable.

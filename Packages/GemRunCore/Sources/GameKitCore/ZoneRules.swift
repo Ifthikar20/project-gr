@@ -1,3 +1,4 @@
+import CoreModels
 import Foundation
 
 /// Zone selection + mint constants (docs/21) — the single source of truth
@@ -30,8 +31,9 @@ public enum ZoneRules {
     /// this factor × the sum of their radii.
     public static let minSeparationFactor: Double = 1.2
 
-    /// The kilometre: metres credited inside a zone that mint a card.
-    public static let mintDistanceM: Double = 1_000
+    /// The mile: metres credited inside a zone that mint a card. (The app
+    /// speaks miles everywhere; internals stay metric.)
+    public static let mintDistanceM: Double = UnitFormat.metersPerMile
     /// GPS fixes worse than this never count (server anti-cheat rule,
     /// mirrored client-side).
     public static let maxAccuracyM: Double = 50

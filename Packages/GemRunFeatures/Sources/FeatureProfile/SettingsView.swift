@@ -804,7 +804,7 @@ enum LegalDoc: String, Identifiable {
 
             A running game. The service marks large zones over real parks \
             and trails; you mint collectible cards by physically covering \
-            about a kilometre inside a zone while the app is open or \
+            about a mile inside a zone while the app is open or \
             recording your run. Cards, XP, streaks, and levels are game \
             features — see section 7 for what they are (and aren't) worth.
 
@@ -828,7 +828,7 @@ enum LegalDoc: String, Identifiable {
             service anchors zones only on public parks and paths that \
             public map data marks as walkable, and never knowingly over \
             private grounds, schools, or restricted areas — but map data \
-            can be wrong or stale. If your kilometre would mean \
+            can be wrong or stale. If your mile would mean \
             trespassing, crossing unsafely, or taking any risk, walk \
             somewhere else. A fresh zone appears tomorrow; you don't \
             respawn.

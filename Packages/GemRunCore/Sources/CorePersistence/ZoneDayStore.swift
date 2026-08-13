@@ -40,7 +40,7 @@ public enum ZoneCacheStore {
 
 /// Partial metres and mint counts per zone, keyed to the day — cleared by
 /// rollover, resumed mid-day so backgrounding never eats a half-walked
-/// kilometre.
+/// mile.
 public enum ZoneProgressStore {
     private static let key = "gemrun.zoneProgress.v1"
 
@@ -69,7 +69,7 @@ public enum ZoneProgressStore {
 }
 
 /// Dev shortcut for exercising the mint flow without walking a literal
-/// kilometre: `gemrun.debug.mintThresholdM` in UserDefaults, or the
+/// mile: `gemrun.debug.mintThresholdM` in UserDefaults, or the
 /// RUNNERCARD_MINT_M env var (simulator runs). Absent or non-positive
 /// means the real rule.
 public enum MintThresholdOverride {

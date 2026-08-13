@@ -18,7 +18,7 @@ public struct ZoneFix: Sendable {
     }
 }
 
-/// Walk the kilometre: per-segment distance credit inside each zone, in the
+/// Walk the mile: per-segment distance credit inside each zone, in the
 /// CollectionEngine mold — pure, synchronous, fed live by the engine and by
 /// fixture tracks in tests. Segment gates (accuracy, gap, teleport,
 /// per-source speed cap, jitter floor) all come from ZoneRules; crossing

@@ -62,7 +62,7 @@ public final class ZoneMintEngine {
         MintThresholdOverride.current() ?? ZoneRules.mintDistanceM
     }
 
-    /// What the progress rings fill toward — the kilometre, or the dev
+    /// What the progress rings fill toward — the mile, or the dev
     /// override while it's set.
     public var mintTargetM: Double { mintThreshold }
 

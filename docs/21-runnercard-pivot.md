@@ -4,7 +4,7 @@
 **Brand:** RunnerCard · runnercard.app. Landing page (project-gr-ui) is the visual spec.
 
 GemRun's map-drop mechanic (server-stocked gems, 200 ft instant capture) becomes a
-collection game: large daily zones on real walkable ground, a kilometre walked inside
+collection game: large daily zones on real walkable ground, a mile walked inside
 one mints a collectible Runner Card. Gems live on as one of the five card kinds and as
 the legacy mode behind the flag.
 
@@ -24,7 +24,7 @@ the legacy mode behind the flag.
    backend's `NO_GO_AREA_FILTERS` ported — `access=private|no`, golf courses,
    school/kindergarten/college/university, `landuse=military|industrial|railway`,
    aerodromes. Empty beats misplaced, the server's own placement rule.
-3. **Walk 1 km inside a zone → mint** (`ZoneRules.mintDistanceM`). Metres accrue while
+3. **Walk a mile inside a zone → mint** (`ZoneRules.mintDistanceM` = 1609.344). Metres accrue while
    the app is foregrounded on the map or during an active run — never in background.
    Per-segment gates (`ZoneProgressTracker`): GPS accuracy ≤ 50 m, segment ≥ 3 m,
    gap ≤ 120 s, teleport > 8 m/s re-anchors, speed cap **per source** — 3.5 m/s on the
@@ -91,7 +91,7 @@ minting.
 ## Dev switches
 
 - `gemrun.debug.mintThresholdM` (UserDefaults) or `RUNNERCARD_MINT_M` (env): shorten the
-  kilometre for testing (e.g. 100).
+  mile for testing (e.g. 100).
 - Settings › Features › Runner Cards: OFF restores the gem map wholesale.
 
 ## Rename policy (deliberate)

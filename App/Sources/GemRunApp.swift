@@ -13,7 +13,7 @@ struct GemRunApp: App {
     @State private var session = SessionStore()
     // Owned here (docs/07): a run survives any navigation or view teardown.
     @State private var runEngine = ActiveRunEngine()
-    // The day's zones + the kilometre counter + the mint (docs/21). The
+    // The day's zones + the mile counter + the mint (docs/21). The
     // providers are injected here — the only layer that sees both the
     // network (Overpass) and the map (MKLocalSearch fallback).
     @State private var zoneEngine = ZoneMintEngine(providers: [
@@ -55,7 +55,7 @@ struct GemRunApp: App {
                     session.attach(context: container.mainContext)
                     zoneEngine.attach(context: container.mainContext,
                                       session: session)
-                    // Runs feed the kilometre too: accepted samples flow to
+                    // Runs feed the mile too: accepted samples flow to
                     // the zone engine (it gates on the runner_cards flag),
                     // and run-sourced mints stamp live steps + pace.
                     runEngine.onSample = { [zoneEngine] sample in

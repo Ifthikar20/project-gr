@@ -28,7 +28,7 @@ public struct ActiveRunView: View {
     /// Quiet receipt: a small "+1" drifts up beside the stash chip right
     /// as it catches the flying gem, then fades.
     @State private var stashedFloat: CollectionEngine.Event?
-    /// Runner Cards: a zone kilometre completed mid-run plays the card
+    /// Runner Cards: a zone mile completed mid-run plays the card
     /// ceremony over this map (the reveal waits in the binder — no sheet
     /// interrupts a run).
     @Environment(ZoneMintEngine.self) private var zoneEngine
@@ -293,7 +293,7 @@ public struct ActiveRunView: View {
         GemLog.run.debug("local notification posted for pocketed collection (\(name, privacy: .public))")
     }
 
-    /// Same pocket-mode receipt for a card: the kilometre completed with
+    /// Same pocket-mode receipt for a card: the mile completed with
     /// the screen off still deserves its moment.
     private func notifyCardIfPocketed(_ card: RunnerCard) {
         guard UIApplication.shared.applicationState != .active else { return }
