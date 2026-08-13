@@ -153,8 +153,14 @@ public final class StoredRunnerCard {
     /// MintStats as a JSON blob — the StoredRoute pattern for values the
     /// binder never queries by.
     public var statsData: Data
+    /// The mint seed's UInt64 bit pattern — what lets the server replay
+    /// and verify this card. 0 for pre-server rows, which simply never
+    /// sync (defaults keep the SwiftData migration lightweight).
+    public var seedBits: Int64 = 0
+    /// Whether POST /v1/cards has accepted this mint.
+    public var synced: Bool = false
 
-    public init(from card: RunnerCard) {
+    public init(from card: RunnerCard, seed: UInt64 = 0) {
         self.id = card.id
         self.cardID = card.cardID
         self.name = card.name
@@ -165,7 +171,11 @@ public final class StoredRunnerCard {
         self.mintedAt = card.mintedAt
         self.serial = card.serial
         self.statsData = (try? JSONEncoder().encode(card.stats)) ?? Data()
+        self.seedBits = Int64(bitPattern: seed)
+        self.synced = false
     }
+
+    public var seed: UInt64 { UInt64(bitPattern: seedBits) }
 
     public var rarity: Rarity { Rarity(rawValue: rarityRaw) ?? .common }
     public var type: CardType { CardType(rawValue: typeRaw) ?? .gem }

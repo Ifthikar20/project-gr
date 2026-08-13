@@ -121,6 +121,72 @@ public final class SessionStore {
         if changed {
             GemLog.attempt(GemLog.persist, "save stash sync") { try context.save() }
         }
+        await syncCards()
+    }
+
+    // MARK: Runner Card sync (docs/21)
+
+    /// Report one mint to the API — fire-and-forget: the card is already
+    /// saved locally (offline-first), so a transport failure just leaves it
+    /// unsynced for the next collection refresh to retry.
+    public func syncMintedCard(_ stored: StoredRunnerCard) {
+        guard AppConfig.apiBaseURL != nil, stored.seed != 0,
+              !stored.synced else { return }
+        Task { await pushMint(stored) }
+    }
+
+    /// The cards half of the collection sync: push any unsynced local
+    /// mints, then pull the account's cards and insert what this device is
+    /// missing (reinstall, second device). Rides refreshStash.
+    public func syncCards() async {
+        guard AppConfig.apiBaseURL != nil, let context,
+              FeatureFlags.shared.isEnabled(.runnerCards) else { return }
+        let local = GemLog.attempt(GemLog.persist, "fetch local cards", {
+            try context.fetch(FetchDescriptor<StoredRunnerCard>())
+        }) ?? []
+        for stored in local where !stored.synced && stored.seed != 0 {
+            await pushMint(stored)
+        }
+        guard let cards = await GemLog.attempt(GemLog.session, "cards sync GET /v1/cards", {
+            try await API.shared.mintedCards()
+        }) else { return }
+        let known = Set(local.map(\.id))
+        var changed = false
+        for card in cards where !known.contains(card.id) {
+            // Server-restored rows carry no seed — they're already in the
+            // ledger, which is the only thing the seed is for.
+            let row = StoredRunnerCard(from: card)
+            row.synced = true
+            context.insert(row)
+            changed = true
+        }
+        if changed {
+            GemLog.attempt(GemLog.persist, "save pulled cards") { try context.save() }
+        }
+    }
+
+    private func pushMint(_ stored: StoredRunnerCard) async {
+        let request = CardMintRequest(
+            card: stored.toRunnerCard(), seed: stored.seed,
+            day: Int(stored.mintedAt.timeIntervalSince1970 / 86_400))
+        do {
+            let ack = try await API.shared.reportCardMint(request)
+            stored.synced = true
+            // The ack's totals are the account's truth (the server may know
+            // other devices' mints); the optimistic award reconciles to it.
+            profile?.xp = ack.xp
+            profile?.level = ack.level
+            GemLog.attempt(GemLog.persist, "save card sync ack") { try context?.save() }
+        } catch let error as HTTPGemRunAPI.HTTPError
+                    where [400, 409, 422].contains(error.status) {
+            // A permanent no (mismatch, cap, malformed) — retrying forever
+            // would spam; keep the card locally, stop offering it.
+            GemLog.session.error("card sync rejected (\(error.status, privacy: .public)): \(error.title, privacy: .public) — leaving the card local-only")
+            stored.synced = true
+            GemLog.attempt(GemLog.persist, "save card sync rejection") { try context?.save() }
+        } catch {
+            GemLog.session.info("card sync deferred: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Flag one local copy of this gem as given away (mirror of the server

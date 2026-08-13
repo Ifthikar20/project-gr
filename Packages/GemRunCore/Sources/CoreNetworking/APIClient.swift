@@ -187,6 +187,69 @@ public final class HTTPGemRunAPI: GemRunAPI {
                                  xpEarned: response.xpEarned)
     }
 
+    // MARK: - Runner Cards
+
+    private struct ZonesResponse: Decodable {
+        let day: Int
+        let mintDistanceM: Double
+        let zones: [RunnerZone]
+    }
+
+    public func zones(lat: Double, lng: Double, day: Int) async throws -> ZonesPage {
+        let response: ZonesResponse = try await get("zones", query: [
+            "lat": "\(lat)", "lng": "\(lng)", "day": "\(day)",
+        ])
+        return ZonesPage(zones: response.zones,
+                         mintDistanceM: response.mintDistanceM)
+    }
+
+    /// Server card shape. Property names are what convertFromSnakeCase
+    /// produces ("card_id" → cardId) — mapped to the model's acronym-cased
+    /// fields in `runnerCard` rather than fighting the decoder.
+    private struct WireMintedCard: Decodable {
+        let id: UUID
+        let cardId: UUID
+        let name: String
+        let type: String
+        let rarity: String
+        let zoneId: UUID
+        let zoneName: String
+        let mintedAt: Date
+        let serial: Int
+        let seed: String
+        let stats: MintStats
+
+        var runnerCard: RunnerCard {
+            RunnerCard(id: id, cardID: cardId, name: name,
+                       type: CardType(rawValue: type) ?? .gem,
+                       rarity: Rarity(rawValue: rarity) ?? .common,
+                       zoneID: zoneId, zoneName: zoneName,
+                       mintedAt: mintedAt, serial: serial, stats: stats)
+        }
+    }
+
+    private struct MintResponse: Decodable {
+        let card: WireMintedCard
+        let xp: Int
+        let level: Int
+        let duplicate: Bool
+    }
+
+    public func reportCardMint(_ request: CardMintRequest) async throws -> CardMintAck {
+        let response: MintResponse = try await send("POST", "cards", body: request)
+        return CardMintAck(xp: response.xp, level: response.level,
+                           duplicate: response.duplicate)
+    }
+
+    private struct CardsResponse: Decodable {
+        let cards: [WireMintedCard]
+    }
+
+    public func mintedCards() async throws -> [RunnerCard] {
+        let response: CardsResponse = try await get("cards")
+        return response.cards.map(\.runnerCard)
+    }
+
     // MARK: - Compete
 
     private struct RunsResponse: Decodable { let runs: [CompletedRun] }

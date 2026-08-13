@@ -1419,3 +1419,334 @@ class CacheTests(TestCase):
         cached = self.client.get("/v1/drops", {"lat": 40.0, "lng": -100.0,
                                                "radius_m": 3000}).json()["drops"]
         self.assertEqual([d["id"] for d in cached], [d["id"] for d in first])
+
+
+# ─────────────────────────────────────────── Runner Cards (docs/21)
+
+from . import runnercards, zone_rules, zones  # noqa: E402
+from .models import MintedCard, Zone  # noqa: E402
+from .seeded import SplitMix64, stable_seed_daily, stable_zone_id  # noqa: E402
+from .views import _utc_day  # noqa: E402
+
+
+class SeededVectorTests(TestCase):
+    """Cross-language pins: the SAME literals live in the Swift
+    SeededVectorTests (GameKitCoreTests). If either side drifts from its
+    twin, one of the two suites goes red — that's the whole point. Never
+    update one side alone."""
+
+    def test_splitmix64_stream(self):
+        rng = SplitMix64(0)
+        self.assertEqual([rng.next() for _ in range(3)],
+                         [16294208416658607535, 7960286522194355700,
+                          487617019471545679])
+        self.assertEqual(SplitMix64(12345).next(), 2454886589211414944)
+
+    def test_unit_double(self):
+        self.assertAlmostEqual(SplitMix64(0xDEADBEEF).next_unit_double(),
+                               0.29247624040798537, delta=1e-16)
+
+    def test_next_uuid_byte_order(self):
+        self.assertEqual(SplitMix64(42).next_uuid(),
+                         uuid.UUID("bdd73226-2feb-6e95-28ef-e333b266f103"))
+
+    def test_stable_seed_daily(self):
+        self.assertEqual(
+            stable_seed_daily(20_500, 37.0, -122.0, salt=0x5A6F6E65),
+            19_661_705_057)
+
+    def test_stable_zone_id(self):
+        # The client keys mile progress by this id — frozen formula.
+        self.assertEqual(stable_zone_id(20_500, 37.0, -122.0),
+                         uuid.UUID("2e502634-6ba0-8766-2249-2944ca65c59f"))
+
+    def test_mint_replays_the_swift_cards(self):
+        m = runnercards.mint(12345)
+        self.assertEqual(m["id"],
+                         uuid.UUID("2d160e7e-5c3f-42ca-81c2-e6dc980d78eb"))
+        self.assertEqual((m["name"], m["type"], m["rarity"], m["xp"]),
+                         ("Towpath Otter", "creature", "uncommon", 40))
+        m = runnercards.mint(900)
+        self.assertEqual((m["card_id"], m["name"], m["rarity"], m["xp"]),
+                         (uuid.UUID(int=197), "Fossil Coral", "uncommon", 35))
+        m = runnercards.mint(7)
+        self.assertEqual((m["card_id"], m["name"], m["type"], m["xp"]),
+                         (uuid.UUID(int=120), "Left, Right, Repeat",
+                          "fact", 15))
+
+    def test_catalog_mirrors_the_client(self):
+        # 23 named + one gem face per catalog gem, every combo non-empty,
+        # ids unique and disjoint from the gem catalog's 1–53 range.
+        self.assertEqual(len(runnercards.NAMED), 23)
+        self.assertEqual(len(runnercards.GEM_FACES), len(catalog.ENTRIES))
+        ids = [e["card_id"] for e in runnercards.ENTRIES]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(all(100 <= e["card_id"].bytes[-1] <= 203
+                            for e in runnercards.ENTRIES))
+        combos = {(e["type"], e["rarity"]) for e in runnercards.ENTRIES}
+        self.assertEqual(len(combos), 25)
+
+
+def square_ring(cx_m, cy_m, half_m):
+    """A closed square ring in the tests' metres-east/north frame."""
+    klng = 111_320.0 * math.cos(math.radians(37.0))
+    def point(x, y):
+        return (37.0 + y / 111_320.0, -122.0 + x / klng)
+    return [point(cx_m - half_m, cy_m - half_m),
+            point(cx_m + half_m, cy_m - half_m),
+            point(cx_m + half_m, cy_m + half_m),
+            point(cx_m - half_m, cy_m + half_m),
+            point(cx_m - half_m, cy_m - half_m)]
+
+
+class ZoneSelectionTests(TestCase):
+    """select_zones ports ZoneSelector — same gates, same seeded pick."""
+
+    def parks(self):
+        # Two well-separated big parks (200 m half → 160,000 m², over the
+        # 8,000 m² floor) inside the 2.5 km search circle.
+        return [{"name": "North Park", "ring": square_ring(0, 900, 200)},
+                {"name": "South Park", "ring": square_ring(0, -900, 200)}]
+
+    def test_same_day_same_zones_fresh_ids(self):
+        a = zones.select_zones(self.parks(), [], [], 37.0, -122.0, 20_500)
+        b = zones.select_zones(self.parks(), [], [], 37.0, -122.0, 20_500)
+        self.assertEqual([z["id"] for z in a], [z["id"] for z in b])
+        self.assertTrue(a)
+        c = zones.select_zones(self.parks(), [], [], 37.0, -122.0, 20_501)
+        self.assertNotEqual([z["id"] for z in a], [z["id"] for z in c])
+
+    def test_small_park_is_ignored(self):
+        tiny = [{"name": "Pocket", "ring": square_ring(0, 300, 40)}]  # 6,400 m²
+        self.assertEqual(zones.select_zones(tiny, [], [], 37.0, -122.0,
+                                            20_500), [])
+
+    def test_no_go_veto_is_fail_closed(self):
+        parks = [{"name": "Golf-adjacent", "ring": square_ring(0, 900, 200)}]
+        # A no-go ring swallowing the park's centroid.
+        veto = [square_ring(0, 900, 260)]
+        self.assertEqual(zones.select_zones(parks, [], veto, 37.0, -122.0,
+                                            20_500), [])
+
+    def test_trail_gate_applies_only_when_trails_known(self):
+        parks = [{"name": "North Park", "ring": square_ring(0, 900, 200)}]
+        klng = 111_320.0 * math.cos(math.radians(37.0))
+        far_trail = [[(37.0 + 2_000 / 111_320.0, -122.0),
+                      (37.0 + 2_000 / 111_320.0, -122.0 + 500 / klng)]]
+        # Trails known but none inside the zone → gated out.
+        self.assertEqual(zones.select_zones(parks, far_trail, [], 37.0,
+                                            -122.0, 20_500), [])
+        # No trail data at all → park pedigree carries it.
+        self.assertTrue(zones.select_zones(parks, [], [], 37.0, -122.0,
+                                           20_500))
+
+    def test_rings_scale_to_target_and_decimate(self):
+        # 100 m half → 40,000 m²; target π·350² ≈ 384,845 m² → k ≈ 3.1,
+        # clamped to 3.0 → area grows k² = 9×.
+        parks = [{"name": "Small", "ring": square_ring(0, 600, 100)}]
+        picked = zones.select_zones(parks, [], [], 37.0, -122.0, 20_500)
+        self.assertEqual(len(picked), 1)
+        ring = picked[0]["ring"]
+        self.assertIsNotNone(ring)
+        self.assertLessEqual(len(ring), zone_rules.MAX_RING_VERTICES)
+        grown = zones.ring_area_m2(ring)
+        self.assertAlmostEqual(grown, 40_000 * 9, delta=40_000 * 9 * 0.05)
+        # The zone id keys off the ORIGINAL centroid, scale-invariant.
+        self.assertEqual(picked[0]["id"],
+                         stable_zone_id(20_500, *zones.ring_centroid(
+                             square_ring(0, 600, 100))))
+
+    def test_localsearch_source_stays_circular(self):
+        picked = zones.select_zones(self.parks(), [], [], 37.0, -122.0,
+                                    20_500, source="localsearch")
+        self.assertTrue(picked)
+        self.assertTrue(all(z["ring"] is None for z in picked))
+
+    def test_separation_drops_overlapping_picks(self):
+        # Two parks whose zones must overlap (centers 300 m apart, radii
+        # ≥ 350 m each) → only one survives the pick loop.
+        parks = [{"name": "A", "ring": square_ring(0, 0, 150)},
+                 {"name": "B", "ring": square_ring(300, 0, 150)}]
+        picked = zones.select_zones(parks, [], [], 37.0, -122.0, 20_500)
+        self.assertEqual(len(picked), 1)
+
+
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
+                   PRESENCE_ASYNC=False, AUTH_MODE="insecure_dev",
+                   THROTTLE_ENABLED=False, READ_CACHE_ENABLED=False)
+class ZoneEndpointTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        self.client = Client()
+
+    def zone_data(self):
+        return ([{"name": "North Park", "ring": square_ring(0, 900, 200)}],
+                [], [])
+
+    def test_serves_zones_and_persists_the_ledger(self):
+        with mock.patch("api.zones.fetch_zone_data",
+                        return_value=self.zone_data()) as fetch:
+            day = _utc_day()
+            response = self.client.get(
+                "/v1/zones", {"lat": "37.0", "lng": "-122.0", "day": day})
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["day"], day)
+            self.assertEqual(payload["mint_distance_m"], 1609.344)
+            self.assertEqual(len(payload["zones"]), 1)
+            zone = payload["zones"][0]
+            self.assertEqual(zone["name"], "North Park")
+            self.assertEqual(zone["source_raw"], "server")
+            self.assertTrue(zone["ring"])
+            self.assertIn("lat", zone["ring"][0])
+            # Served zones land in the ledger for mint checks.
+            self.assertTrue(Zone.objects.filter(
+                id=uuid.UUID(zone["id"])).exists())
+            # Second read comes from the cell cache — one fetch total.
+            again = self.client.get(
+                "/v1/zones", {"lat": "37.0", "lng": "-122.0", "day": day})
+            self.assertEqual(again.status_code, 200)
+            self.assertEqual(fetch.call_count, 1)
+
+    def test_unreachable_map_is_503_not_empty(self):
+        with mock.patch("api.zones.fetch_zone_data", return_value=None):
+            response = self.client.get("/v1/zones",
+                                       {"lat": "37.0", "lng": "-122.0"})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["code"], "zones_unreachable")
+
+    def test_answered_empty_is_a_real_answer(self):
+        with mock.patch("api.zones.fetch_zone_data",
+                        return_value=([], [], [])):
+            response = self.client.get("/v1/zones",
+                                       {"lat": "37.0", "lng": "-122.0"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["zones"], [])
+
+    def test_rejects_far_future_days(self):
+        response = self.client.get(
+            "/v1/zones", {"lat": "37.0", "lng": "-122.0",
+                          "day": _utc_day() + 5})
+        self.assertEqual(response.status_code, 422)
+
+
+@override_settings(WALKABILITY_MODE="off", PRESENCE_BOOTSTRAP=False,
+                   PRESENCE_ASYNC=False, AUTH_MODE="insecure_dev",
+                   THROTTLE_ENABLED=False, READ_CACHE_ENABLED=False)
+class CardMintTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        response = self.client.post(
+            "/v1/auth/apple", data=json.dumps({"handle": "minter"}),
+            content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.token = response.json()["token"]
+        self.zone_id = stable_zone_id(_utc_day(), 37.008, -122.0)
+
+    def claim(self, seed, zone_id=None, day=None, **overrides):
+        derived = runnercards.mint(seed)
+        card = {"id": str(derived["id"]), "card_id": str(derived["card_id"]),
+                "name": derived["name"], "type": derived["type"],
+                "rarity": derived["rarity"],
+                "zone_id": str(zone_id or self.zone_id),
+                "zone_name": "North Park",
+                "minted_at": "2026-08-13T16:20:11Z", "serial": 1,
+                "seed": str(seed),
+                "stats": {"distance_m": 1609, "steps": 2100,
+                          "xp_earned": derived["xp"],
+                          "pace_s_per_km": None,
+                          "minted_during_run": False}}
+        card.update(overrides)
+        return {"card": card, "day": day or _utc_day()}
+
+    def post_card(self, payload):
+        return self.client.post(
+            "/v1/cards", data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def test_valid_mint_is_stored_and_pays_xp(self):
+        response = self.post_card(self.claim(12345))
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertFalse(payload["duplicate"])
+        self.assertEqual(payload["card"]["name"], "Towpath Otter")
+        self.assertEqual(payload["card"]["stats"]["xp_earned"], 40)
+        self.assertEqual(payload["xp"], 40)          # 40 XP, level 1
+        self.assertEqual(payload["level"], 1)
+        stored = MintedCard.objects.get()
+        self.assertEqual(stored.rarity, "uncommon")
+        self.assertFalse(stored.zone_known)          # zone never served
+        listed = self.client.get(
+            "/v1/cards", HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+        self.assertEqual(len(listed["cards"]), 1)
+        self.assertEqual(listed["cards"][0]["seed"], "12345")
+
+    def test_served_zone_marks_zone_known(self):
+        Zone.objects.create(id=self.zone_id, day=_utc_day(),
+                            name="North Park", lat=37.008, lng=-122.0,
+                            radius_m=400, ring=None)
+        self.post_card(self.claim(12345))
+        self.assertTrue(MintedCard.objects.get().zone_known)
+
+    def test_tampered_identity_is_rejected(self):
+        response = self.post_card(self.claim(12345, name="Ghost Koi"))
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "mint_mismatch")
+        self.assertEqual(MintedCard.objects.count(), 0)
+
+    def test_wrong_seed_is_rejected(self):
+        payload = self.claim(12345)
+        payload["card"]["seed"] = "54321"
+        response = self.post_card(payload)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "mint_mismatch")
+
+    def test_resubmission_is_idempotent(self):
+        first = self.post_card(self.claim(12345))
+        again = self.post_card(self.claim(12345))
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(again.status_code, 200)
+        self.assertTrue(again.json()["duplicate"])
+        self.assertEqual(again.json()["xp"], 40)     # no double award
+        self.assertEqual(MintedCard.objects.count(), 1)
+
+    def test_daily_zone_cap_holds(self):
+        for seed in (12345, 900, 7):
+            self.assertEqual(self.post_card(self.claim(seed)).status_code,
+                             201)
+        fourth = self.post_card(self.claim(31337))
+        self.assertEqual(fourth.status_code, 409)
+        self.assertEqual(fourth.json()["code"], "zone_cap")
+        # A different zone still mints.
+        other = stable_zone_id(_utc_day(), 37.02, -122.0)
+        self.assertEqual(
+            self.post_card(self.claim(31337, zone_id=other)).status_code, 201)
+
+    def test_level_up_math_matches_run_settlement(self):
+        profile = Profile.objects.get(handle="minter")
+        profile.xp = 90
+        profile.save(update_fields=["xp"])
+        response = self.post_card(self.claim(12345))    # +40 XP
+        self.assertEqual(response.json()["level"], 2)   # 130 → L2, 30 left
+        self.assertEqual(response.json()["xp"], 30)
+
+    def test_garbage_is_rejected(self):
+        # Sanity for the guards: out-of-range day, bad seed, huge stats.
+        payload = self.claim(12345)
+        payload["day"] = 1
+        self.assertEqual(self.post_card(payload).status_code, 422)
+        payload = self.claim(900)
+        payload["card"]["seed"] = str(1 << 64)
+        self.assertEqual(self.post_card(payload).status_code, 422)
+        payload = self.claim(7)
+        payload["card"]["stats"]["distance_m"] = 500_000
+        self.assertEqual(self.post_card(payload).status_code, 422)
+
+    @override_settings(AUTH_MODE="strict")
+    def test_strict_mode_requires_sign_in(self):
+        response = self.client.post(
+            "/v1/cards", data=json.dumps(self.claim(12345)),
+            content_type="application/json")
+        self.assertEqual(response.status_code, 401)

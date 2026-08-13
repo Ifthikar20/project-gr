@@ -66,6 +66,11 @@ public protocol ZoneProviding: Sendable {   // CoreModels
 
 Provider chain (injected at App root into `ZoneMintEngine`):
 
+0. **`HTTPZoneProvider`** (CoreNetworking) — `GET /v1/zones` when a base URL is
+   configured; mock mode and any failure (including the server's own 503 when ITS map
+   source is down) fall through, so the on-device providers below remain the offline
+   story. Server zones arrive with the same deterministic (day, centroid) ids the
+   client would compute — switching providers mid-day never orphans progress.
 1. **`OverpassZoneProvider`** (CoreNetworking) — one POST per refresh to the same two
    mirrors the backend uses; parks (`leisure=park|nature_reserve|garden`,
    `landuse=recreation_ground`), strict pedestrian ways (`footway|pedestrian|path`, no
@@ -85,8 +90,38 @@ State: day's zones + partial metres in UserDefaults (`gemrun.zones.v1`,
 (`StoredRunnerCard`, registered in BOTH `GemRunApp`'s Schema and `Persistence.models`).
 Runs feed the same tracker via `ActiveRunEngine.onSample`; a 10 s run-priority window in
 `ZoneMintEngine.ingest` stops Explore (observing beneath the run cover) from
-double-counting. XP is optimistic via `SessionStore.recordCardMint` until the API owns
-minting.
+double-counting. XP is optimistic via `SessionStore.recordCardMint`, then reconciles to
+the server's totals when the mint report is acknowledged.
+
+## The server side (backend/api)
+
+The API owns zones and the mint ledger now — the seam is filled, offline-first intact:
+
+- **`GET /v1/zones?lat&lng&day`** — the day's zones, server-selected. `zones.py` is a
+  draw-for-draw port of the client pipeline (OverpassZoneParser query + classification,
+  RingMath, ZoneSelector's veto/scoring/seeded pick), riding
+  `walkability.query_overpass` (same mirrors, circuit breaker, logging). Answers cache
+  per (~500 m cell, day) and persist as `Zone` rows — the ledger mint claims are
+  checked against. Unreachable map source = **503**, never an empty 200: the client
+  falls through to its own providers, exactly the ZoneProviding contract.
+- **`POST /v1/cards`** — a mint claim: the card plus its seed (decimal string; UInt64
+  breaks JSON-number precision). The server REPLAYS the seed through `runnercards.py`
+  (SplitMix64 + catalog + minter, ports of SeededRNG/RunnerCardCatalog/CardMinter) and
+  rejects any claim whose identity doesn't derive (422 `mint_mismatch`); enforces the
+  3-per-zone-per-day cap (409 `zone_cap`); is idempotent per (account, mint id); and
+  awards the face's XP with the same level-walk run settlement uses. Claims naming
+  zones the server never served stay legitimate (`zone_known=false`) — offline mints
+  are the design, the flag is for later audit.
+- **`GET /v1/cards`** — the account's cards, newest first: collection restore for
+  reinstalls and second devices (`SessionStore.syncCards` pulls on stash refresh).
+
+Determinism is the contract: `seeded.py` is a bit-exact SplitMix64/StableSeed/
+stableZoneID port (64-bit masking, round-half-away-from-zero), pinned by
+cross-language vector tests — `SeededVectorTests` in BOTH suites assert the same
+literals (streams, zone id `2e502634-6ba0-8766…`, mint replays like seed 12345 →
+Towpath Otter). Never update one side alone. Models: `Zone` (served-zone ledger,
+stable id as primary key) and `MintedCard` (unique per (profile, card_uuid) — the
+idempotency key), migration 0009.
 
 ## Dev switches
 
@@ -108,5 +143,9 @@ user-visible gain. Revisit at the paid-team migration.
 clamps), `PolygonTests` (ray-cast, bbox, shoelace), `OverpassZoneParserTests`
 (classification fixtures, query contract), `ZoneProgressTrackerTests` (the gate matrix,
 resume, overflow, caps, per-source speeds), `CardMinterTests` (odds over 100k seeded
-mints, determinism, ladder degrade), `RunnerCardCatalogTests` (coverage/UUID policy).
+mints, determinism, ladder degrade), `RunnerCardCatalogTests` (coverage/UUID policy),
+`SeededVectorTests` (the cross-language pins). `backend/api/tests.py`:
+`SeededVectorTests` (the same literals), `ZoneSelectionTests` (the selector port),
+`ZoneEndpointTests` (serve/cache/ledger, 503-not-empty), `CardMintTests` (replay
+verification, tamper rejection, cap, idempotency, level math, strict auth).
 All pure — CI job 1 runs them; no backend test changes.

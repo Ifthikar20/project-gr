@@ -1,6 +1,7 @@
-"""The 14 /v1 endpoints (docs/06, docs/11), wire-compatible with the iOS
-HTTPGemRunAPI client: snake_case JSON, ISO-8601 timestamps without fractional
-seconds, encoded polylines, fuzzed Rare+ drops, idempotent run completion.
+"""The /v1 endpoints (docs/06, docs/11, docs/21), wire-compatible with the
+iOS HTTPGemRunAPI client: snake_case JSON, ISO-8601 timestamps without
+fractional seconds, encoded polylines, fuzzed Rare+ drops, idempotent run
+completion — and the Runner Card zones + mint ledger.
 """
 import hashlib
 import json
@@ -12,16 +13,17 @@ from datetime import datetime, timedelta, timezone as tz
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Prefetch, Sum
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from . import catalog, identity, rules, system_drops, validation, walkability
+from . import (catalog, identity, rules, runnercards, system_drops,
+               validation, walkability, zone_rules, zones)
 from .geometry import RouteGeometry, polyline_decode
-from .models import (ClaimAttempt, Friendship, GemDrop, Profile, Route, Run,
-                     StashItem, Token)
+from .models import (ClaimAttempt, Friendship, GemDrop, MintedCard, Profile,
+                     Route, Run, StashItem, Token, Zone)
 from .throttle import throttle
 
 FUZZ_RADIUS_M = 150
@@ -1085,3 +1087,170 @@ def gem_catalog(request):
     else:
         payload = _catalog_payload()
     return JsonResponse(payload)
+
+
+# ------------------------------------------- Runner Card zones + mints
+
+def zone_json(z):
+    """Wire shape for one zone — snake_case keys the iOS RunnerZone decodes
+    directly (source_raw included; ring as {lat, lng} points)."""
+    return {"id": str(z["id"]), "name": z["name"],
+            "lat": z["lat"], "lng": z["lng"], "radius_m": z["radius_m"],
+            "ring": ([{"lat": p[0], "lng": p[1]} for p in z["ring"]]
+                     if z.get("ring") else None),
+            "day": z["day"], "source_raw": z["source"]}
+
+
+def card_json(c):
+    return {"id": str(c.card_uuid), "card_id": str(c.card_id),
+            "name": c.name, "type": c.card_type, "rarity": c.rarity,
+            "zone_id": str(c.zone_id), "zone_name": c.zone_name,
+            "day": c.day, "minted_at": iso(c.minted_at), "serial": c.serial,
+            "seed": c.seed,
+            "stats": {"distance_m": c.distance_m, "steps": c.steps,
+                      "xp_earned": c.xp_earned,
+                      "pace_s_per_km": c.pace_s_per_km,
+                      "minted_during_run": c.minted_during_run}}
+
+
+def _utc_day():
+    return int(datetime.now(tz.utc).timestamp() // 86_400)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@throttle("enumerate")
+def zones_view(request):
+    """GET /v1/zones — the day's Runner Card zones around a point, filling
+    the client's ZoneProviding seam. 503 (never an empty 200) when no map
+    source answered, so the client's own provider chain takes over; an
+    answered-empty area is a real [] answer."""
+    try:
+        lat = float(request.GET["lat"])
+        lng = float(request.GET["lng"])
+    except (KeyError, ValueError):
+        return problem(400, "lat and lng are required")
+    today = _utc_day()
+    try:
+        day = int(request.GET.get("day", today))
+    except ValueError:
+        return problem(400, "day must be an integer")
+    # The client's UTC day can straddle ours around midnight; anything
+    # further out is a confused clock (or tomorrow-farming).
+    if abs(day - today) > 1:
+        return problem(422, "day is out of range", code="bad_day")
+    result = zones.serve_zones(lat, lng, day)
+    if result is None:
+        return problem(503, "Zones unavailable", code="zones_unreachable",
+                       detail="No map source answered; try again shortly.")
+    return JsonResponse({"day": day,
+                         "mint_distance_m": zone_rules.MINT_DISTANCE_M,
+                         "zones": [zone_json(z) for z in result]})
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def cards_view(request):
+    """GET /v1/cards — the profile's minted Runner Cards, newest first
+    (collection restore). POST /v1/cards — report a mint; the server
+    verifies it by replaying the seed through the shared minter."""
+    profile = profile_from(request)
+    if profile is None:
+        return problem(401, "Sign in required")
+    if request.method == "GET":
+        rows = profile.cards.order_by("-minted_at", "-created_at")
+        return JsonResponse({"cards": [card_json(c) for c in rows]})
+    return _mint_card(request, profile)
+
+
+@throttle("reward")
+def _mint_card(request, profile):
+    body = body_of(request)
+    if body is None:
+        return problem(400, "Malformed JSON")
+    claim = body.get("card") or {}
+    stats = claim.get("stats") or {}
+    try:
+        card_uuid = uuid.UUID(str(claim["id"]))
+        card_id = uuid.UUID(str(claim["card_id"]))
+        zone_id = uuid.UUID(str(claim["zone_id"]))
+        name = str(claim["name"])
+        card_type = str(claim["type"])
+        rarity = str(claim["rarity"])
+        zone_name = str(claim.get("zone_name") or "Green Zone")[:80]
+        minted_at = parse_iso(str(claim["minted_at"]))
+        serial = int(claim.get("serial") or 0)
+        # UInt64 range breaks JSON-number precision in enough parsers that
+        # the seed rides as a decimal string.
+        seed = int(str(claim["seed"]))
+        day = int(body.get("day") or claim.get("day") or 0)
+        distance_m = int(stats.get("distance_m") or 0)
+        steps = int(stats.get("steps") or 0)
+        pace = stats.get("pace_s_per_km")
+        pace = int(pace) if pace is not None else None
+        during_run = bool(stats.get("minted_during_run", False))
+    except (KeyError, TypeError, ValueError):
+        return problem(400, "card.id, card_id, zone_id, name, type, rarity, "
+                            "minted_at, seed and day are required")
+    if not 0 <= seed < (1 << 64):
+        return problem(422, "seed is out of range", code="bad_seed")
+    if day <= 0 or abs(day - _utc_day()) > 2:
+        return problem(422, "day is out of range", code="bad_day")
+    if not (0 <= distance_m <= 100_000 and 0 <= steps <= 200_000):
+        return problem(422, "stats are implausible", code="bad_stats")
+
+    # Retries and multi-device races resolve to the first accepted copy —
+    # the mint UUID is seed-derived, so the same mint can't double-award.
+    existing = MintedCard.objects.filter(profile=profile,
+                                         card_uuid=card_uuid).first()
+    if existing:
+        return JsonResponse({"card": card_json(existing), "xp": profile.xp,
+                             "level": profile.level, "duplicate": True})
+
+    # The integrity check: the identity IS the seed's replay. Stats, zone
+    # and serial are stamped-on context; the card itself must derive.
+    derived = runnercards.mint(seed)
+    if (derived["id"] != card_uuid or derived["card_id"] != card_id
+            or derived["name"] != name or derived["type"] != card_type
+            or derived["rarity"] != rarity):
+        return problem(422, "Card does not replay from its seed",
+                       code="mint_mismatch",
+                       detail="The claimed identity differs from what the "
+                              "seed mints.")
+
+    try:
+        with transaction.atomic():
+            minted_today = MintedCard.objects.filter(
+                profile=profile, zone_id=zone_id, day=day).count()
+            if minted_today >= zone_rules.MAX_MINTS_PER_ZONE_PER_DAY:
+                return problem(409, "Zone minted out for the day",
+                               code="zone_cap")
+            card = MintedCard.objects.create(
+                profile=profile, card_uuid=card_uuid, card_id=card_id,
+                name=name[:60], card_type=card_type, rarity=rarity,
+                zone_id=zone_id, zone_name=zone_name, day=day,
+                minted_at=minted_at, serial=serial, seed=str(seed),
+                distance_m=distance_m, steps=steps,
+                xp_earned=derived["xp"], pace_s_per_km=pace,
+                minted_during_run=during_run,
+                zone_known=Zone.objects.filter(id=zone_id).exists())
+            profile.xp += derived["xp"]
+            while profile.xp >= rules.xp_to_advance(profile.level):
+                profile.xp -= rules.xp_to_advance(profile.level)
+                profile.level += 1
+            profile.save(update_fields=["xp", "level"])
+    except IntegrityError:
+        # Concurrent duplicate lost the unique race — serve the winner.
+        existing = MintedCard.objects.filter(profile=profile,
+                                             card_uuid=card_uuid).first()
+        if existing:
+            return JsonResponse({"card": card_json(existing),
+                                 "xp": profile.xp, "level": profile.level,
+                                 "duplicate": True})
+        raise
+    log.info("minted card %s (%s %s) for %s in zone %s day %d%s",
+             card.name, card.rarity, card.card_type, profile.handle,
+             card.zone_name, day, "" if card.zone_known else " (zone unknown)")
+    return JsonResponse({"card": card_json(card), "xp": profile.xp,
+                         "level": profile.level, "duplicate": False},
+                        status=201)

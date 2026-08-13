@@ -14,10 +14,12 @@ struct GemRunApp: App {
     // Owned here (docs/07): a run survives any navigation or view teardown.
     @State private var runEngine = ActiveRunEngine()
     // The day's zones + the mile counter + the mint (docs/21). The
-    // providers are injected here — the only layer that sees both the
-    // network (Overpass) and the map (MKLocalSearch fallback).
+    // providers are injected here — the only layer that sees the API, the
+    // network (Overpass) and the map (MKLocalSearch fallback). Order is
+    // the fallback chain: the server answers first when configured, and
+    // in mock mode HTTPZoneProvider falls through instantly.
     @State private var zoneEngine = ZoneMintEngine(providers: [
-        OverpassZoneProvider(), LocalSearchZoneProvider(),
+        HTTPZoneProvider(), OverpassZoneProvider(), LocalSearchZoneProvider(),
     ])
     private let container: ModelContainer
 

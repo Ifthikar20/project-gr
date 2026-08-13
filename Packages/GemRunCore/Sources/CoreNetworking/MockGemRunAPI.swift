@@ -18,6 +18,8 @@ public actor MockGemRunAPI: GemRunAPI {
     private var awardedKeys: Set<String> = []
     /// Verdicts by idempotency key — repeat submissions return the same result.
     private var verdicts: [String: RunVerdict] = [:]
+    /// Reported card mints (idempotency mirror of the server's ledger).
+    private var mintedCardIDs: Set<UUID> = []
     private var userTimes: [UUID: [(timeS: Int, date: Date)]] = [:]
     private var competitorTimes: [UUID: [(handle: String, level: Int, timeS: Int)]] = [:]
 
@@ -367,6 +369,37 @@ public actor MockGemRunAPI: GemRunAPI {
             let dx = (s.lng - lng) * klng
             return (dx * dx + dy * dy).squareRoot() <= CollectionRules.dropCollectRadiusM
         }
+    }
+
+    // MARK: - Runner Cards
+
+    /// The mock has no map source of its own — HTTPZoneProvider never asks
+    /// it (mock mode falls through to the on-device providers), so this
+    /// exists for protocol conformance and honest logging only.
+    public func zones(lat: Double, lng: Double, day: Int) async throws -> ZonesPage {
+        await call("GET /v1/zones?lat=\(lat)&lng=\(lng)&day=\(day)")
+        return ZonesPage(zones: [], mintDistanceM: ZoneRules.mintDistanceM)
+    }
+
+    public func reportCardMint(_ request: CardMintRequest) async throws -> CardMintAck {
+        await call("POST /v1/cards  (\(request.card.name), seed \(request.card.seed))")
+        let duplicate = mintedCardIDs.contains(request.card.id)
+        if !duplicate {
+            mintedCardIDs.insert(request.card.id)
+            profile.xp += request.card.stats.xpEarned
+            while profile.xp >= XPRules.xpToAdvance(from: profile.level) {
+                profile.xp -= XPRules.xpToAdvance(from: profile.level)
+                profile.level += 1
+            }
+        }
+        return CardMintAck(xp: profile.xp, level: profile.level,
+                           duplicate: duplicate)
+    }
+
+    public func mintedCards() async throws -> [RunnerCard] {
+        await call("GET /v1/cards")
+        // The device's own SwiftData rows are the collection in mock mode.
+        return []
     }
 
     /// "Someone else loaded the app and left gems near you": three drops from

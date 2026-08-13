@@ -23,4 +23,7 @@ urlpatterns = [
     # Standalone drops: stash gems given away on the open map.
     path("drops", views.drops),
     path("drops/collect", views.collect_drops),
+    # Runner Cards (docs/21): the day's zones, and the mint ledger.
+    path("zones", views.zones_view),
+    path("cards", views.cards_view),
 ]

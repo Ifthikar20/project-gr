@@ -294,4 +294,79 @@ public protocol GemRunAPI: Sendable {
     func dropGem(gemID: UUID, lat: Double, lng: Double) async throws -> GemDrop
     /// Claim standalone drops passed during a free run; server checks the track.
     func collectDrops(claimed: [UUID], track: [TrackSample]) async throws -> DropCollectResult
+
+    // Runner Cards — GET /v1/zones, GET/POST /v1/cards (docs/21)
+    /// The day's zones around a point, server-selected — the API filling
+    /// the ZoneProviding seam. Throws when the server can't answer (503:
+    /// its map source was unreachable), so the client's own providers take
+    /// over; an empty page is a real answer.
+    func zones(lat: Double, lng: Double, day: Int) async throws -> ZonesPage
+    /// Report a locally minted card. The server verifies by replaying the
+    /// seed through the shared minter, enforces the per-zone daily cap,
+    /// and awards the XP authoritatively. Idempotent per (account, mint).
+    func reportCardMint(_ request: CardMintRequest) async throws -> CardMintAck
+    /// Every card this account has minted, newest first — collection
+    /// restore for reinstalls and second devices.
+    func mintedCards() async throws -> [RunnerCard]
+}
+
+// MARK: - Runner Card wire types
+
+/// GET /v1/zones answer: the zones plus the server's mint rule (display
+/// uses the local rule; the field exists so a future server-side change
+/// can't silently disagree).
+public struct ZonesPage: Sendable {
+    public let zones: [RunnerZone]
+    public let mintDistanceM: Double
+
+    public init(zones: [RunnerZone], mintDistanceM: Double) {
+        self.zones = zones
+        self.mintDistanceM = mintDistanceM
+    }
+}
+
+/// POST /v1/cards body: the minted card plus the seed that replays it.
+/// The seed rides as a decimal string — UInt64 range breaks JSON-number
+/// precision in enough parsers that a string is the honest encoding.
+public struct CardMintRequest: Encodable, Sendable {
+    public struct Card: Encodable, Sendable {
+        let id: UUID
+        let cardId: UUID
+        let name: String
+        let type: String
+        let rarity: String
+        let zoneId: UUID
+        let zoneName: String
+        let mintedAt: Date
+        let serial: Int
+        let seed: String
+        let stats: MintStats
+    }
+
+    public let card: Card
+    public let day: Int
+
+    public init(card: RunnerCard, seed: UInt64, day: Int) {
+        self.card = Card(id: card.id, cardId: card.cardID, name: card.name,
+                         type: card.type.rawValue, rarity: card.rarity.rawValue,
+                         zoneId: card.zoneID, zoneName: card.zoneName,
+                         mintedAt: card.mintedAt, serial: card.serial,
+                         seed: String(seed), stats: card.stats)
+        self.day = day
+    }
+}
+
+/// POST /v1/cards answer: the account's authoritative XP/level after the
+/// award, and whether this mint had already been recorded (retry, second
+/// device) — duplicates never double-award.
+public struct CardMintAck: Sendable {
+    public let xp: Int
+    public let level: Int
+    public let duplicate: Bool
+
+    public init(xp: Int, level: Int, duplicate: Bool) {
+        self.xp = xp
+        self.level = level
+        self.duplicate = duplicate
+    }
 }

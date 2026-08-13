@@ -9,13 +9,13 @@
 Open the app and you're on the map, with the day's zones glowing around you: big circles anchored on public parks and walkable trails, picked fresh daily, never on private or government land. Cover a mile inside one — browsing the map or mid-run — and a Runner Card mints with a tiny top-left ceremony: a TCG-style card carrying your distance, steps and XP, holding one of five collectible kinds (Gem, Gear, Creature, Artifact, Fact) across five rarities at published odds. Your collection keeps every card forever. You're not just logging miles: there's always a card out there to go earn.
 
 **The core loop:**
-1. **Open the map** — 2–4 large walkable zones resolve around you (OpenStreetMap-anchored, client-side for now, `ZoneProviding` is the server seam)
+1. **Open the map** — 2–4 large walkable zones resolve around you: the API serves them first (`GET /v1/zones`), with on-device OpenStreetMap selection as the offline fallback — both sides derive identical zone ids
 2. **Walk the mile** — accuracy-, pace- and teleport-gated metres inside the zone; map-open or in-run both count
-3. **Mint the card** — rarity roll at the published odds (1 in 900 legendary), the walk's stats stamped on, into your collection
+3. **Mint the card** — rarity roll at the published odds (1 in 900 legendary), the walk's stats stamped on, into your collection; the server verifies every mint by replaying its seed (`POST /v1/cards`) and keeps the account's ledger for restores
 4. **Collect the kinds** — gems, gear, creatures, artifacts, facts; 500-print runs, serials and all
 5. **Compete** — leaderboards, streaks, XP and levels carry on
 
-The pivot is documented in `docs/21-runnercard-pivot.md`. The gem mechanics below remain accurate for the legacy mode behind the `runner_cards` feature flag (default ON; switching it OFF in Settings › Features restores the gem map) and for the backend, which is untouched this round.
+The pivot is documented in `docs/21-runnercard-pivot.md`. The gem mechanics below remain accurate for the legacy mode behind the `runner_cards` feature flag (default ON; switching it OFF in Settings › Features restores the gem map) and for the backend's gem endpoints, which live on unchanged beside the new Runner Card API (`GET /v1/zones`, `GET/POST /v1/cards` — server-selected zones and a seed-verified mint ledger).
 
 ## Feature tour
 

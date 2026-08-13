@@ -179,11 +179,15 @@ public final class ZoneMintEngine {
             ^ entropy.next()
         let card = CardMinter.mint(seed: seed, zone: zone, at: Date(),
                                    serial: mintedBefore + 1, stats: stats)
+        let stored = StoredRunnerCard(from: card, seed: seed)
         if let context {
-            context.insert(StoredRunnerCard(from: card))
+            context.insert(stored)
             GemLog.attempt(GemLog.persist, "save minted card") { try context.save() }
         }
         session?.recordCardMint(xp: card.stats.xpEarned)
+        // Fire-and-forget: the card is already yours locally; the server's
+        // ledger catches up now or on the next collection refresh.
+        session?.syncMintedCard(stored)
         mintedTodayCount += 1
         lastMint = card
         GemLog.session.info("minted \(card.name, privacy: .public) (\(card.rarity.rawValue, privacy: .public) \(card.type.rawValue, privacy: .public)) in \(zone.name, privacy: .public)")

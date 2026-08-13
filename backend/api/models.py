@@ -135,6 +135,71 @@ class ClaimAttempt(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class Zone(models.Model):
+    """One served Runner Card zone (docs/21). The id is the deterministic
+    (day, centroid) UUID both sides compute — the primary key IS the
+    contract. Rows are an append-only ledger of what GET /v1/zones actually
+    served, so mint claims can be checked against zones that existed; the
+    read path itself is cache-only."""
+    id = models.UUIDField(primary_key=True)
+    day = models.IntegerField()
+    name = models.CharField(max_length=80)
+    lat = models.FloatField()
+    lng = models.FloatField()
+    radius_m = models.FloatField()
+    # The zone's boundary as [[lat, lng], ...], null for circle zones.
+    ring = models.JSONField(null=True, blank=True)
+    source = models.CharField(max_length=16, default="server")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["day", "lat", "lng"],
+                                name="zone_day_lat_lng")]
+
+
+class MintedCard(models.Model):
+    """One minted Runner Card, reported by the client and verified by
+    replaying its seed through the shared minter (docs/21). card_uuid is the
+    seed-derived mint id — unique per profile, which is what makes
+    POST /v1/cards idempotent on retries."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE,
+                                related_name="cards")
+    card_uuid = models.UUIDField()
+    card_id = models.UUIDField()
+    name = models.CharField(max_length=60)
+    card_type = models.CharField(max_length=12)
+    rarity = models.CharField(max_length=12)
+    zone_id = models.UUIDField()
+    zone_name = models.CharField(max_length=80)
+    # The client's UTC day number for the mint — the unit the per-zone
+    # daily cap counts in.
+    day = models.IntegerField()
+    minted_at = models.DateTimeField()
+    serial = models.IntegerField(default=0)
+    # The mint seed as a decimal string: UInt64 range breaks JSON-number
+    # precision in enough parsers that it rides the wire as a string too.
+    seed = models.CharField(max_length=24)
+    distance_m = models.IntegerField(default=0)
+    steps = models.IntegerField(default=0)
+    xp_earned = models.IntegerField(default=0)
+    pace_s_per_km = models.IntegerField(null=True, blank=True)
+    minted_during_run = models.BooleanField(default=False)
+    # Whether the claimed zone was one this server actually served that day
+    # — false for mints made against the client's own Overpass zones, which
+    # stay legitimate (offline-first) but are marked for later audit.
+    zone_known = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["profile", "card_uuid"],
+                                    name="uniq_profile_card"),
+        ]
+        indexes = [models.Index(fields=["profile", "zone_id", "day"],
+                                name="card_profile_zone_day")]
+
+
 class StashItem(models.Model):
     """One owned gem. The stash IS the whole gem economy — there is no
     separate wallet: gems arrive by collecting drops on runs (source="run")
