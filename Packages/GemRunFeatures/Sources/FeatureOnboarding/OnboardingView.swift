@@ -5,23 +5,15 @@ import DesignSystem
 import SwiftUI
 
 /// Value prop → location priming → sign-in, under 60 seconds (docs/03 §1),
-/// Daybreak Pulse: snow background, ink display type, pulse CTAs. The final
-/// page is the full-bleed SignInView; all provider handling lives in
-/// CoreAuth's AuthService (docs/18, the docs/10 real-auth landing zone).
+/// Paper & Volt: the floating-photos hero first, then three explainer
+/// pages that move — pastel scene panels with living emoji, parallax on
+/// the swipe — then priming and the full-bleed SignInView. All provider
+/// handling lives in CoreAuth's AuthService (docs/18).
 @MainActor
 public struct OnboardingView: View {
     @State private var page = 0
 
     public init() {}
-
-    private static let pages: [(icon: String, title: String, text: String)] = [
-        ("map.fill", "Zones appear around you",
-         "Every day, a few large zones land on parks and trails near you — real public ground with plenty of paths to walk. Never private land."),
-        ("figure.walk", "Walk the kilometre",
-         "Cover 1 km inside a zone — on the map or mid-run — and a Runner Card mints on the spot. Your phone buzzes; you never break stride."),
-        ("rectangle.portrait.on.rectangle.portrait.fill", "Collect the cards",
-         "Gems, gear, creatures, artifacts, facts — five kinds, five rarities, every card stamped with the walk that earned it."),
-    ]
 
     public var body: some View {
         ZStack {
@@ -32,37 +24,18 @@ public struct OnboardingView: View {
             // extending the TabView itself is what lets the sign-in photo
             // run truly full-bleed under the page dots.
             TabView(selection: $page) {
-                // The landing moment: wordmark centered, runner photos
-                // expanding out around it — before any explaining happens.
+                // The landing moment: wordmark centered, runner photos and
+                // cards expanding out around it — before any explaining.
                 WelcomeHeroView().tag(0)
-                ForEach(0..<Self.pages.count, id: \.self) { i in
-                    pageView(Self.pages[i]).tag(i + 1)
-                }
-                locationPriming.tag(Self.pages.count + 1)
-                SignInView().tag(Self.pages.count + 2)
+                ExplainerPage.zones.tag(1)
+                ExplainerPage.mile.tag(2)
+                ExplainerPage.cards.tag(3)
+                locationPriming.tag(4)
+                SignInView().tag(5)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .ignoresSafeArea()
-        }
-    }
-
-    private func pageView(_ p: (icon: String, title: String, text: String)) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: p.icon)
-                .font(.system(size: 64))
-                .foregroundStyle(DS.Colors.pulse)
-            Text(p.title)
-                .font(DS.Typography.display(28))
-                .foregroundStyle(DS.Colors.ink)
-            Text(p.text)
-                .font(.body)
-                .foregroundStyle(DS.Colors.inkSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 36)
-            Button("Next") { withAnimation { page += 1 } }
-                .font(DS.Typography.heading)
-                .foregroundStyle(DS.Colors.pulse)
         }
     }
 
@@ -89,5 +62,209 @@ public struct OnboardingView: View {
                 .foregroundStyle(DS.Colors.inkSecondary)
         }
     }
+}
 
+/// One explainer page: an animated scene panel over a pastel wash, then
+/// the words. The panel drifts at a different rate than the text while
+/// you swipe (parallax), and the emoji inside keep living on their own
+/// loops — no more blank pages.
+@MainActor
+struct ExplainerPage: View {
+    let icon: String
+    let title: String
+    let text: String
+    let wash: Color
+    let scene: AnyView
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { geo in
+            // In a paged TabView each page spans the screen; minX runs
+            // 0 → ±width during the swipe. Different offset factors per
+            // layer = the parallax.
+            let minX = geo.frame(in: .global).minX
+            VStack(spacing: 26) {
+                Spacer()
+                ZStack {
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .fill(wash)
+                        .overlay(RoundedRectangle(cornerRadius: 30,
+                                                  style: .continuous)
+                            .stroke(DS.Colors.hairline, lineWidth: 1))
+                        .shadow(color: DS.Colors.ink.opacity(0.08),
+                                radius: 15, y: 8)
+                    scene
+                }
+                .frame(width: min(geo.size.width - 72, 340), height: 210)
+                .offset(x: minX * 0.35)
+                VStack(spacing: 12) {
+                    Label(title, systemImage: icon)
+                        .font(DS.Typography.display(26))
+                        .foregroundStyle(DS.Colors.ink)
+                        .labelStyle(.titleOnly)
+                    Text(text)
+                        .font(.body)
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 36)
+                }
+                .offset(x: minX * 0.12)
+                Spacer()
+                Spacer()
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .opacity(1 - min(abs(minX) / max(geo.size.width, 1), 1) * 0.5)
+        }
+    }
+
+    // MARK: - The three pages
+
+    static var zones: ExplainerPage {
+        ExplainerPage(
+            icon: "map.fill",
+            title: "Zones appear around you",
+            text: "Every day, a few large zones land on parks and trails near you — real public ground with plenty of paths to walk. Never private land.",
+            wash: CardPalette.wash(.creature),
+            scene: AnyView(ZoneScene()))
+    }
+
+    static var mile: ExplainerPage {
+        ExplainerPage(
+            icon: "figure.walk",
+            title: "Walk the mile",
+            text: "Cover a mile inside a zone — on the map or mid-run — and a Runner Card mints on the spot. Your phone buzzes; you never break stride.",
+            wash: CardPalette.wash(.gear),
+            scene: AnyView(MileScene()))
+    }
+
+    static var cards: ExplainerPage {
+        ExplainerPage(
+            icon: "rectangle.portrait.on.rectangle.portrait.fill",
+            title: "Collect the cards",
+            text: "Gems, gear, creatures, artifacts, facts — five kinds, five rarities, every card stamped with the walk that earned it.",
+            wash: CardPalette.wash(.artifact),
+            scene: AnyView(CardScene()))
+    }
+}
+
+// MARK: - The living scenes
+
+/// A volt zone breathing on a tiny park: the ring pulses, the trees sway.
+private struct ZoneScene: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var breathe = false
+    @State private var sway = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(DS.Colors.map.opacity(0.55), lineWidth: 3)
+                .background(Circle().fill(DS.Colors.map.opacity(0.12)))
+                .frame(width: 150, height: 150)
+                .scaleEffect(breathe ? 1.06 : 0.94)
+            Text("🌳")
+                .font(.system(size: 46))
+                .rotationEffect(.degrees(sway ? 4 : -4), anchor: .bottom)
+                .offset(x: -34, y: -6)
+            Text("🌲")
+                .font(.system(size: 38))
+                .rotationEffect(.degrees(sway ? -5 : 5), anchor: .bottom)
+                .offset(x: 30, y: -22)
+            Text("🦆")
+                .font(.system(size: 26))
+                .offset(x: 26, y: 40)
+                .offset(y: breathe ? -3 : 3)
+            Text("📍")
+                .font(.system(size: 28))
+                .offset(y: breathe ? -66 : -60)
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 2.4)
+                .repeatForever(autoreverses: true)) { breathe = true }
+            withAnimation(.easeInOut(duration: 1.8)
+                .repeatForever(autoreverses: true)) { sway = true }
+        }
+    }
+}
+
+/// The runner paces the panel, dust puffing behind, the progress bar
+/// filling toward the mile.
+private struct MileScene: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var run = false
+    @State private var puff = false
+
+    var body: some View {
+        VStack(spacing: 22) {
+            ZStack {
+                Text("💨")
+                    .font(.system(size: 26))
+                    .offset(x: run ? 46 : -114, y: 4)
+                    .opacity(puff ? 0.1 : 0.7)
+                Text("🏃‍♂️")
+                    .font(.system(size: 52))
+                    .scaleEffect(x: 1)
+                    .offset(x: run ? 84 : -84)
+            }
+            .frame(height: 70)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DS.Colors.ink.opacity(0.08))
+                    .frame(width: 190, height: 10)
+                Capsule()
+                    .fill(DS.Colors.map)
+                    .frame(width: run ? 190 : 16, height: 10)
+                Text("1 mile")
+                    .font(.caption2.bold())
+                    .foregroundStyle(DS.Colors.inkSecondary)
+                    .offset(y: 16)
+            }
+            .frame(width: 190, height: 26)
+        }
+        .onAppear {
+            guard !reduceMotion else {
+                run = true
+                return
+            }
+            withAnimation(.easeInOut(duration: 3.2)
+                .repeatForever(autoreverses: true)) { run = true }
+            withAnimation(.easeInOut(duration: 1.1)
+                .repeatForever(autoreverses: true)) { puff = true }
+        }
+    }
+}
+
+/// The finds fan out and bob: a card back tilting between living emoji.
+private struct CardScene: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var bob = false
+    @State private var tilt = false
+
+    var body: some View {
+        ZStack {
+            MiniCardBack(rarity: .legendary, size: 74)
+                .rotationEffect(.degrees(tilt ? 6 : -6))
+            Text("💎")
+                .font(.system(size: 34))
+                .offset(x: -78, y: bob ? -26 : -18)
+            Text("🦊")
+                .font(.system(size: 34))
+                .offset(x: 80, y: bob ? -10 : -20)
+            Text("👟")
+                .font(.system(size: 30))
+                .offset(x: -66, y: bob ? 42 : 50)
+            Text("⚡️")
+                .font(.system(size: 28))
+                .offset(x: 72, y: bob ? 48 : 40)
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 2.2)
+                .repeatForever(autoreverses: true)) { bob = true }
+            withAnimation(.easeInOut(duration: 2.8)
+                .repeatForever(autoreverses: true)) { tilt = true }
+        }
+    }
 }

@@ -1,26 +1,39 @@
+import CoreModels
 import DesignSystem
 import SwiftUI
 
+/// What a hero slot holds: a runner photo, or a Runner Card back tilted
+/// the way the landing page fans its cards.
+private enum HeroFace {
+    case photo(String)
+    case card(Rarity, tilt: Double)
+}
+
 /// The app's landing moment (docs/03 §1): the RunnerCard wordmark centered
-/// on paper while real runner photos float scattered around it — springing
-/// outward from the center as the screen arrives, then drifting gently.
-/// The Mobbin-hero grammar (many tiles orbiting bold centered type), worn
-/// in Paper & Volt with photos instead of icons.
+/// on paper while runner photos and card backs float packed close around
+/// it — springing outward from the center as the screen arrives, then
+/// drifting gently. The Mobbin-hero grammar (many tiles orbiting bold
+/// centered type), worn in Paper & Volt with photos and cards instead of
+/// icons.
 struct WelcomeHeroView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Hand-tuned slots in unit space, ringing the center the way the
-    /// reference scatters its icons: corners and edges busy, middle clear.
-    private static let tiles: [(name: String, x: CGFloat, y: CGFloat, size: CGFloat)] = [
-        ("run-1", 0.17, 0.10, 92),
-        ("run-2", 0.56, 0.05, 70),
-        ("run-3", 0.88, 0.13, 84),
-        ("run-4", 0.08, 0.34, 66),
-        ("run-5", 0.93, 0.37, 96),
-        ("run-6", 0.10, 0.74, 88),
-        ("run-7", 0.88, 0.72, 76),
-        ("run-8", 0.28, 0.90, 78),
-        ("run-9", 0.70, 0.91, 94),
+    /// Hand-tuned slots in unit space, ringing the center tightly — photos
+    /// and cards packed close together, only the middle held clear for the
+    /// wordmark.
+    private static let tiles: [(face: HeroFace, x: CGFloat, y: CGFloat, size: CGFloat)] = [
+        (.photo("run-1"), 0.20, 0.12, 86),
+        (.card(.legendary, tilt: -8), 0.48, 0.07, 54),
+        (.photo("run-2"), 0.76, 0.11, 72),
+        (.photo("run-3"), 0.10, 0.29, 68),
+        (.photo("run-5"), 0.90, 0.31, 88),
+        (.card(.epic, tilt: 7), 0.10, 0.52, 50),
+        (.photo("run-4"), 0.90, 0.54, 64),
+        (.photo("run-6"), 0.17, 0.72, 82),
+        (.card(.rare, tilt: -6), 0.84, 0.73, 54),
+        (.photo("run-8"), 0.32, 0.87, 76),
+        (.photo("run-7"), 0.51, 0.82, 62),
+        (.photo("run-9"), 0.68, 0.89, 86),
     ]
 
     var body: some View {
@@ -29,8 +42,8 @@ struct WelcomeHeroView: View {
             ZStack {
                 DS.Colors.snow.ignoresSafeArea()
                 ForEach(Array(Self.tiles.enumerated()), id: \.offset) { index, tile in
-                    FloatingPhotoTile(
-                        name: tile.name,
+                    FloatingTile(
+                        face: tile.face,
                         size: tile.size,
                         slot: CGPoint(x: geo.size.width * tile.x,
                                       y: geo.size.height * tile.y),
@@ -75,13 +88,13 @@ struct WelcomeHeroView: View {
     }
 }
 
-/// One floating photo: the site's card recipe at tile scale (continuous
-/// corners, hairline, soft shadow). Owns its own choreography — expand
-/// from the center on a staggered spring, then bob forever, slightly out
-/// of phase with its neighbors. Reduced motion renders it seated and
-/// still.
-private struct FloatingPhotoTile: View {
-    let name: String
+/// One floating tile: a photo in the site's card recipe (continuous
+/// corners, hairline, soft shadow) or a MiniCardBack at its slot's tilt.
+/// Owns its own choreography — expand from the center on a staggered
+/// spring, then bob forever, slightly out of phase with its neighbors.
+/// Reduced motion renders it seated and still.
+private struct FloatingTile: View {
+    let face: HeroFace
     let size: CGFloat
     let slot: CGPoint
     let center: CGPoint
@@ -93,16 +106,7 @@ private struct FloatingPhotoTile: View {
     @State private var bobbing = false
 
     var body: some View {
-        Image(name)
-            .resizable()
-            .scaledToFill()
-            .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: size * 0.24,
-                                        style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: size * 0.24,
-                                      style: .continuous)
-                .stroke(DS.Colors.hairline, lineWidth: 1))
-            .shadow(color: DS.Colors.ink.opacity(0.12), radius: 10, y: 5)
+        faceView
             .scaleEffect(placed ? 1 : 0.45)
             .opacity(placed ? 1 : 0)
             .position(placed ? slot : center)
@@ -122,5 +126,25 @@ private struct FloatingPhotoTile: View {
                     bobbing = true
                 }
             }
+    }
+
+    @ViewBuilder
+    private var faceView: some View {
+        switch face {
+        case .photo(let name):
+            Image(name)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.24,
+                                            style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: size * 0.24,
+                                          style: .continuous)
+                    .stroke(DS.Colors.hairline, lineWidth: 1))
+                .shadow(color: DS.Colors.ink.opacity(0.12), radius: 10, y: 5)
+        case .card(let rarity, let tilt):
+            MiniCardBack(rarity: rarity, size: size)
+                .rotationEffect(.degrees(tilt))
+        }
     }
 }
