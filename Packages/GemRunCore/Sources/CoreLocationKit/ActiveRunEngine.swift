@@ -26,6 +26,10 @@ public final class ActiveRunEngine {
     public private(set) var collectedEvents: [CollectionEngine.Event] = []
     /// UI hook: fired on each collection for haptics/animation.
     public var onCollect: ((CollectionEngine.Event) -> Void)?
+    /// Fired for every ACCEPTED sample while running — the zone-mint
+    /// pipeline listens here so runs feed zone progress. Auto-pause gates
+    /// it naturally: paused samples never reach this.
+    public var onSample: ((TrackSample) -> Void)?
 
     /// Steps taken this run, live from CMPedometer — the same motion pipeline
     /// that feeds Apple Health. 0 when Motion & Fitness is declined.
@@ -269,6 +273,7 @@ public final class ActiveRunEngine {
         lastSample = sample
         track.append(sample)
         traveledPath.append(sample.coordinate)
+        onSample?(sample)
         if !isFreeRun {
             RunBuffer.append(sample)
         }
