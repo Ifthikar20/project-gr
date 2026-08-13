@@ -11,6 +11,7 @@ public enum Feature: String, CaseIterable, Identifiable, Sendable {
     case gemGifting = "gem_gifting"
     case friendsBoard = "friends_board"
     case shareCard = "share_card"
+    case runnerCards = "runner_cards"
 
     public var id: String { rawValue }
 
@@ -22,6 +23,7 @@ public enum Feature: String, CaseIterable, Identifiable, Sendable {
         case .gemGifting: "Gem gifting"
         case .friendsBoard: "Friends board"
         case .shareCard: "Share card"
+        case .runnerCards: "Runner Cards"
         }
     }
 
@@ -33,6 +35,7 @@ public enum Feature: String, CaseIterable, Identifiable, Sendable {
         case .gemGifting: "Placing gems from your stash on the map for others."
         case .friendsBoard: "The Friends board and player search under Compete."
         case .shareCard: "The shareable run-card image on the run summary."
+        case .runnerCards: "The day's zones on Explore and card minting. Off restores the classic gem map."
         }
     }
 }
