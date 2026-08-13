@@ -32,10 +32,11 @@ the legacy mode behind the flag.
    and the walk's stats stamped on (`MintStats`: metres, steps, pace when run-sourced, XP
    from the face). Ceremony: burst + card-back flight to the top-left binder chip + "+1"
    — the gem choreography, transplanted (`MintCeremonyOverlay`).
-5. **The binder** (Stash tab, renamed): minted cards as a wall of minis, tap for the full
-   nine-part card (stage, name+XP, art, rarity band, three stat tiles, ability,
+5. **The Collection** (Stash tab, renamed): minted cards as a wall of minis, tap for the
+   full nine-part card (stage, name+XP, art, rarity band, three stat tiles, ability,
    found-most, flavor, serialed footer — the landing page anatomy, one `edge` color per
-   rarity driving every accent). Gem tier sets continue below.
+   rarity driving every accent). Gem tier sets continue below; "binder" survives only
+   as flavor, matching the landing page's binder wall.
 
 ## Catalog policy
 

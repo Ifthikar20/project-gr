@@ -292,7 +292,7 @@ public struct MintRevealView: View {
                                           perspective: 0.3)
                 }
             }
-            Text("Walked into your binder — yours forever.")
+            Text("Walked into your collection — yours forever.")
                 .font(.footnote)
                 .foregroundStyle(DS.Colors.inkSecondary)
                 .opacity(revealed ? 1 : 0)

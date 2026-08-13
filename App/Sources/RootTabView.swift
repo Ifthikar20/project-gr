@@ -63,7 +63,7 @@ struct RootView: View {
             ExploreRootView()
                 .tabItem { Label("Explore", systemImage: "map.fill") }
             StashRootView()
-                .tabItem { Label("Binder", systemImage:
+                .tabItem { Label("Collection", systemImage:
                     "rectangle.portrait.on.rectangle.portrait.fill") }
             CompeteRootView()
                 .tabItem { Label("Compete", systemImage: "trophy.fill") }

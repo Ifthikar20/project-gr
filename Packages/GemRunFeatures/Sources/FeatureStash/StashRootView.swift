@@ -5,9 +5,9 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// The Binder (docs/03 §9): minted Runner Cards up top — the wall of minis
-/// the landing page promises — and the gem sets living on below, Airbnb
-/// wishlist-grid style: white tiles on snow, grouped by rarity tier
+/// The Collection (docs/03 §9): minted Runner Cards up top — the wall of
+/// minis the landing page promises — and the gem sets living on below,
+/// Airbnb wishlist-grid style: white tiles on snow, grouped by rarity tier
 /// (Common → Legendary); ink-tint silhouettes for the missing.
 @MainActor
 public struct StashRootView: View {
@@ -53,7 +53,7 @@ public struct StashRootView: View {
             }
             .refreshable { await session.refreshStash() }
             .background(DS.Colors.snow)
-            .navigationTitle("Binder")
+            .navigationTitle("Collection")
             .task { await session.refreshStash() }
             .sheet(item: $detail) { item in
                 GemDetailSheet(item: item)

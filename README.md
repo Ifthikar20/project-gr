@@ -6,12 +6,12 @@
 
 ## What it is
 
-Open the app and you're on the map, with the day's zones glowing around you: big circles anchored on public parks and walkable trails, picked fresh daily, never on private or government land. Cover a kilometre inside one — browsing the map or mid-run — and a Runner Card mints with a tiny top-left ceremony: a TCG-style card carrying your distance, steps and XP, holding one of five collectible kinds (Gem, Gear, Creature, Artifact, Fact) across five rarities at published odds. The binder keeps every card forever. You're not just logging miles: there's always a card out there to go earn.
+Open the app and you're on the map, with the day's zones glowing around you: big circles anchored on public parks and walkable trails, picked fresh daily, never on private or government land. Cover a kilometre inside one — browsing the map or mid-run — and a Runner Card mints with a tiny top-left ceremony: a TCG-style card carrying your distance, steps and XP, holding one of five collectible kinds (Gem, Gear, Creature, Artifact, Fact) across five rarities at published odds. Your collection keeps every card forever. You're not just logging miles: there's always a card out there to go earn.
 
 **The core loop:**
 1. **Open the map** — 2–4 large walkable zones resolve around you (OpenStreetMap-anchored, client-side for now, `ZoneProviding` is the server seam)
 2. **Walk the kilometre** — accuracy-, pace- and teleport-gated metres inside the zone; map-open or in-run both count
-3. **Mint the card** — rarity roll at the published odds (1 in 900 legendary), the walk's stats stamped on, into the binder
+3. **Mint the card** — rarity roll at the published odds (1 in 900 legendary), the walk's stats stamped on, into your collection
 4. **Collect the kinds** — gems, gear, creatures, artifacts, facts; 500-print runs, serials and all
 5. **Compete** — leaderboards, streaks, XP and levels carry on
 

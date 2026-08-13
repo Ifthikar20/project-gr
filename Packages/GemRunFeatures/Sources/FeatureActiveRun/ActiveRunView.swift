@@ -299,7 +299,7 @@ public struct ActiveRunView: View {
         guard UIApplication.shared.applicationState != .active else { return }
         let content = UNMutableNotificationContent()
         content.title = "Card minted!"
-        content.body = "\(card.name) — \(card.rarity.rawValue.capitalized) \(card.type.displayName) from \(card.zoneName). It's in your binder."
+        content.body = "\(card.name) — \(card.rarity.rawValue.capitalized) \(card.type.displayName) from \(card.zoneName). It's in your collection."
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "card-mint-\(card.id.uuidString)",
