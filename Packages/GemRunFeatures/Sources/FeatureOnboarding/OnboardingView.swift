@@ -15,12 +15,12 @@ public struct OnboardingView: View {
     public init() {}
 
     private static let pages: [(icon: String, title: String, text: String)] = [
-        ("map.fill", "Routes are treasure maps",
-         "Every route near you has gems hidden along it — some in plain sight, some you'll have to find."),
-        ("figure.run", "Run to collect",
-         "Pass within 100 feet of a gem and it's yours. Your phone buzzes; you never break stride."),
-        ("diamond.fill", "Leave something behind",
-         "Draw your own routes and place gems for the next runner. Rare ones belong on the hard hills."),
+        ("map.fill", "Zones appear around you",
+         "Every day, a few large zones land on parks and trails near you — real public ground with plenty of paths to walk. Never private land."),
+        ("figure.walk", "Walk the kilometre",
+         "Cover 1 km inside a zone — on the map or mid-run — and a Runner Card mints on the spot. Your phone buzzes; you never break stride."),
+        ("rectangle.portrait.on.rectangle.portrait.fill", "Collect the cards",
+         "Gems, gear, creatures, artifacts, facts — five kinds, five rarities, every card stamped with the walk that earned it."),
     ]
 
     public var body: some View {
