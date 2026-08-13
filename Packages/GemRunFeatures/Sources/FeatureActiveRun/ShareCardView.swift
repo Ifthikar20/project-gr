@@ -19,7 +19,7 @@ struct ShareCardView: View {
         VStack(spacing: 14) {
             HStack {
                 HStack(spacing: 6) {
-                    Image(systemName: "diamond.fill")
+                    Image(systemName: "bolt.fill")
                         .foregroundStyle(DS.Colors.pulse)
                     Text("RUNNERCARD")
                         .font(DS.Typography.display(20))

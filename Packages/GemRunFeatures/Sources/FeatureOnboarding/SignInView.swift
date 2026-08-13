@@ -49,9 +49,10 @@ struct SignInView: View {
             Spacer()
 
             VStack(spacing: 8) {
-                Image(systemName: "diamond.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(DS.Colors.pulse)
+                Image("BrandMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 84, height: 84)
                     .shadow(color: DS.Colors.ink.opacity(0.4), radius: 8, y: 2)
                 Text("RunnerCard")
                     .font(DS.Typography.display(38))

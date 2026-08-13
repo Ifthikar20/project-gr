@@ -50,7 +50,7 @@ struct GemRunApp: App {
                 .environment(runEngine)
                 .environment(zoneEngine)
                 .modelContainer(container)
-                .preferredColorScheme(.light)   // "Daybreak Pulse" is a light system
+                .preferredColorScheme(.light)   // Paper & Volt is a light system
                 .task {
                     session.attach(context: container.mainContext)
                     zoneEngine.attach(context: container.mainContext,
