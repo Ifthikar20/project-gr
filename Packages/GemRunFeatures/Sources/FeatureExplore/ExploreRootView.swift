@@ -71,8 +71,19 @@ public struct ExploreRootView: View {
     @State private var isStockingArea = false
     @State private var stockingRefetches = 0
     @State private var stockingRefetchPending = false
+    // Runner Cards mode (the runner_cards flag): the day's zones replace
+    // gem drops on this map, and walking inside one mints.
+    @Environment(ZoneMintEngine.self) private var zoneEngine
+    /// Zone whose sheet is open (tapped chip or circle).
+    @State private var selectedZone: RunnerZone?
+    /// Fresh mint being celebrated (top-left ceremony), then revealed.
+    @State private var mintCeremony: RunnerCard?
+    @State private var mintReveal: RunnerCard?
+    @State private var binderBounce = false
 
     public init() {}
+
+    private var cardsOn: Bool { FeatureFlags.shared.isEnabled(.runnerCards) }
 
     private var routes: [Route] {
         let published = storedRoutes
@@ -99,17 +110,41 @@ public struct ExploreRootView: View {
             ZStack(alignment: .bottom) {
                 ExploreMapView(
                     routes: routes,
-                    standaloneDrops: nearbyDrops,
+                    standaloneDrops: cardsOn ? [] : nearbyDrops,
                     selectedID: selectedID,
+                    zones: cardsOn ? zoneEngine.todayZones : [],
+                    zoneProgress: zoneEngine.progressM,
+                    zoneTargetM: zoneEngine.mintTargetM,
                     previewPath: destinationPath,
                     destinationPin: destination,
                     userCoordinate: live.coordinate,
                     onSelect: { detailRoute = $0 },
                     onTapCoordinate: mapTapHandler,
                     onSelectDrop: { infoDrop = $0 },
+                    onSelectZone: cardsOn ? { selectedZone = $0 } : nil,
                     recenterTick: recenterTick
                 )
                 .ignoresSafeArea()
+
+                if let mintCard = mintCeremony {
+                    MintCeremonyOverlay(card: mintCard, onLanded: {
+                        withAnimation(.spring(response: 0.3,
+                                              dampingFraction: 0.5)) {
+                            binderBounce = true
+                        }
+                        Task {
+                            try? await Task.sleep(for: .seconds(0.3))
+                            withAnimation(.spring(response: 0.3,
+                                                  dampingFraction: 0.6)) {
+                                binderBounce = false
+                            }
+                        }
+                    }, onFinished: {
+                        mintCeremony = nil
+                        mintReveal = mintCard
+                    })
+                    .zIndex(2)
+                }
 
                 VStack(alignment: .trailing, spacing: 12) {
                     actionButtons
@@ -173,7 +208,33 @@ public struct ExploreRootView: View {
                         // area (fail-closed spawning found no trusted
                         // walkable geometry) says so instead of a
                         // silently bare map.
-                        if isStockingArea {
+                        if cardsOn {
+                            // Zone-mode statuses: zones resolve after the
+                            // reveal (Overpass can take seconds), so the
+                            // banner narrates instead of blocking the map.
+                            switch zoneEngine.zonesState {
+                            case .idle, .loading:
+                                Text("Finding today's zones…")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(DS.Colors.ink)
+                                    .airbnbCard(padding: 12)
+                                    .transition(.opacity)
+                            case .unavailable:
+                                Text("Couldn't find zones — tap your location to retry")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(DS.Colors.ink)
+                                    .airbnbCard(padding: 12)
+                                    .transition(.opacity)
+                            case .ready where zoneEngine.todayZones.isEmpty:
+                                Text("No zones near you today. Check back tomorrow")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(DS.Colors.ink)
+                                    .airbnbCard(padding: 12)
+                                    .transition(.opacity)
+                            default:
+                                EmptyView()
+                            }
+                        } else if isStockingArea {
                             Text("Updating your map…")
                                 .font(.footnote.weight(.semibold))
                                 .foregroundStyle(DS.Colors.ink)
@@ -191,9 +252,29 @@ public struct ExploreRootView: View {
                     .padding(.top, 8)
                 }
             }
+            .overlay(alignment: .topLeading) {
+                // The binder chip: today's mint count + the fullest zone's
+                // ring — and the perch the mint ceremony flies to. The
+                // corner is free (the status overlay above is centered,
+                // the compass owns top-trailing).
+                if cardsOn, firstLoad == .ready {
+                    binderChip
+                        .padding([.top, .leading], 12)
+                }
+            }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $detailRoute) { route in
                 RouteDetailView(route: route)
+            }
+            .sheet(item: $selectedZone) { zone in
+                ZoneSheet(zone: zone,
+                          progressM: zoneEngine.progressM[zone.id] ?? 0,
+                          targetM: zoneEngine.mintTargetM)
+                    .presentationDetents([.height(440)])
+            }
+            .sheet(item: $mintReveal) { card in
+                MintRevealView(card: card, art: cardArt(card))
+                    .presentationDetents([.large])
             }
             .sheet(item: $infoDrop) { drop in
                 GemInfoSheet(drop: drop) {
@@ -221,12 +302,27 @@ public struct ExploreRootView: View {
                 // the demo city). Re-fetch once a real fix arrives far from
                 // the last query center, or after a big move.
                 guard let fix else { return }
+                // Map-open fixes feed the kilometre — before the fetch
+                // debounce below, which returns early on small moves.
+                if cardsOn, scenePhase == .active {
+                    zoneEngine.ingest(lat: fix.lat, lng: fix.lng,
+                                      accuracyM: live.lastAccuracyM,
+                                      source: .map)
+                }
                 Task { await updateLocationLabel(for: fix) }
                 if let last = lastFetchCenter,
                    RouteGeometry.planarDistance(from: last, to: fix) <= 1_500 {
                     return
                 }
                 Task { await loadNearby() }
+            }
+            .onChange(of: zoneEngine.lastMint) { _, card in
+                // The run screen owns the ceremony while its cover is up;
+                // this map celebrates map-walk mints.
+                guard let card, session.activeRoute == nil,
+                      !session.isFreeRunning else { return }
+                zoneEngine.lastMint = nil
+                withAnimation { mintCeremony = card }
             }
             // Returning to the app refreshes the world: collected gems
             // vanish, new spawns appear — no relaunch needed.
@@ -306,6 +402,48 @@ public struct ExploreRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.Colors.snow)
         .ignoresSafeArea()
+    }
+
+    /// Today's mint count + the fullest zone's progress ring, top-leading —
+    /// the perch the mint ceremony's card flies to.
+    private var binderChip: some View {
+        let best = zoneEngine.todayZones
+            .map { zoneEngine.progressM[$0.id] ?? 0 }
+            .max() ?? 0
+        let target = max(zoneEngine.mintTargetM, 1)
+        return HStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .stroke(DS.Colors.hairline, lineWidth: 3)
+                Circle()
+                    .trim(from: 0, to: min(best / target, 1))
+                    .stroke(DS.Colors.map, style: StrokeStyle(
+                        lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 18, height: 18)
+            Image(systemName: "rectangle.portrait.on.rectangle.portrait.fill")
+                .font(.caption.bold())
+                .foregroundStyle(DS.Colors.pulse)
+            Text("\(zoneEngine.mintedTodayCount)")
+                .font(.footnote.bold())
+                .monospacedDigit()
+                .foregroundStyle(DS.Colors.ink)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(DS.Colors.snowCard.opacity(0.94), in: Capsule())
+        .overlay(Capsule().stroke(DS.Colors.hairline, lineWidth: 1))
+        .scaleEffect(binderBounce ? 1.18 : 1)
+        .allowsHitTesting(false)
+    }
+
+    /// Real gem artwork on gem-backed card faces; nil keeps the default
+    /// type-glyph art.
+    private func cardArt(_ card: RunnerCard) -> AnyView? {
+        guard let face = RunnerCardCatalog.entry(forCardID: card.cardID),
+              let gemID = face.gemID else { return nil }
+        return AnyView(GemIcon(gemID: gemID, size: 84))
     }
 
     /// The primary "just go run" action. Always tappable — free runs work
@@ -753,6 +891,18 @@ public struct ExploreRootView: View {
             }
         }
         var revealMs = 0
+        if cardsOn {
+            // Zones replace gem drops wholesale. Reveal on GPS — never gate
+            // the map on Overpass (it can take 15 s); zones pop in under
+            // the status banner as the providers answer.
+            revealMs = Int(Date().timeIntervalSince(t0) * 1_000)
+            withAnimation {
+                nearbyDrops = []
+                isStockingArea = false
+                firstLoad = .ready
+            }
+            Task { await zoneEngine.refreshZones(around: center) }
+        } else {
         do {
             let page = try await API.shared.nearbyDrops(
                 lat: center.lat, lng: center.lng, radiusM: 8_000)
@@ -771,6 +921,7 @@ public struct ExploreRootView: View {
             // must never stand in for a failed fetch. Refreshes after the
             // first reveal keep the stale pins instead.
             if firstLoad != .ready { firstLoad = .failed }
+        }
         }
 
         if let fetched = await routesTask.value {
@@ -1018,6 +1169,10 @@ struct DropGemSheet: View {
 final class LiveLocation: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     var coordinate: Coordinate?
+    /// Horizontal accuracy of the last fix — the zone-mint pipeline gates
+    /// on it (fixes worse than 50 m never count). Set alongside
+    /// `coordinate`, so reading it in the coordinate onChange is safe.
+    var lastAccuracyM: Double = .greatestFiniteMagnitude
     /// True once the user has denied (or MDM has restricted) location —
     /// the Explore first-load cover switches to its Settings prompt.
     var isDenied = false
@@ -1049,7 +1204,11 @@ final class LiveLocation: NSObject, CLLocationManagerDelegate {
         guard let loc = locations.last else { return }
         let coord = Coordinate(lat: loc.coordinate.latitude,
                                lng: loc.coordinate.longitude)
-        Task { @MainActor in self.coordinate = coord }
+        let accuracy = loc.horizontalAccuracy
+        Task { @MainActor in
+            self.lastAccuracyM = accuracy
+            self.coordinate = coord
+        }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager,

@@ -62,6 +62,10 @@ public final class ZoneMintEngine {
         MintThresholdOverride.current() ?? ZoneRules.mintDistanceM
     }
 
+    /// What the progress rings fill toward — the kilometre, or the dev
+    /// override while it's set.
+    public var mintTargetM: Double { mintThreshold }
+
     /// Resolve the day's zones: cache first, then providers in order. A
     /// provider answering `nil` (unreachable) falls through; `[]` (answered
     /// empty) stops the chain — an answer is an answer.
