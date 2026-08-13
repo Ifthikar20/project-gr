@@ -159,16 +159,6 @@ public enum ZoneSelector {
             Int64(day) &* 6_700_417
             &+ Int64((center.lat * 1e5).rounded()) &* 65_537
             &+ Int64((center.lng * 1e5).rounded())))
-        let hi = rng.next()
-        let lo = rng.next()
-        return UUID(uuid: (
-            UInt8(truncatingIfNeeded: hi >> 56), UInt8(truncatingIfNeeded: hi >> 48),
-            UInt8(truncatingIfNeeded: hi >> 40), UInt8(truncatingIfNeeded: hi >> 32),
-            UInt8(truncatingIfNeeded: hi >> 24), UInt8(truncatingIfNeeded: hi >> 16),
-            UInt8(truncatingIfNeeded: hi >> 8), UInt8(truncatingIfNeeded: hi),
-            UInt8(truncatingIfNeeded: lo >> 56), UInt8(truncatingIfNeeded: lo >> 48),
-            UInt8(truncatingIfNeeded: lo >> 40), UInt8(truncatingIfNeeded: lo >> 32),
-            UInt8(truncatingIfNeeded: lo >> 24), UInt8(truncatingIfNeeded: lo >> 16),
-            UInt8(truncatingIfNeeded: lo >> 8), UInt8(truncatingIfNeeded: lo)))
+        return rng.nextUUID()
     }
 }

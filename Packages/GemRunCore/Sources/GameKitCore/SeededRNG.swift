@@ -17,6 +17,22 @@ public struct SplitMix64: RandomNumberGenerator {
         z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
         return z ^ (z >> 31)
     }
+
+    /// Two draws folded into a deterministic UUID — stable zone ids, mint
+    /// ids, anything that must replay from a seed.
+    public mutating func nextUUID() -> UUID {
+        let hi = next()
+        let lo = next()
+        return UUID(uuid: (
+            UInt8(truncatingIfNeeded: hi >> 56), UInt8(truncatingIfNeeded: hi >> 48),
+            UInt8(truncatingIfNeeded: hi >> 40), UInt8(truncatingIfNeeded: hi >> 32),
+            UInt8(truncatingIfNeeded: hi >> 24), UInt8(truncatingIfNeeded: hi >> 16),
+            UInt8(truncatingIfNeeded: hi >> 8), UInt8(truncatingIfNeeded: hi),
+            UInt8(truncatingIfNeeded: lo >> 56), UInt8(truncatingIfNeeded: lo >> 48),
+            UInt8(truncatingIfNeeded: lo >> 40), UInt8(truncatingIfNeeded: lo >> 32),
+            UInt8(truncatingIfNeeded: lo >> 24), UInt8(truncatingIfNeeded: lo >> 16),
+            UInt8(truncatingIfNeeded: lo >> 8), UInt8(truncatingIfNeeded: lo)))
+    }
 }
 
 /// Stable daily seeds from (day, ~geo cell): the same all day while you
