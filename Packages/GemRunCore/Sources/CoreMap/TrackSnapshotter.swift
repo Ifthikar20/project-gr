@@ -26,13 +26,12 @@ public enum TrackSnapshotter {
         options.size = size
         options.mapType = .mutedStandard
         options.pointOfInterestFilter = .excludingAll
-        // Daybreak Pulse is a light system, and the export must not depend
+        // Paper & Volt is a light system, and the export must not depend
         // on the device's appearance; 3× matches the card's render scale.
-        options.traitCollection = UITraitCollection(traitsFrom: [
-            options.traitCollection,
-            UITraitCollection(displayScale: 3),
-            UITraitCollection(userInterfaceStyle: .light),
-        ])
+        options.traitCollection = options.traitCollection.modifyingTraits { traits in
+            traits.displayScale = 3
+            traits.userInterfaceStyle = .light
+        }
 
         let snapshot: MKMapSnapshotter.Snapshot
         do {

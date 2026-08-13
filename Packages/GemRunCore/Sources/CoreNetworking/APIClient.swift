@@ -1,5 +1,6 @@
 import CoreModels
 import Foundation
+import os
 
 /// URLSession implementation of GemRunAPI for the real backend (Python/Django,
 /// docs/06 paths). Dormant until AppConfig.apiBaseURL is set — the UI runs on
@@ -9,8 +10,10 @@ public final class HTTPGemRunAPI: GemRunAPI {
     private let session: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
-    /// JWT from /v1/auth/apple; attach to every request. Keychain in Phase F polish.
-    private var token: String?
+    /// JWT from /v1/auth/apple; attach to every request. Keychain in Phase F
+    /// polish. Behind a lock because the class is Sendable and auth/adopt
+    /// can race a request being built on another thread.
+    private let token = OSAllocatedUnfairLock<String?>(initialState: nil)
 
     public init(baseURL: URL) {
         self.baseURL = baseURL
@@ -46,12 +49,12 @@ public final class HTTPGemRunAPI: GemRunAPI {
             "POST", "auth/\(provider.rawValue)",
             body: AuthRequest(handle: handle, externalUserId: externalID,
                               identityToken: identityToken))
-        token = response.token
+        token.withLock { $0 = response.token }
         return response
     }
 
     public func adopt(sessionToken: String?) async {
-        token = sessionToken
+        token.withLock { $0 = sessionToken }
     }
 
     public func me() async throws -> UserProfile {
@@ -272,7 +275,7 @@ public final class HTTPGemRunAPI: GemRunAPI {
     }
 
     private func authorize(_ request: inout URLRequest) {
-        if let token {
+        if let token = token.withLock({ $0 }) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
     }
