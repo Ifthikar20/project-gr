@@ -450,6 +450,10 @@ public struct ExploreMapView: View {
             }
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+        // The map itself runs dark while the app around it stays light —
+        // the landing page's map art: volt zones and routes glowing on an
+        // ink ground. Trait-scoped, so tiles and labels flip together.
+        .environment(\.colorScheme, .dark)
         // A real, always-on compass (top-trailing): shows which way is
         // north, and tapping it after a two-finger rotation snaps the map
         // back to north-up — native MapKit behavior, always tappable.
@@ -693,8 +697,9 @@ public struct ActiveRunMapView: View {
             Map(position: $cameraPosition) {
                 // Only the not-yet-covered remainder of the guide line is
                 // drawn — the part behind the runner disappears, and the
-                // ink breadcrumb below takes over as the record of where
-                // you actually went.
+                // pale breadcrumb below takes over as the record of where
+                // you actually went. On the dark map this split is the
+                // whole story: volt ahead, white behind.
                 let remaining = remainderOf(guideLine, fromM: coveredM)
                 if remaining.count > 1 {
                     MapPolyline(coordinates: remaining.map(\.cl))
@@ -702,10 +707,11 @@ public struct ActiveRunMapView: View {
                 }
                 // The trail of steps actually taken this run — smoothed with
                 // a 3-sample moving average so it reads as a clean stroke,
-                // not a jitter-scribbled raw GPS line.
+                // not a jitter-scribbled raw GPS line. White, because ink
+                // vanishes on the dark tiles.
                 if traveledPath.count > 1 {
                     MapPolyline(coordinates: smoothedTrail(traveledPath).map(\.cl))
-                        .stroke(MapPalette.ink.opacity(0.55),
+                        .stroke(.white.opacity(0.65),
                                 style: StrokeStyle(lineWidth: 4, lineCap: .round,
                                                    lineJoin: .round))
                 }
@@ -754,6 +760,9 @@ public struct ActiveRunMapView: View {
                 }
             }
             .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            // Dark tiles mid-run too — the volt guide line ahead reads as
+            // THE direction, the white breadcrumb as the ground covered.
+            .environment(\.colorScheme, .dark)
             // Always-on compass: north indicator while running, and the
             // native tap-to-reset after any two-finger rotation.
             .mapControls {
