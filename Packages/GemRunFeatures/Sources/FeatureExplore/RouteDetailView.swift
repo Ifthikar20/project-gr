@@ -53,7 +53,7 @@ struct RouteDetailView: View {
                         leaderboardSnippet
                         divider
                         Text(route.creatorHandle.map { "Created by @\($0)" }
-                             ?? "A GemRun original")
+                             ?? "A RunnerCard original")
                             .font(.caption)
                             .foregroundStyle(DS.Colors.inkSecondary)
                     }

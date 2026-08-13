@@ -198,7 +198,7 @@ final class CreationModel {
             return
         }
         guard let cost = PlacementBudget.cost(of: selectedRarity) else {
-            placementError = "Legendary gems are seeded by GemRun — they can't be placed."
+            placementError = "Legendary gems are seeded by RunnerCard — they can't be placed."
             return
         }
         guard pointsUsed + cost <= pointsTotal else {

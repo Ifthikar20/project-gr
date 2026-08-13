@@ -21,7 +21,7 @@ struct ShareCardView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "diamond.fill")
                         .foregroundStyle(DS.Colors.pulse)
-                    Text("GEMRUN")
+                    Text("RUNNERCARD")
                         .font(DS.Typography.display(20))
                         .kerning(1.5)
                         .foregroundStyle(DS.Colors.pulse)
@@ -110,7 +110,7 @@ struct ShareCardView: View {
                 }
             }
 
-            Text("Drop gems. Run routes. Collect what others left behind.")
+            Text("Walk the zone. Mint the card. Yours forever.")
                 .font(.caption2)
                 .foregroundStyle(DS.Colors.inkSecondary)
         }

@@ -53,7 +53,7 @@ struct RunSummaryView: View {
 
                 if let shareImage, FeatureFlags.shared.isEnabled(.shareCard) {
                     ShareLink(item: shareImage,
-                              preview: SharePreview("My GemRun on \(summary.routeName)",
+                              preview: SharePreview("My RunnerCard run on \(summary.routeName)",
                                                     image: shareImage)) {
                         Label("Share run card", systemImage: "square.and.arrow.up")
                             .ghostCTALabel()

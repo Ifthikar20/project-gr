@@ -54,7 +54,7 @@ struct RootView: View {
                 recoverable = nil
             }
         } message: {
-            Text("GemRun closed during a run. Your track and gems are safe.")
+            Text("RunnerCard closed during a run. Your track and finds are safe.")
         }
     }
 

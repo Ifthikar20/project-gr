@@ -53,10 +53,10 @@ struct SignInView: View {
                     .font(.system(size: 44))
                     .foregroundStyle(DS.Colors.pulse)
                     .shadow(color: DS.Colors.ink.opacity(0.4), radius: 8, y: 2)
-                Text("GemRun")
+                Text("RunnerCard")
                     .font(DS.Typography.display(38))
                     .foregroundStyle(DS.Colors.snowCard)
-                Text("Run. Hunt. Keep what you find.")
+                Text("Walk the zone. Mint the card.")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DS.Colors.snowCard.opacity(0.85))
             }

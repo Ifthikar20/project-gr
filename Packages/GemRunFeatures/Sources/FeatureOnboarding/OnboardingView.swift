@@ -72,7 +72,7 @@ public struct OnboardingView: View {
             Text("One thing first")
                 .font(DS.Typography.display(28))
                 .foregroundStyle(DS.Colors.ink)
-            Text("GemRun uses your location during runs to confirm you passed each gem — even with your phone in your pocket, screen off. Outside a run, we never track you.")
+            Text("RunnerCard uses your location while the map is open and during runs to measure the distance you cover inside zones — on a run that works even with your phone in your pocket, screen off. Beyond that, we never track you.")
                 .font(.body)
                 .foregroundStyle(DS.Colors.inkSecondary)
                 .multilineTextAlignment(.center)

@@ -272,7 +272,7 @@ struct SettingsView: View {
         } header: {
             Text("Features")
         } footer: {
-            Text("Switch any part of GemRun off — it disappears everywhere "
+            Text("Switch any part of RunnerCard off — it disappears everywhere "
                  + "in the app until you switch it back on.")
                 .font(.caption)
                 .foregroundStyle(DS.Colors.inkSecondary)
@@ -331,7 +331,7 @@ struct SettingsView: View {
             }
             .listRowBackground(DS.Colors.snowCard)
         } footer: {
-            Text("GemRun — drop gems, run routes, collect what others left behind.")
+            Text("RunnerCard — walk real zones, mint collectible cards.")
                 .font(.caption2)
                 .foregroundStyle(DS.Colors.inkSecondary)
         }
@@ -486,14 +486,16 @@ struct DataTransparencyView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 block("Location — only for the map and your runs",
-                      "GemRun uses your location while the app is open, to "
-                      + "show gems near you. During a run YOU started, "
+                      "RunnerCard uses your location while the app is open, "
+                      + "to show zones near you and count the distance you "
+                      + "cover inside them. During a run YOU started, "
                       + "tracking continues with the screen off or the app "
-                      + "pocketed — that's how gems collect mid-run — and "
-                      + "iOS shows its location indicator the whole time. "
-                      + "The moment the run ends, background tracking stops. "
-                      + "Outside a run we never track you, and there is no "
-                      + "location history beyond the runs you keep.")
+                      + "pocketed — that's how zone distance adds up mid-run "
+                      + "— and iOS shows its location indicator the whole "
+                      + "time. The moment the run ends, background tracking "
+                      + "stops. Outside the map and your runs we never track "
+                      + "you, and there is no location history beyond the "
+                      + "runs you keep.")
                 block("Your GPS trace stays on your phone",
                       "When you finish a run, your route trace is sent once "
                       + "to our server to verify your gem collections were "
@@ -580,8 +582,9 @@ enum LegalDoc: String, Identifiable {
             return """
             Last updated: [set on release]
 
-            GemRun is a running game: real gems appear on real streets, and \
-            you collect them by physically running past them. That only \
+            RunnerCard is a running game: large zones appear over real \
+            parks and trails, and you mint collectible cards by physically \
+            covering distance inside them. That only \
             works with location data, so this policy is specific about what \
             we collect, when, what leaves your phone, and what never does. \
             Every statement here describes what the app actually does — \
@@ -589,10 +592,10 @@ enum LegalDoc: String, Identifiable {
 
             1. WHO WE ARE
 
-            GemRun is operated by [legal entity name, address]. Contact for \
-            anything in this policy: [privacy@yourdomain]. "We" below means \
-            that operator; "the service" means the GemRun iOS app and its \
-            server.
+            RunnerCard is operated by [legal entity name, address]. Contact \
+            for anything in this policy: [privacy@yourdomain]. "We" below \
+            means that operator; "the service" means the RunnerCard iOS app \
+            and its server.
 
             2. WHAT WE COLLECT, AND WHEN
 
@@ -660,7 +663,7 @@ enum LegalDoc: String, Identifiable {
 
             4. WHAT OTHER PLAYERS CAN SEE
 
-            GemRun is a shared world, so some things are public by design:
+            RunnerCard is a shared world, so some things are public by design:
 
             • Your handle and level, on leaderboards and in player search.
             • Your weekly XP, distance, and run count, to players who \
@@ -702,7 +705,7 @@ enum LegalDoc: String, Identifiable {
 
             7. COOKIES, IDENTIFIERS, AND WHAT LIVES ON YOUR PHONE
 
-            GemRun is a native app with no embedded browser: we use no \
+            RunnerCard is a native app with no embedded browser: we use no \
             cookies, no advertising identifier (we never request IDFA), \
             and no fingerprinting. What is stored on your device, under \
             your control:
@@ -743,7 +746,7 @@ enum LegalDoc: String, Identifiable {
 
             10. CHILDREN
 
-            GemRun is not directed at children under 13, and we do not \
+            RunnerCard is not directed at children under 13, and we do not \
             knowingly collect personal information from them. If you \
             believe a child under 13 has an account, contact us and we \
             will delete it.
@@ -762,7 +765,7 @@ enum LegalDoc: String, Identifiable {
             12. WHERE DATA IS PROCESSED
 
             Our server currently runs in [region — set at launch]. If you \
-            use GemRun from elsewhere, your data is processed there under \
+            use RunnerCard from elsewhere, your data is processed there under \
             this policy and applicable safeguards.
 
             13. CHANGES TO THIS POLICY
@@ -785,7 +788,7 @@ enum LegalDoc: String, Identifiable {
             Last updated: [set on release]
 
             These terms are the deal between you and [legal entity name] \
-            ("we") for using GemRun. By creating an account or using the \
+            ("we") for using RunnerCard. By creating an account or using the \
             app, you agree to them. The Privacy Policy explains data; \
             these terms explain conduct, safety, and what you can expect \
             from the service.
@@ -797,13 +800,13 @@ enum LegalDoc: String, Identifiable {
             under 18, make sure a parent or guardian is okay with you \
             playing.
 
-            2. WHAT GEMRUN IS
+            2. WHAT RUNNERCARD IS
 
-            A running game. The service places virtual gems at real \
-            outdoor locations; you collect them by physically passing \
-            within about 100 feet while the app records your run. Gems, \
-            XP, streaks, and levels are game features — see section 7 for \
-            what they are (and aren't) worth.
+            A running game. The service marks large zones over real parks \
+            and trails; you mint collectible cards by physically covering \
+            about a kilometre inside a zone while the app is open or \
+            recording your run. Cards, XP, streaks, and levels are game \
+            features — see section 7 for what they are (and aren't) worth.
 
             3. YOUR ACCOUNT
 
@@ -821,14 +824,15 @@ enum LegalDoc: String, Identifiable {
             • You are responsible for your own safety. Watch traffic, \
             obey signals and laws, and mind terrain, weather, darkness, \
             and your own condition.
-            • Never chase a gem into a place you shouldn't be. The \
-            service places gems only on paths that public map data marks \
-            as walkable, and never knowingly inside private grounds, \
-            schools, or restricted areas — but map data can be wrong or \
-            stale. If reaching a gem would mean trespassing, crossing \
-            unsafely, or taking any risk, skip it. A skipped gem respawns \
-            somewhere; you don't.
-            • Not medical advice. GemRun is not a medical device. Calorie \
+            • Never chase a card into a place you shouldn't be. The \
+            service anchors zones only on public parks and paths that \
+            public map data marks as walkable, and never knowingly over \
+            private grounds, schools, or restricted areas — but map data \
+            can be wrong or stale. If your kilometre would mean \
+            trespassing, crossing unsafely, or taking any risk, walk \
+            somewhere else. A fresh zone appears tomorrow; you don't \
+            respawn.
+            • Not medical advice. RunnerCard is not a medical device. Calorie \
             and step figures are estimates computed from distance and \
             pace with standard assumptions. Consult a physician before \
             starting an exercise program if you have any doubt about your \
@@ -884,12 +888,12 @@ enum LegalDoc: String, Identifiable {
             the service, probe or bypass its security, scrape it, reverse \
             engineer the app except where law permits, harass other \
             players, or use the service to break any law. Don't use \
-            GemRun where using it would itself be unsafe or unlawful.
+            RunnerCard where using it would itself be unsafe or unlawful.
 
             9. OUR STUFF
 
-            The app, the service, the GemRun name, the design, and the \
-            gem catalog are ours or our licensors'. Map and path data \
+            The app, the service, the RunnerCard name, the design, and \
+            the card catalog are ours or our licensors'. Map and path data \
             include content from OpenStreetMap contributors \
             (© OpenStreetMap, ODbL) and Apple. These terms give you a \
             personal, non-transferable license to use the app for playing \
@@ -906,9 +910,9 @@ enum LegalDoc: String, Identifiable {
 
             11. THE SERVICE IS PROVIDED "AS IS"
 
-            GemRun is under active development. We don't promise \
-            uninterrupted or error-free service, that gems will be \
-            reachable or fairly distributed in every area, that map data \
+            RunnerCard is under active development. We don't promise \
+            uninterrupted or error-free service, that zones or cards will \
+            be reachable or fairly distributed in every area, that map data \
             is accurate, or that any particular feature will persist. To \
             the maximum extent permitted by law, we disclaim all \
             warranties, express or implied.

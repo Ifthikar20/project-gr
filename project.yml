@@ -46,7 +46,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: GemRun
+        CFBundleDisplayName: RunnerCard
         # Version shown in Settings > About: marketing version + build
         # number. Xcode substitutes these at build time; run.sh passes
         # CURRENT_PROJECT_VERSION = git commit count, so every build's
@@ -57,18 +57,19 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
         NSLocationWhenInUseUsageDescription: >-
-          GemRun uses your location during runs to confirm you passed each
-          gem, including with the screen off so gems collect while your
-          phone is in your pocket. We never track you outside a run.
+          RunnerCard uses your location while the map is open and during
+          runs to measure the distance you cover inside zones — on a run
+          that works with the screen off, phone in your pocket. We never
+          track you outside the map or a run.
         UIBackgroundModes: [location]
         NSHealthUpdateUsageDescription: >-
-          GemRun saves your finished runs and walks to Health as workouts.
+          RunnerCard saves your finished runs and walks to Health as workouts.
         NSHealthShareUsageDescription: >-
-          GemRun reads your step count to show accurate stats for each
+          RunnerCard reads your step count to show accurate stats for each
           finished run.
         NSMotionUsageDescription: >-
-          GemRun uses your step data during a run so distance and steps only
-          count when you're actually moving — not from GPS drift.
+          RunnerCard uses your step data during a run so distance and steps
+          only count when you're actually moving — not from GPS drift.
         CFBundleURLTypes:
           - CFBundleURLName: com.gemrun.app
             CFBundleURLSchemes: [gemrun]
@@ -78,8 +79,8 @@ targets:
         # iOS's Local Network privacy prompt (separate from ATS): required
         # for the phone to reach the Mac's LAN IP during development.
         NSLocalNetworkUsageDescription: >-
-          GemRun connects to your development server on this network to
-          load gems and routes.
+          RunnerCard connects to your development server on this network to
+          load zones and routes.
         # Backend base URL. Debug builds get this from Configs/DevAPI.xcconfig
         # (script-written LAN IP). Empty = env-var fallback / mock.
         GemRunAPIBaseURL: $(GEMRUN_API_URL)

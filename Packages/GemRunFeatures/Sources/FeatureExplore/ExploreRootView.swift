@@ -163,7 +163,7 @@ public struct ExploreRootView: View {
                                 .shadow(color: DS.Colors.ink.opacity(0.08), radius: 5, y: 2)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("Show my current location and refresh gems")
+                            .accessibilityLabel("Show my current location and refresh the map")
                             .transition(.opacity)
                         }
                         // While the server restocks this area in the
@@ -258,7 +258,7 @@ public struct ExploreRootView: View {
                 Text("Turn on location")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
-                Text("Gems live on real sidewalks and trails around you. GemRun needs your location to find them.")
+                Text("Everything you can collect lives on real sidewalks, parks and trails around you. RunnerCard needs your location to find it.")
                     .font(.subheadline)
                     .foregroundStyle(DS.Colors.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -273,7 +273,7 @@ public struct ExploreRootView: View {
                 Image(systemName: "wifi.exclamationmark")
                     .font(.system(size: 44))
                     .foregroundStyle(DS.Colors.pulse)
-                Text("Couldn't load gems")
+                Text("Couldn't load your map")
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                 Text("Check your connection and try again.")
