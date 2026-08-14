@@ -834,10 +834,17 @@ public struct ActiveRunMapView: View {
             }
             .onAppear {
                 compass.start()
-                // Seed the camera so the run opens focused on the runner
-                // (or the route bounds), not zoomed out to the whole world.
+                // A walk/run view from the very first frame: open at the
+                // runner — or, before the engine's first sample lands, at
+                // the phone's last known fix — at walking scale. Framing
+                // the route/planned line across the whole city is the last
+                // resort, for the never-had-a-fix case only; follow mode
+                // takes over the moment samples flow.
                 if let runner = runnerPosition {
                     cameraPosition = .camera(MapCamera(centerCoordinate: runner.cl,
+                                                       distance: 600, heading: 0, pitch: 0))
+                } else if let here = CLLocationManager().location?.coordinate {
+                    cameraPosition = .camera(MapCamera(centerCoordinate: here,
                                                        distance: 600, heading: 0, pitch: 0))
                 } else if let route {
                     cameraPosition = .region(region(for: PolylineCodec.decode(route.polyline)))

@@ -225,7 +225,7 @@ public struct ActiveRunView: View {
             }
 
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                HStack(spacing: 24) {
+                HStack(spacing: 8) {
                     stat(format(seconds: Int(engine.elapsed)), "Time")
                     stat(UnitFormat.milesText(fromMeters: engine.distanceM), "mi")
                     stat("\(engine.liveSteps)", "Steps")
@@ -266,14 +266,20 @@ public struct ActiveRunView: View {
 
     private func stat(_ value: String, _ label: String, accent: Bool = false) -> some View {
         VStack(spacing: 2) {
+            // One line, always: four equal columns split the band, and a
+            // value that outgrows its column (1:23:45, five-digit steps)
+            // scales down to fit instead of wrapping mid-number.
             Text(value)
                 .font(DS.Typography.statLarge)
                 .foregroundStyle(accent ? DS.Colors.pulse : DS.Colors.ink)
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.35)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(DS.Colors.inkSecondary)
         }
+        .frame(maxWidth: .infinity)
     }
 
     /// Screen off / app pocketed → the collection still happened (background
