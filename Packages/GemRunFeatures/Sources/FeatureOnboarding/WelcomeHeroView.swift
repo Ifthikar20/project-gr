@@ -93,6 +93,7 @@ struct WelcomeHeroView: View {
 /// Owns its own choreography — expand from the center on a staggered
 /// spring, then bob forever, slightly out of phase with its neighbors.
 /// Reduced motion renders it seated and still.
+@MainActor
 private struct FloatingTile: View {
     let face: HeroFace
     let size: CGFloat
