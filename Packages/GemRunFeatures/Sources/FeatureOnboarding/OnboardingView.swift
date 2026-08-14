@@ -2,6 +2,7 @@ import CoreLocation
 import CoreModels
 import CorePersistence
 import DesignSystem
+import MapKit
 import SwiftUI
 
 /// Value prop → location priming → sign-in, under 60 seconds (docs/03 §1),
@@ -150,27 +151,35 @@ struct ExplainerPage: View {
 
 // MARK: - The living scenes
 
-/// A volt zone breathing on a tiny park: the ring pulses, the trees sway.
+/// A volt zone breathing on real ground: a street-map snippet of Echo
+/// Park Lake in Los Angeles, clipped in the pulsing ring — the promise
+/// made literal, a zone landing on an actual city park. The duck bobs on
+/// the lake; the pin floats over the boundary.
 private struct ZoneScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var breathe = false
-    @State private var sway = false
+
+    /// Echo Park Lake, Los Angeles — real public ground, the city grid
+    /// tight around it.
+    private static let echoParkLake = CLLocationCoordinate2D(
+        latitude: 34.0723, longitude: -118.2602)
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(DS.Colors.map.opacity(0.55), lineWidth: 3)
-                .background(Circle().fill(DS.Colors.map.opacity(0.12)))
+            // Same recipe as the run cards' route map: static, muted,
+            // no POI chatter — just streets, park green and the lake.
+            Map(initialPosition: .region(MKCoordinateRegion(
+                    center: Self.echoParkLake,
+                    latitudinalMeters: 950, longitudinalMeters: 950)),
+                interactionModes: [])
+                .mapStyle(.standard(elevation: .flat,
+                                    pointsOfInterest: .excludingAll))
+                .allowsHitTesting(false)   // swipes belong to the TabView
                 .frame(width: 150, height: 150)
-                .scaleEffect(breathe ? 1.06 : 0.94)
-            Text("🌳")
-                .font(.system(size: 46))
-                .rotationEffect(.degrees(sway ? 4 : -4), anchor: .bottom)
-                .offset(x: -34, y: -6)
-            Text("🌲")
-                .font(.system(size: 38))
-                .rotationEffect(.degrees(sway ? -5 : 5), anchor: .bottom)
-                .offset(x: 30, y: -22)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(DS.Colors.map.opacity(0.55),
+                                         lineWidth: 3))
+                .scaleEffect(breathe ? 1.04 : 0.96)
             Text("🦆")
                 .font(.system(size: 26))
                 .offset(x: 26, y: 40)
@@ -183,8 +192,6 @@ private struct ZoneScene: View {
             guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 2.4)
                 .repeatForever(autoreverses: true)) { breathe = true }
-            withAnimation(.easeInOut(duration: 1.8)
-                .repeatForever(autoreverses: true)) { sway = true }
         }
     }
 }
