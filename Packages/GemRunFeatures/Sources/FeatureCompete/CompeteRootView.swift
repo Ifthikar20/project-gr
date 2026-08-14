@@ -6,9 +6,11 @@ import SwiftData
 import SwiftUI
 
 /// Compete (docs/03 §10), Daybreak Pulse.
-/// "My Routes": every run you've completed, newest first, as cards —
-/// local SwiftData history merged with the server's copy (GET /v1/runs/mine)
-/// so a fresh install still shows the past.
+/// "My Routes": a seven-day summary (totals, trend vs the week before,
+/// miles-per-day bars), your records (longest, fastest, best haul), then
+/// every real run newest first with PB badges — local SwiftData history
+/// merged with the server's copy (GET /v1/runs/mine) so a fresh install
+/// still shows the past. Sub-0.1-mile starts fold into one quiet row.
 /// "Friends": the friends board — you plus everyone you follow, ranked by
 /// this week's XP. Swipe a friend left to remove; the magnifier searches
 /// players by username to add.
@@ -20,6 +22,8 @@ public struct CompeteRootView: View {
     @State private var friendEntries: [FriendEntry] = []
     @State private var isLoading = false
     @State private var isSearchPresented = false
+    /// Short starts (under ~0.1 mi) fold into one row; this unfolds them.
+    @State private var showShortRuns = false
 
     enum Board: String, CaseIterable {
         case myRoutes = "My Routes"
@@ -123,16 +127,35 @@ public struct CompeteRootView: View {
         return cards.values.sorted { $0.startedAt > $1.startedAt }
     }
 
+    /// A run this short never got going — history, not a highlight.
+    private static let shortRunCutoffM = 160   // ≈ 0.1 mi
+
     private var myRoutesBoard: some View {
         Group {
             let cards = completedRuns
             if cards.isEmpty {
                 emptyState("Finish a run and it'll show up here.")
             } else {
+                let real = cards.filter { $0.distanceM >= Self.shortRunCutoffM }
+                let shortStarts = cards.filter { $0.distanceM < Self.shortRunCutoffM }
+                let longestID = real.count >= 2
+                    ? real.max { $0.distanceM < $1.distanceM }?.id : nil
+                let fastestID = real.count >= 2
+                    ? real.filter { $0.paceSPerKm > 0 && $0.distanceM >= 400 }
+                        .min { $0.paceSPerKm < $1.paceSPerKm }?.id
+                    : nil
                 ScrollView {
-                    VStack(spacing: 10) {
-                        ForEach(cards) { card in
-                            runCardView(card)
+                    VStack(alignment: .leading, spacing: 12) {
+                        weekSummary(cards)
+                        if real.count >= 2 { bestsStrip(real) }
+                        ForEach(real) { card in
+                            runCardView(card,
+                                        badge: card.id == longestID ? "Longest"
+                                            : card.id == fastestID ? "Fastest"
+                                            : nil)
+                        }
+                        if !shortStarts.isEmpty {
+                            shortStartsSection(shortStarts)
                         }
                     }
                     .padding(16)
@@ -141,15 +164,167 @@ public struct CompeteRootView: View {
         }
     }
 
-    private func runCardView(_ card: RunCard) -> some View {
+    /// The headline: the last seven days at a glance — totals up top, the
+    /// week's shape as seven quiet bars, and the week-before comparison
+    /// when it means something.
+    private func weekSummary(_ cards: [RunCard]) -> some View {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: .now)
+        let weekAgo = cal.date(byAdding: .day, value: -6, to: today) ?? today
+        let prior = cal.date(byAdding: .day, value: -13, to: today) ?? today
+        let thisWeek = cards.filter { $0.startedAt >= weekAgo }
+        let lastWeek = cards.filter { $0.startedAt >= prior && $0.startedAt < weekAgo }
+        let miles = UnitFormat.miles(
+            fromMeters: Double(thisWeek.reduce(0) { $0 + $1.distanceM }))
+        let priorMiles = UnitFormat.miles(
+            fromMeters: Double(lastWeek.reduce(0) { $0 + $1.distanceM }))
+        let delta = miles - priorMiles
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Last 7 days")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                if abs(delta) >= 0.1 {
+                    Text("\(delta > 0 ? "▲" : "▼") \(String(format: "%.1f", abs(delta))) mi vs week before")
+                        .font(.caption.bold())
+                        .foregroundStyle(delta > 0 ? DS.Colors.pulse : DS.Colors.inkSecondary)
+                }
+            }
+            HStack(spacing: 24) {
+                summaryStat(String(format: "%.1f", miles), "miles")
+                summaryStat(format(seconds: thisWeek.reduce(0) { $0 + $1.durationS }),
+                            "time")
+                summaryStat("\(thisWeek.count)", "runs")
+                summaryStat("+\(thisWeek.reduce(0) { $0 + $1.xpEarned })", "XP")
+                Spacer()
+            }
+            SevenDayBars(days: dailyMiles(cards, calendar: cal, today: today))
+        }
+        .airbnbCard()
+    }
+
+    private func summaryStat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(DS.Typography.statMedium)
+                .monospacedDigit()
+                .foregroundStyle(DS.Colors.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(DS.Colors.inkSecondary)
+        }
+    }
+
+    /// Miles per day, oldest → today, weekday letter attached.
+    private func dailyMiles(_ cards: [RunCard], calendar cal: Calendar,
+                            today: Date) -> [(label: String, miles: Double)] {
+        (0..<7).reversed().map { back in
+            let day = cal.date(byAdding: .day, value: -back, to: today) ?? today
+            let meters = cards
+                .filter { cal.isDate($0.startedAt, inSameDayAs: day) }
+                .reduce(0) { $0 + $1.distanceM }
+            return (label: day.formatted(.dateTime.weekday(.narrow)),
+                    miles: UnitFormat.miles(fromMeters: Double(meters)))
+        }
+    }
+
+    /// Your records, computed from every full run on the board.
+    private func bestsStrip(_ real: [RunCard]) -> some View {
+        let longest = real.max { $0.distanceM < $1.distanceM }
+        let fastest = real.filter { $0.paceSPerKm > 0 && $0.distanceM >= 400 }
+            .min { $0.paceSPerKm < $1.paceSPerKm }
+        let richest = real.max { $0.xpEarned < $1.xpEarned }
+        return HStack(spacing: 10) {
+            if let longest {
+                bestTile("Longest",
+                         UnitFormat.milesLabel(fromMeters: Double(longest.distanceM)))
+            }
+            if let fastest {
+                bestTile("Fastest",
+                         "\(format(seconds: UnitFormat.paceSecPerMile(fromSecPerKm: fastest.paceSPerKm))) /mi")
+            }
+            if let richest, richest.xpEarned > 0 {
+                bestTile("Best haul", "+\(richest.xpEarned) XP")
+            }
+        }
+    }
+
+    private func bestTile(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Image(systemName: "crown.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(DS.Colors.pulse)
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(DS.Colors.inkSecondary)
+            }
+            Text(value)
+                .font(.subheadline.bold())
+                .monospacedDigit()
+                .foregroundStyle(DS.Colors.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .airbnbCard(padding: 12)
+    }
+
+    /// Runs that never got going, folded into one quiet row until asked.
+    private func shortStartsSection(_ shortStarts: [RunCard]) -> some View {
+        VStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showShortRuns.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: showShortRuns ? "chevron.down" : "chevron.right")
+                        .font(.caption2.bold())
+                    Text("\(shortStarts.count) short start\(shortStarts.count == 1 ? "" : "s") under 0.1 mi")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                }
+                .foregroundStyle(DS.Colors.inkSecondary)
+                .padding(.horizontal, 4)
+            }
+            .buttonStyle(.plain)
+            if showShortRuns {
+                ForEach(shortStarts) { card in
+                    runCardView(card)
+                }
+            }
+        }
+    }
+
+    private func dayLabel(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return "Today" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func runCardView(_ card: RunCard, badge: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(card.routeName)
                     .font(DS.Typography.heading)
                     .foregroundStyle(DS.Colors.ink)
                     .lineLimit(1)
+                if let badge {
+                    HStack(spacing: 3) {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(badge)
+                            .font(.caption2.bold())
+                    }
+                    .foregroundStyle(DS.Colors.pulse)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(DS.Colors.pulse.opacity(0.12), in: Capsule())
+                }
                 Spacer()
-                Text(card.startedAt.formatted(date: .abbreviated, time: .omitted))
+                Text(dayLabel(card.startedAt))
                     .font(.caption)
                     .foregroundStyle(DS.Colors.inkSecondary)
             }
@@ -314,6 +489,43 @@ public struct CompeteRootView: View {
         seconds >= 3_600
             ? String(format: "%d:%02d:%02d", seconds / 3_600, (seconds % 3_600) / 60, seconds % 60)
             : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+/// Seven quiet bars, one per day, today on the right. Single hue for the
+/// single series (the map volt), faint tracks marking the empty days,
+/// weekday letters in text ink with today emphasized. The totals above
+/// carry the numbers; the bars carry only the shape of the week.
+@MainActor
+private struct SevenDayBars: View {
+    let days: [(label: String, miles: Double)]
+
+    var body: some View {
+        let peak = max(days.map(\.miles).max() ?? 0, 0.01)
+        HStack(alignment: .bottom, spacing: 10) {
+            ForEach(Array(days.enumerated()), id: \.offset) { i, day in
+                VStack(spacing: 5) {
+                    ZStack(alignment: .bottom) {
+                        Capsule()
+                            .fill(DS.Colors.ink.opacity(0.05))
+                        if day.miles > 0 {
+                            Capsule()
+                                .fill(DS.Colors.map)
+                                .frame(height: max(CGFloat(day.miles / peak) * 56, 6))
+                        }
+                    }
+                    .frame(height: 56)
+                    .frame(maxWidth: .infinity)
+                    Text(day.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(i == days.count - 1
+                            ? DS.Colors.ink : DS.Colors.inkSecondary)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(format: "%.1f miles over the last seven days",
+                                   days.reduce(0) { $0 + $1.miles }))
     }
 }
 
