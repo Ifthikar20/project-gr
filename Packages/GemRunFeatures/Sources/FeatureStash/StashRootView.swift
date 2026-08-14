@@ -5,11 +5,13 @@ import DesignSystem
 import SwiftData
 import SwiftUI
 
-/// The Collection (docs/03 §9): your minted Runner Cards, and nothing
-/// else — the wall of minis the landing page promises, newest first, tap
-/// for the full card. Gems appear only AS cards now (the gem card type);
-/// the old tiered gem grid renders solely in legacy mode (runner_cards
-/// flag OFF), where this screen is still the gem stash.
+/// The Collection (docs/03 §9): your minted Runner Cards AND the binder
+/// they belong to — the minted wall newest-first up top, then every
+/// catalog face as a slot, face-down until a mint flips it. Tap any
+/// face-up card for the full nine-part view. Gems appear only AS cards
+/// now (the gem card type); the old tiered gem grid renders solely in
+/// legacy mode (runner_cards flag OFF), where this screen is still the
+/// gem stash.
 @MainActor
 public struct StashRootView: View {
     @Environment(SessionStore.self) private var session
@@ -87,7 +89,9 @@ public struct StashRootView: View {
                         .foregroundStyle(DS.Colors.inkSecondary)
                 }
                 VStack(alignment: .leading) {
-                    Text("\(Set(cards.map(\.cardID)).count)/\(RunnerCardCatalog.entries.count)")
+                    // Just the count — no "/49". The binder below carries
+                    // the pull; a printed ceiling only makes it feel small.
+                    Text("\(Set(cards.map(\.cardID)).count)")
                         .font(DS.Typography.statMedium)
                         .foregroundStyle(DS.Colors.ink)
                     Text("faces found")
@@ -124,29 +128,93 @@ public struct StashRootView: View {
         return AnyView(GemIcon(gemID: gemID, size: 84))
     }
 
-    /// The wall of minis: every minted card, newest first. Tap for the
-    /// full nine-part card. The screen title carries the name — the wall
-    /// needs no header of its own.
+    /// The collection as a binder, never a blank page: your minted wall
+    /// (newest first, duplicates and all) up top once it exists, then
+    /// every face in the catalog as a slot — face-down with its drop odds
+    /// until a mint flips it over. Zero cards still shows the whole set
+    /// waiting, which IS the pitch.
     private var cardWall: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 24) {
             if cards.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("No cards yet")
+                    Text("Your binder is waiting")
                         .font(.subheadline.bold())
                         .foregroundStyle(DS.Colors.ink)
-                    Text("Walk a mile inside a zone on the map to mint your first card.")
+                    Text("Walk a mile inside a zone on the map to mint your first card and flip a slot below.")
                         .font(.caption)
                         .foregroundStyle(DS.Colors.inkSecondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .airbnbCard(padding: 14)
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12),
-                                         count: 3),
-                          spacing: 12) {
-                    ForEach(cards) { stored in
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Your mints")
+                        .font(DS.Typography.heading)
+                        .foregroundStyle(DS.Colors.ink)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12),
+                                             count: 3),
+                              spacing: 12) {
+                        ForEach(cards) { stored in
+                            MiniCardTile(stored: stored)
+                                .onTapGesture { cardDetail = stored }
+                        }
+                    }
+                }
+            }
+            let newestByFace = newestMintByFace
+            ForEach(Self.tiers, id: \.self) { tier in
+                let faces = RunnerCardCatalog.entries
+                    .filter { $0.rarity == tier }
+                    .sorted { $0.name < $1.name }
+                if !faces.isEmpty {
+                    binderSection(tier, faces, newestByFace: newestByFace)
+                }
+            }
+        }
+    }
+
+    /// Newest mint per face (cards come newest-first from the query), so
+    /// a flipped slot always opens the most recent copy.
+    private var newestMintByFace: [UUID: StoredRunnerCard] {
+        var map: [UUID: StoredRunnerCard] = [:]
+        for card in cards where map[card.cardID] == nil {
+            map[card.cardID] = card
+        }
+        return map
+    }
+
+    /// One rarity shelf of the binder. Progress speaks only in what you
+    /// HAVE ("3 found", "all found") — never a printed ceiling.
+    private func binderSection(_ tier: Rarity,
+                               _ faces: [RunnerCardCatalog.Entry],
+                               newestByFace: [UUID: StoredRunnerCard]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let found = faces.filter { newestByFace[$0.cardID] != nil }.count
+            HStack(spacing: 8) {
+                RarityBadge(tier, size: 14)
+                Text(tier.rawValue.capitalized)
+                    .font(DS.Typography.heading)
+                    .foregroundStyle(DS.Colors.ink)
+                Spacer()
+                if found == faces.count {
+                    Text("all found")
+                        .font(.caption.bold())
+                        .foregroundStyle(DS.Colors.pulse)
+                } else if found > 0 {
+                    Text("\(found) found")
+                        .font(.caption.bold())
+                        .foregroundStyle(DS.Colors.inkSecondary)
+                }
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12),
+                                     count: 3),
+                      spacing: 12) {
+                ForEach(faces) { face in
+                    if let stored = newestByFace[face.cardID] {
                         MiniCardTile(stored: stored)
                             .onTapGesture { cardDetail = stored }
+                    } else {
+                        FaceDownTile(entry: face)
                     }
                 }
             }
@@ -231,6 +299,45 @@ struct MiniCardTile: View {
         .overlay(RoundedRectangle(cornerRadius: 14)
             .stroke(edge.opacity(0.5), lineWidth: 1.5))
         .shadow(color: DS.Colors.ink.opacity(0.06), radius: 8, y: 2)
+    }
+}
+
+/// A face not yet minted: the card back at wall scale — rarity edge, bolt
+/// emblem, name withheld. The drop-odds line is the tease: it tells you
+/// how a slot flips without telling you what's under it. Same bones as
+/// MiniCardTile so binder rows align regardless of what's found.
+@MainActor
+struct FaceDownTile: View {
+    let entry: RunnerCardCatalog.Entry
+
+    var body: some View {
+        let edge = CardPalette.edge(entry.rarity)
+        VStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(DS.Colors.snow)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(edge.opacity(0.4), lineWidth: 1.5)
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(edge.opacity(0.45))
+            }
+            .frame(height: 54)
+            Text("???")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(DS.Colors.inkSecondary)
+                .lineLimit(1)
+            Text(entry.dropNote)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(DS.Colors.inkSecondary.opacity(0.8))
+                .lineLimit(1)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity)
+        .background(DS.Colors.snowCard.opacity(0.6),
+                    in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14)
+            .stroke(DS.Colors.hairline, lineWidth: 1))
     }
 }
 
