@@ -97,7 +97,7 @@ struct ExplainerPage: View {
                                 radius: 15, y: 8)
                     scene
                 }
-                .frame(width: min(geo.size.width - 72, 340), height: 210)
+                .frame(width: min(geo.size.width - 96, 310), height: 185)
                 .offset(x: minX * 0.35)
                 VStack(spacing: 12) {
                     Label(title, systemImage: icon)
@@ -111,7 +111,6 @@ struct ExplainerPage: View {
                         .padding(.horizontal, 36)
                 }
                 .offset(x: minX * 0.12)
-                Spacer()
                 Spacer()
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -175,18 +174,18 @@ private struct ZoneScene: View {
                 .mapStyle(.standard(elevation: .flat,
                                     pointsOfInterest: .excludingAll))
                 .allowsHitTesting(false)   // swipes belong to the TabView
-                .frame(width: 150, height: 150)
+                .frame(width: 136, height: 136)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(DS.Colors.map.opacity(0.55),
                                          lineWidth: 3))
                 .scaleEffect(breathe ? 1.04 : 0.96)
             Text("🦆")
                 .font(.system(size: 26))
-                .offset(x: 26, y: 40)
+                .offset(x: 24, y: 36)
                 .offset(y: breathe ? -3 : 3)
             Text("📍")
                 .font(.system(size: 28))
-                .offset(y: breathe ? -66 : -60)
+                .offset(y: breathe ? -60 : -54)
         }
         .onAppear {
             guard !reduceMotion else { return }
