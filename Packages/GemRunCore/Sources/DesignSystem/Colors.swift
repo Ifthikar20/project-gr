@@ -1,13 +1,12 @@
 import CoreModels
 import SwiftUI
 
-/// Paper & Volt (docs/03, restyled with the RunnerCard pivot): one green
-/// in two strengths over paper-and-ink neutrals — the landing page's
-/// system, verbatim. Volt (map) belongs to map & game graphics (zones,
-/// routes, pins); volt-deep (pulse) is the chrome accent (CTAs, streaks,
-/// live stats) because raw volt can't carry text on white. Rarity speaks
-/// the card edge colors. Text stays ink — never a hue. Opacity/tint steps
-/// of a hue count as the same color. Nothing else.
+/// Paper & Ink chrome, volt on the map (docs/03, monochrome-chrome
+/// revision): buttons, chips, toggles and accents wear ink — black,
+/// never green — over paper neutrals. Volt (map) survives ONLY in map
+/// & game graphics (zones, routes, pins, progress toward a mint).
+/// Rarity speaks the card edge colors. Text stays ink — never a hue.
+/// Opacity/tint steps of a hue count as the same color. Nothing else.
 public enum DS {
     public enum Colors {
         // 1 — Paper: surfaces (the landing page's --bg; name kept for the
@@ -20,10 +19,10 @@ public enum DS {
         public static let inkSecondary = ink.opacity(0.55)
         public static let hairline = ink.opacity(0.12)
 
-        // 3 — Volt deep: the chrome accent (CTAs, streaks, live stats) —
-        // the landing page's --volt-deep, dark enough to carry text and
-        // glyphs on white. Token name kept from the pulse era.
-        public static let pulse = Color(red: 0.173, green: 0.561, blue: 0.0)    // #2C8F00
+        // 3 — Chrome accent: ink. The green chrome era is retired — CTAs,
+        // chips, toggles, tab tint and live-stat accents all read black.
+        // Token name kept for the ~everywhere call sites.
+        public static let pulse = ink
 
         // 4 — Volt: map & game graphics — the landing page's --volt token.
         // Too bright to carry white: glyphs/text ON it use onMap (ink).

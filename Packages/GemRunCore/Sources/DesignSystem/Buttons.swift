@@ -53,10 +53,10 @@ struct CTALabelChrome: ViewModifier {
     func body(content: Content) -> some View {
         HStack(spacing: 8) {
             if skin == .pulse {
-                // The site's btn--volt signature: a 7 px volt dot before
-                // the label on the ink capsule.
+                // The site's signature leading dot, gone monochrome: a
+                // 7 px snow dot before the label on the ink capsule.
                 Circle()
-                    .fill(DS.Colors.map)
+                    .fill(DS.Colors.snowCard)
                     .frame(width: 7, height: 7)
             }
             content
@@ -174,15 +174,15 @@ public struct IconOrbButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(size >= 56 ? .title2.bold() : .title3.bold())
-                .foregroundStyle(isActive ? DS.Colors.onMap : DS.Colors.ink)
+                .foregroundStyle(isActive ? DS.Colors.snowCard : DS.Colors.ink)
                 .frame(width: size, height: size)
-                // These orbs float ON the map (Explore FAB stack, run
-                // controls), so the active fill is map green with ink on
-                // it — the landing page's FAB treatment, not a chrome CTA.
-                .background(isActive ? DS.Colors.map : DS.Colors.snowCard,
+                // Black buttons everywhere — active is an ink orb with a
+                // snow glyph, and a light stroke so it stays visible when
+                // floating over the dark map tiles.
+                .background(isActive ? DS.Colors.ink : DS.Colors.snowCard,
                             in: Circle())
                 .overlay(Circle().stroke(
-                    isActive ? DS.Colors.ink.opacity(0.35) : DS.Colors.hairline,
+                    isActive ? Color.white.opacity(0.35) : DS.Colors.hairline,
                     lineWidth: 1))
                 .shadow(color: DS.Colors.ink.opacity(isActive ? 0.2 : 0.15),
                         radius: size >= 56 ? 8 : 6, y: size >= 56 ? 3 : 2)

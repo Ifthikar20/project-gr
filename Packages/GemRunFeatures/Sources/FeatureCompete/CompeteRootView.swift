@@ -493,9 +493,10 @@ public struct CompeteRootView: View {
 }
 
 /// Seven quiet bars, one per day, today on the right. Single hue for the
-/// single series (the map volt), faint tracks marking the empty days,
-/// weekday letters in text ink with today emphasized. The totals above
-/// carry the numbers; the bars carry only the shape of the week.
+/// single series (ink, matching the monochrome chrome), faint tracks
+/// marking the empty days, weekday letters in text ink with today
+/// emphasized. The totals above carry the numbers; the bars carry only
+/// the shape of the week.
 @MainActor
 private struct SevenDayBars: View {
     let days: [(label: String, miles: Double)]
@@ -510,7 +511,7 @@ private struct SevenDayBars: View {
                             .fill(DS.Colors.ink.opacity(0.05))
                         if day.miles > 0 {
                             Capsule()
-                                .fill(DS.Colors.map)
+                                .fill(DS.Colors.ink.opacity(0.75))
                                 .frame(height: max(CGFloat(day.miles / peak) * 56, 6))
                         }
                     }
